@@ -120,11 +120,16 @@ Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の
 resource rootやstylesheetは作業ディレクトリのauthority内にある場合だけ利用します。live previewの依存関係監視も
 raw pathを開かず、workspace、設定由来stylesheetおよび明示したstylesheetに対応する保持済みauthorityから、
 pollごとに上限付きsessionを作って本文のhashを計算します。
+``format --write``と``check --fix``の置換処理も、入力を読んだauthorityから親ディレクトリhandleを取得し、
+比較、一時ファイル作成およびrenameの途中でraw pathを開き直しません。
+rename直前に内容を再確認しますが、比較とrenameは一つのcompare-and-swap操作ではありません。このAPIを使わない
+別processが最後の比較後に書き換える場合まで、変更の消失を防ぐ保証はしません。
 ``adocweave-workspace``はファイルシステムへアクセスせず、検証済みの論理IDと本文を取り込みます。
 macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
 ワークスペースをsecurity境界として扱いません。
 設定から派生するrootについては、macOSとWindowsでも静的状態のanchor外pathとsymlinkを拒否します。
 ``LocalFilesystemPolicy``が保持するroot数は128件に制限し、本文の読込件数とは別にfile descriptorの消費を抑えます。
+用途ごとに選んだrootと上限は``LocalFilesystemAccess``へまとめ、path一覧とpolicyを別々に渡しません。
 Language Serverは初回走査とファイル変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
 本文キャッシュを使用せずに対象を再度openしますが、走査から継続するファイル数・byte数の上限は初期化しません。
 resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。

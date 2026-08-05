@@ -309,6 +309,8 @@ kbd:[Ctrl+C]または新しい変更を検出すると、実行中の生成処�
 adocweave convert --complete --css theme.css --css-url https://example.com/print.css manual.adoc
 ----
 
-``--css``と``--css-url``は``--complete``が必須です。CSSファイルはUTF-8で、1ファイルあたり1 MiBを上限とします。
+``--css``と``--css-url``は``--complete``が必須です。CSSファイルとCSS URLはプロジェクト設定と
+コマンドラインの指定を合わせて16件、CSSファイルはUTF-8で1ファイルあたり1 MiBを上限とします。
+CSSファイル自体がsymlinkの場合は、明示した``--css``を含めて読み込みを拒否します。
 `</style`、``<!--``または改行・タブ以外の制御文字を含むCSS本文、URL policyが拒否するURL
 （既定は``http``と``https``だけ）および上限超過は、部分的なHTMLを出力せずエラーで終了します。

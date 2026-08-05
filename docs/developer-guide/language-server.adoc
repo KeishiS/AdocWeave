@@ -208,7 +208,9 @@ workspace全体の走査は文書数に比例して時間がかかるため、�
 
 初期scanから除外したresourceは解析rootとして登録しません。初期走査では未open文書を前処理せず、開いた
 文書の解析workerがsnapshotに不足するlocal resourceを要求した時点で読み込みます。これにより、走査対象の
-除外とincludeの許可を別の判断として維持します。明示的な``didOpen``とwatch通知にも除外規則を適用しません。
+除外とincludeの許可を別の判断として維持します。明示的な``didOpen``には除外規則を適用しません。
+除外範囲のwatch通知は、既に開かれている文書または既知のinclude先を更新できますが、未知の文書を通知だけで
+解析rootへ追加しません。
 
 編集中に新しいincludeが追加され、解析workerがsnapshotにないlocal resourceを要求した場合も、main loopは
 その要求が現在の文書revisionとworkspace世代に属することを確認してから同じ権限と上限で一つ読み込み、
@@ -216,6 +218,8 @@ workspace全体の走査は文書数に比例して時間がかかるため、�
 古い文書revisionによるresourceの追加を拒否し、除外したinclude先を解析rootとして登録しない性質も維持します。
 別文書のresource追加によってworkspace世代だけが古くなった場合は、filesystemを変更せず現在のsnapshotで
 解析jobを作り直します。不足resourceの論理IDは同じ文書revision内で記録し、同じ対象の再取得を防ぎます。
+先読みしたinclude先は、そのrevisionが問題診断で終わった場合も回復待ちの依存として保持します。include先の
+watch通知でrootを再解析し、次の文書revision、解析成功または文書closeで不要になった依存を回収します。
 
 組み込みの時点で開いている文書を重ねるため、走査中に開いた文書は失われません。エディターが保持する
 未保存の本文がディスクの本文で置き換わることもありません。走査workerは同時に1件だけ実行し、保留する
@@ -224,10 +228,16 @@ workspace全体の走査は文書数に比例して時間がかかるため、�
 設定変更とworkspace folder変更も同じworker経路を使います。進行中の走査が古い設定またはrootを参照する
 場合は協調的に取り消しますが、その終了eventを受け取ってから次の走査を始めます。通常文書のwatch通知では
 走査を取り消さず、URIごとの最後の変更を記録します。走査結果を組み込んだ直後に記録を再適用するため、
-走査中に受け取った変更を古いdisk snapshotで置き換えません。記録は1万URIかURI文字列の合計1 MiBまでとし、
+走査中に受け取った変更を古いdisk snapshotで置き換えません。一つの通知batchと走査中の記録は、いずれも
+1万URIかURI文字列の合計1 MiBまでとし、
 どちらかを超えた場合は記録と進行中の走査結果を破棄し、現在のincremental workspace状態を保ったまま
-再走査を1件だけ保留します。取消状態は各ディレクトリ項目と各候補文書の間で確認し、途中まで読んだ結果を
-組み込みません。
+上限超過を診断します。最後の通知から100ミリ秒が経過した後に限り、世代を確認して再走査を1件だけ保留します。
+通知が続く間は待機時間を数え直すため、走査workerを起動し続けません。取消状態は各ディレクトリ項目と
+各候補文書の間で確認し、途中まで読んだ結果を組み込みません。
+
+watch通知からの読込失敗は128 URIか、URIとerror文字列の合計64 KiBまで保持します。この上限を超えた場合も
+同じ100ミリ秒の待機後に再走査し、走査が成功した時点で上限超過を含むwatch診断を解除します。
+回復用の走査自体が失敗した場合は回復待ち状態を保ち、次のwatch通知から同じ待機をやり直します。
 
 走査またはプロジェクト設定の読込に失敗した場合も、その後の``didOpen``で文書状態を登録します。通常の
 workspace inputは作らず、走査失敗を結び付けた解析jobを実行して``publishDiagnostics``で原因を通知します。
@@ -314,9 +324,10 @@ workspace folder対応clientの``workspaceFolders: null``は
 nullの場合はさらにdeprecatedなファイルシステム ``rootPath``へfallbackします。
 
 ``workspace.didChangeWatchedFiles.dynamicRegistration``を宣言したclientには、initialized後に
-``client/registerCapability``を送り、``**/*.adoc``のcreate、changeおよびdeleteを購読します。
-登録に失敗してもserverは終了しません。watch通知の有無を正確性の境界にせず、受信したURIには
-初期scanと同じワークスペース境界とresource上限を再適用します。
+``client/registerCapability``を送り、``**/*``のcreate、changeおよびdeleteを購読します。include先は
+拡張子を限定しないためです。未知のファイルは新しい``.adoc``だけを解析rootの候補とし、既知のinclude先と
+``.adocweave.toml``以外は読みません。登録に失敗してもserverは終了しません。watch通知の有無を
+正確性の境界にせず、受信したURIには初期scanと同じワークスペース境界とresource上限を再適用します。
 
 既定サーバはinitialize時のworkspace folderから``.adoc``ファイルを上限付きで読み、open文書を優先する
 バージョン付きスナップショットを構築します。``include::``の依存graphと逆依存索引を保持し、open文書変更または
@@ -327,8 +338,8 @@ symlinkは追跡せず、ワークスペース外、network URI、1 resource 10 
 disk resourceとopen bufferは別のrevision domainとして保持します。open中のLSPのバージョンは同じopen期間だけで
 比較し、close後にバージョン1から再openしても以前のバージョンと比較しません。open bufferをcloseした場合は
 resourceを削除せず、初期scanまたはwatch通知で得たdisk resourceへ戻し、そのresourceに依存するrootを
-再解析します。watch通知からdiskを読む場合も初期scanと同じcanonical workspace root、拡張子、通常ファイル
-およびbyte上限の検査を通し、通知された任意のfile URIを直接読んではなりません。
+再解析します。watch通知からdiskを読む場合も初期scanと同じcanonical workspace root、resourceの役割、
+通常ファイルおよびbyte上限の検査を通し、通知された任意のfile URIを直接読んではなりません。
 
 include展開結果は直接解析と別の不変のスナップショットとして採用し、diagnostic、include Definition、
 Document Link、ReferencesおよびRenameを元``SourceId``とrangeへ投影します。欠落resource、循環、safe

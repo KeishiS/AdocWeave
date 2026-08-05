@@ -21,6 +21,97 @@ pub(crate) enum StylesheetFileOrigin {
     CommandLine,
 }
 
+#[derive(Clone)]
+struct ExplicitStylesheetAuthority {
+    authored: PathBuf,
+    candidate: PathBuf,
+    policy: adocweave_host::LocalTargetPolicy,
+}
+
+/// Retained authorities for stylesheet files selected on the command line.
+///
+/// Construction validates the shared stylesheet count before opening any
+/// directory, and subsequent reads stay in the namespace selected here.
+#[derive(Clone)]
+pub(crate) struct ExplicitStylesheetAuthorities {
+    entries: Vec<ExplicitStylesheetAuthority>,
+}
+
+impl ExplicitStylesheetAuthorities {
+    pub(crate) fn new(
+        project: &adocweave_config::HtmlSettings,
+        stylesheets: &[StylesheetArgument],
+    ) -> Result<Self, Error> {
+        validate_stylesheet_count(project, stylesheets)?;
+        let entries = stylesheets
+            .iter()
+            .filter_map(|argument| match argument {
+                StylesheetArgument::File(path) => Some(path),
+                StylesheetArgument::Url(_) => None,
+            })
+            .map(|authored| {
+                let parent = authored
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                let file_name = authored.file_name().ok_or_else(|| {
+                    Error::Usage(format!(
+                        "stylesheet path has no file name: {}",
+                        authored.display()
+                    ))
+                })?;
+                let policy = adocweave_host::LocalTargetPolicy::new(parent).map_err(|source| {
+                    Error::Read {
+                        source_name: authored.display().to_string(),
+                        source: io::Error::other(source),
+                    }
+                })?;
+                Ok(ExplicitStylesheetAuthority {
+                    authored: authored.clone(),
+                    candidate: policy.root().join(file_name),
+                    policy,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(Self { entries })
+    }
+
+    pub(crate) fn candidates(&self) -> impl Iterator<Item = &Path> {
+        self.entries.iter().map(|entry| entry.candidate.as_path())
+    }
+
+    pub(crate) fn read_authored(&self, authored: &Path) -> io::Result<(PathBuf, Vec<u8>)> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.authored == authored)
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "explicit stylesheet authority is missing: {}",
+                    authored.display()
+                ))
+            })?;
+        Self::read_entry(entry)
+    }
+
+    pub(crate) fn read_candidate(&self, candidate: &Path) -> io::Result<(PathBuf, Vec<u8>)> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.candidate == candidate)
+            .ok_or_else(|| io::Error::other("explicit stylesheet authority is missing"))?;
+        Self::read_entry(entry)
+    }
+
+    fn read_entry(entry: &ExplicitStylesheetAuthority) -> io::Result<(PathBuf, Vec<u8>)> {
+        let mut session = crate::configuration_stylesheet_session(entry.policy.clone());
+        session
+            .read_candidate_bytes_no_symlinks(&entry.candidate)
+            .map(adocweave_host::LoadedLocalBytes::into_parts)
+            .map_err(io::Error::other)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Error {
     Cancelled,
@@ -49,6 +140,7 @@ pub(crate) fn build(
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<RenderPolicy, Error> {
     let limits = StylesheetPolicy::default();
+    validate_stylesheet_count(project, stylesheets)?;
     let mut sources = Vec::new();
     for path in &project.stylesheet_files {
         sources.push(StylesheetSource::Inline(read_stylesheet(
@@ -98,6 +190,27 @@ pub(crate) fn build(
         stylesheets: StylesheetPolicy { sources, ..limits },
         ..RenderPolicy::default()
     })
+}
+
+/// Rejects an input that would exceed the renderer's stylesheet count before
+/// any file is opened or read.
+pub(crate) fn validate_stylesheet_count(
+    project: &adocweave_config::HtmlSettings,
+    stylesheets: &[StylesheetArgument],
+) -> Result<(), Error> {
+    let limits = StylesheetPolicy::default();
+    let count = project
+        .stylesheet_files
+        .len()
+        .saturating_add(project.stylesheet_urls.len())
+        .saturating_add(stylesheets.len());
+    if count > usize::try_from(limits.max_sources).unwrap_or(usize::MAX) {
+        return Err(Error::Stylesheet(format!(
+            "stylesheet count exceeds the limit of {}",
+            limits.max_sources
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn render_checked(
@@ -275,6 +388,70 @@ mod tests {
 
         assert!(matches!(error, Error::Cancelled));
         assert_eq!(reads.get(), 1);
+    }
+
+    #[test]
+    fn build_rejects_excess_stylesheets_before_reading_files() {
+        let limit =
+            usize::try_from(StylesheetPolicy::default().max_sources).expect("u32 fits usize");
+        let project = adocweave_config::HtmlSettings {
+            stylesheet_files: vec![PathBuf::from("project.css")],
+            stylesheet_urls: vec!["https://example.com/project.css".to_owned()],
+            ..complete_settings()
+        };
+        let command = (0..limit - 1)
+            .map(|index| StylesheetArgument::File(PathBuf::from(format!("{index}.css"))))
+            .collect::<Vec<_>>();
+        let mut read = false;
+
+        let error = build(
+            &project,
+            false,
+            &command,
+            |_, _| {
+                read = true;
+                Ok(Vec::new())
+            },
+            || false,
+        )
+        .expect_err("stylesheet count limit");
+
+        assert!(matches!(
+            error,
+            Error::Stylesheet(message) if message == "stylesheet count exceeds the limit of 16"
+        ));
+        assert!(
+            !read,
+            "authority readers must not run after count rejection"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_stylesheet_authority_keeps_the_selected_directory() {
+        let parent = tempfile::tempdir().expect("temporary parent");
+        let root = parent.path().join("styles");
+        std::fs::create_dir(&root).expect("stylesheet directory");
+        let stylesheet = root.join("theme.css");
+        std::fs::write(&stylesheet, "trusted").expect("trusted stylesheet");
+        let arguments = [StylesheetArgument::File(stylesheet.clone())];
+        let authorities = ExplicitStylesheetAuthorities::new(
+            &adocweave_config::HtmlSettings::default(),
+            &arguments,
+        )
+        .expect("stylesheet authorities");
+        let displaced = parent.path().join("retained-styles");
+
+        std::fs::rename(&root, &displaced).expect("displace stylesheet directory");
+        std::fs::create_dir(&root).expect("replacement stylesheet directory");
+        std::fs::write(&stylesheet, "outside").expect("replacement stylesheet");
+
+        let (_, bytes) = authorities
+            .read_authored(&stylesheet)
+            .expect("retained stylesheet read");
+        assert_eq!(bytes, b"trusted");
+        std::fs::remove_dir_all(&root).expect("remove replacement directory");
+        std::fs::rename(displaced, &root).expect("restore stylesheet directory");
     }
 
     #[test]

@@ -46,6 +46,26 @@ pub struct LocalFilesystemPolicy {
     limits: FilesystemReadLimits,
 }
 
+/// Immutable selection of retained filesystem roots and read limits.
+///
+/// The selected root handles, their path identities and limits travel as one
+/// value, so callers cannot accidentally pair roots from another authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalFilesystemAccess {
+    roots: Vec<PathBuf>,
+    root_policies: Vec<LocalTargetPolicy>,
+    limits: FilesystemReadLimits,
+}
+
+/// Filesystem roots derived from one retained anchor.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DerivedFilesystemRoots {
+    /// Roots which must remain below the retained `anchor`.
+    pub confined: Vec<PathBuf>,
+    /// Roots explicitly selected by the caller as independent authorities.
+    pub independent: Vec<PathBuf>,
+}
+
 /// Host-defined identity which is safe to expose in diagnostics and source maps.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct LogicalSourceId(Arc<str>);
@@ -171,51 +191,64 @@ impl LocalFilesystemPolicy {
         self.limits
     }
 
-    /// Adds independently selected filesystem roots.
-    ///
-    /// Each root establishes a new authority from its current path. Use this
-    /// for roots selected directly by the host rather than roots learned from
-    /// a project configuration.
-    pub fn add_independent_roots(
-        &mut self,
+    /// Selects an immutable access set from roots this policy already retains.
+    pub fn access_existing(
+        &self,
         roots: impl IntoIterator<Item = PathBuf>,
-    ) -> Result<Vec<PathBuf>, ResourceError> {
-        let mut policies = BTreeMap::new();
-        for path in roots {
-            let policy = LocalTargetPolicy::new(&path)
-                .map_err(|error| map_policy_root_error(path, error))?;
-            let root = policy.root().to_owned();
-            self.retain_pending_policy(&policies, &root)?;
-            policies.entry(root).or_insert(policy);
-        }
-        Ok(self.insert_policies(policies.into_values()))
+        limits: FilesystemReadLimits,
+    ) -> Result<LocalFilesystemAccess, ResourceError> {
+        validate_derived_limits(self.limits, limits)?;
+        let mut policies = roots
+            .into_iter()
+            .map(|root| {
+                self.root_policy(&root)
+                    .cloned()
+                    .ok_or(ResourceError::OutsideRoots(root))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        policies.sort_by(|left, right| left.root().cmp(right.root()));
+        policies.dedup_by(|left, right| left.root() == right.root());
+        LocalFilesystemAccess::from_policies(policies, limits)
     }
 
-    /// Adds roots derived below one already opened authority.
-    ///
-    /// No root path is reopened from the process namespace. On Linux each
-    /// directory is opened relative to the retained anchor handle, so a
-    /// concurrent replacement of the anchor path cannot redirect the derived
-    /// authority. Requested roots must not cross symbolic links.
-    pub fn add_confined_roots(
+    /// Extends the retained authority transactionally and returns one opaque
+    /// access set for the requested roots.
+    pub fn access_derived(
         &mut self,
         anchor: &Path,
-        roots: impl IntoIterator<Item = PathBuf>,
-    ) -> Result<Vec<PathBuf>, ResourceError> {
+        roots: DerivedFilesystemRoots,
+        limits: FilesystemReadLimits,
+    ) -> Result<LocalFilesystemAccess, ResourceError> {
+        validate_derived_limits(self.limits, limits)?;
         let anchor_policy = self
             .root_policy(anchor)
             .cloned()
             .ok_or_else(|| ResourceError::OutsideRoots(anchor.to_owned()))?;
-        let mut policies = BTreeMap::new();
-        for path in roots {
-            let policy = anchor_policy
-                .derive_confined_directory(&path)
+        let mut pending = BTreeMap::new();
+        let mut selected = Vec::new();
+        for path in roots.confined {
+            let policy = if path == anchor {
+                anchor_policy.clone()
+            } else {
+                anchor_policy
+                    .derive_confined_directory(&path)
+                    .map_err(|error| map_policy_root_error(path, error))?
+            };
+            let root = policy.root().to_owned();
+            self.retain_pending_policy(&pending, &root)?;
+            pending.entry(root.clone()).or_insert(policy);
+            selected.push(root);
+        }
+        for path in roots.independent {
+            let policy = LocalTargetPolicy::new(&path)
                 .map_err(|error| map_policy_root_error(path, error))?;
             let root = policy.root().to_owned();
-            self.retain_pending_policy(&policies, &root)?;
-            policies.entry(root).or_insert(policy);
+            self.retain_pending_policy(&pending, &root)?;
+            pending.entry(root.clone()).or_insert(policy);
+            selected.push(root);
         }
-        Ok(self.insert_policies(policies.into_values()))
+        self.insert_policies(pending.into_values());
+        self.access_existing(selected, limits)
     }
 
     fn retain_pending_policy(
@@ -234,25 +267,17 @@ impl LocalFilesystemPolicy {
         Ok(())
     }
 
-    fn insert_policies(
-        &mut self,
-        policies: impl IntoIterator<Item = LocalTargetPolicy>,
-    ) -> Vec<PathBuf> {
+    fn insert_policies(&mut self, policies: impl IntoIterator<Item = LocalTargetPolicy>) {
         let mut unique = std::mem::take(&mut self.root_policies)
             .into_iter()
             .map(|policy| (policy.root().to_owned(), policy))
             .collect::<BTreeMap<_, _>>();
-        let mut selected = Vec::new();
         for policy in policies {
             let root = policy.root().to_owned();
-            unique.entry(root.clone()).or_insert(policy);
-            selected.push(root);
+            unique.entry(root).or_insert(policy);
         }
-        selected.sort();
-        selected.dedup();
         self.roots = unique.keys().cloned().collect();
         self.root_policies = unique.into_values().collect();
-        selected
     }
 
     /// Returns the retained authority for one exact canonical root.
@@ -263,53 +288,68 @@ impl LocalFilesystemPolicy {
     }
 
     pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
-        self.session_for_roots(&self.roots, self.limits)
+        LocalFilesystemAccess::from_policies(self.root_policies.clone(), self.limits)?.session()
     }
+}
 
-    /// Creates a bounded session from a subset of the already opened roots.
-    ///
-    /// Requested roots must use the exact canonical spelling returned by
-    /// [`Self::roots`]. No filesystem path is reopened by this operation.
-    pub fn session_for_roots(
-        &self,
-        roots: &[PathBuf],
+impl LocalFilesystemAccess {
+    fn from_policies(
+        mut root_policies: Vec<LocalTargetPolicy>,
         limits: FilesystemReadLimits,
-    ) -> Result<LocalFilesystemSession, ResourceError> {
-        if limits.max_files > self.limits.max_files
-            || limits.max_total_bytes > self.limits.max_total_bytes
-            || limits.max_resource_bytes > self.limits.max_resource_bytes
-        {
-            return Err(ResourceError::Unverifiable(
-                "filesystem session limits exceed the policy limits".to_owned(),
-            ));
-        }
-        if roots.is_empty() {
-            return Err(ResourceError::NoRoots);
-        }
-        let mut root_policies = roots
-            .iter()
-            .map(|root| {
-                self.root_policy(root)
-                    .cloned()
-                    .ok_or_else(|| ResourceError::OutsideRoots(root.clone()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    ) -> Result<Self, ResourceError> {
         root_policies.sort_by(|left, right| left.root().cmp(right.root()));
         root_policies.dedup_by(|left, right| left.root() == right.root());
+        if root_policies.is_empty() {
+            return Err(ResourceError::NoRoots);
+        }
+        if root_policies.len() > MAX_FILESYSTEM_POLICY_ROOTS {
+            return Err(ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            });
+        }
         let roots = root_policies
             .iter()
             .map(|policy| policy.root().to_owned())
-            .collect::<Vec<_>>();
-        let sessions = root_policies
-            .into_iter()
+            .collect();
+        Ok(Self {
+            roots,
+            root_policies,
+            limits,
+        })
+    }
+
+    /// Returns the logical paths paired with the retained root authorities.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Returns the limits applied independently to each new session.
+    pub const fn limits(&self) -> FilesystemReadLimits {
+        self.limits
+    }
+
+    /// Selects the deepest retained root containing `path`.
+    pub fn policy_for_path(&self, path: &Path) -> Option<&LocalTargetPolicy> {
+        self.root_policies
+            .iter()
+            .filter(|policy| path.starts_with(policy.root()))
+            .max_by_key(|policy| policy.root().components().count())
+    }
+
+    /// Creates a session with a fresh shared budget for these selected roots.
+    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
+        let sessions = self
+            .root_policies
+            .iter()
+            .cloned()
             .map(|policy| {
                 LocalTargetSession::new(
                     policy,
-                    limits.max_files,
+                    self.limits.max_files,
                     FilesystemReadLimits {
                         max_files: usize::MAX,
                         max_total_bytes: u64::MAX,
-                        max_resource_bytes: limits.max_resource_bytes,
+                        max_resource_bytes: self.limits.max_resource_bytes,
                     },
                 )
             })
@@ -320,17 +360,35 @@ impl LocalFilesystemPolicy {
         Ok(LocalFilesystemSession {
             session_id,
             next_generation: 1,
-            roots,
+            roots: self.roots.clone(),
             sessions,
-            limits,
+            limits: self.limits,
             budget: ResourceBudget::default(),
             charged: BTreeMap::new(),
         })
     }
 }
 
+fn validate_derived_limits(
+    policy: FilesystemReadLimits,
+    requested: FilesystemReadLimits,
+) -> Result<(), ResourceError> {
+    if requested.max_files > policy.max_files
+        || requested.max_total_bytes > policy.max_total_bytes
+        || requested.max_resource_bytes > policy.max_resource_bytes
+    {
+        return Err(ResourceError::Unverifiable(
+            "filesystem access limits exceed the authority limits".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn map_policy_root_error(path: PathBuf, error: LocalTargetError) -> ResourceError {
     match error {
+        LocalTargetError::Missing(_) => ResourceError::Missing(path),
+        LocalTargetError::PermissionDenied(_) => ResourceError::PermissionDenied(path),
+        LocalTargetError::OutsideRoot(_) => ResourceError::OutsideRoots(path),
         LocalTargetError::NotDirectory(_) | LocalTargetError::NotFile(_) => {
             ResourceError::InvalidRoot
         }
@@ -354,6 +412,15 @@ impl LocalFilesystemSession {
 
     pub const fn limits(&self) -> FilesystemReadLimits {
         self.limits
+    }
+
+    /// Returns the retained authority for the deepest root containing `path`.
+    pub fn policy_for_path(&self, path: &Path) -> Option<&LocalTargetPolicy> {
+        self.sessions
+            .iter()
+            .map(LocalTargetSession::policy)
+            .filter(|policy| path.starts_with(policy.root()))
+            .max_by_key(|policy| policy.root().components().count())
     }
 
     /// Scans every configured root for regular `.adoc` files.
@@ -1185,6 +1252,7 @@ mod tests {
         fs::create_dir(&initial).expect("initial root");
         let mut policy = LocalFilesystemPolicy::new([initial], FilesystemReadLimits::default())
             .expect("initial policy");
+        let anchor = policy.roots()[0].clone();
         let mut additions = Vec::new();
         for index in 1..MAX_FILESYSTEM_POLICY_ROOTS {
             let root = parent.path().join(format!("root-{index:03}"));
@@ -1192,7 +1260,14 @@ mod tests {
             additions.push(root);
         }
         policy
-            .add_independent_roots(additions)
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: Vec::new(),
+                    independent: additions,
+                },
+                FilesystemReadLimits::default(),
+            )
             .expect("fill policy root limit");
         let before = policy.roots().to_vec();
         let rejected = parent.path().join("root-over-limit");
@@ -1200,7 +1275,14 @@ mod tests {
 
         assert_eq!(
             policy
-                .add_independent_roots([rejected.clone()])
+                .access_derived(
+                    &anchor,
+                    DerivedFilesystemRoots {
+                        confined: Vec::new(),
+                        independent: vec![rejected.clone()],
+                    },
+                    FilesystemReadLimits::default(),
+                )
                 .expect_err("root limit"),
             ResourceError::RootLimit {
                 limit: MAX_FILESYSTEM_POLICY_ROOTS,
@@ -1208,12 +1290,17 @@ mod tests {
         );
         assert_eq!(policy.roots(), before);
         assert!(before.iter().all(|root| policy.root_policy(root).is_some()));
-        assert_eq!(
-            policy
-                .add_independent_roots([before[0].clone()])
-                .expect("duplicate root at the limit"),
-            [before[0].clone()]
-        );
+        let duplicate = policy
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: Vec::new(),
+                    independent: vec![before[0].clone()],
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("duplicate root at the limit");
+        assert_eq!(duplicate.roots(), [before[0].clone()]);
         assert_eq!(policy.roots(), before);
         drop(policy);
 
@@ -1223,12 +1310,20 @@ mod tests {
         )
         .expect("policy below the limit");
         let staged_before = staged.roots().to_vec();
+        let staged_anchor = staged_before[0].clone();
         assert_eq!(
             staged
-                .add_independent_roots([
-                    before[MAX_FILESYSTEM_POLICY_ROOTS - 1].clone(),
-                    rejected.clone(),
-                ])
+                .access_derived(
+                    &staged_anchor,
+                    DerivedFilesystemRoots {
+                        confined: Vec::new(),
+                        independent: vec![
+                            before[MAX_FILESYSTEM_POLICY_ROOTS - 1].clone(),
+                            rejected.clone(),
+                        ],
+                    },
+                    FilesystemReadLimits::default(),
+                )
                 .expect_err("staged roots exceed the limit"),
             ResourceError::RootLimit {
                 limit: MAX_FILESYSTEM_POLICY_ROOTS,
@@ -1305,9 +1400,9 @@ mod tests {
             },
         ] {
             assert!(matches!(
-                policy.session_for_roots(std::slice::from_ref(&root_path), limits),
+                policy.access_existing([root_path.clone()], limits),
                 Err(ResourceError::Unverifiable(reason))
-                    if reason == "filesystem session limits exceed the policy limits"
+                    if reason == "filesystem access limits exceed the authority limits"
             ));
         }
     }
@@ -1330,12 +1425,17 @@ mod tests {
         fs::create_dir_all(root.join("docs")).expect("replacement nested root");
         fs::write(root.join("docs/document.adoc"), "replacement").expect("replacement document");
 
-        let selected = policy
-            .add_confined_roots(&anchor, [nested.clone()])
+        let access = policy
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: vec![nested.clone()],
+                    independent: Vec::new(),
+                },
+                FilesystemReadLimits::default(),
+            )
             .expect("derive nested authority");
-        let mut session = policy
-            .session_for_roots(&selected, FilesystemReadLimits::default())
-            .expect("derived session");
+        let mut session = access.session().expect("derived session");
         let loaded = session
             .read_utf8(
                 LogicalSourceId::new("document").expect("source id"),
@@ -2059,7 +2159,7 @@ mod tests {
 
         assert!(matches!(
             LocalFilesystemPolicy::new([missing], FilesystemReadLimits::default()),
-            Err(ResourceError::Inspect { .. })
+            Err(ResourceError::Missing(_))
         ));
         assert!(matches!(
             LocalFilesystemPolicy::new([file], FilesystemReadLimits::default()),

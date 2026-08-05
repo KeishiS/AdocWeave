@@ -17,6 +17,8 @@ use adocweave_workspace::{
 };
 use async_lsp::lsp_types::Url;
 
+const MAX_WATCHED_INCLUDE_RESOURCES: usize = 10_000;
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceInput {
     pub generation: Generation,
@@ -93,10 +95,14 @@ pub struct WorkspaceResources {
     roots: Vec<PathBuf>,
     directory_roots: Vec<PathBuf>,
     single_file_roots: BTreeSet<PathBuf>,
+    scan_settings: BTreeMap<PathBuf, adocweave_config::WorkspaceScanSettings>,
     filesystem_policy: Option<LocalFilesystemPolicy>,
     filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
     project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
+    include_resources: BTreeSet<ResourceId>,
+    include_dependencies: BTreeMap<ResourceId, BTreeSet<ResourceId>>,
+    pending_include_dependencies: BTreeMap<ResourceId, (u64, BTreeSet<ResourceId>)>,
     retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
     /// Project files already discovered and parsed, keyed by the directory the
     /// search started from.
@@ -253,14 +259,26 @@ impl WorkspaceResources {
         limits: WorkspaceLimits,
         cancellation: &dyn CancellationCheck,
     ) -> Result<(), String> {
-        self.load_roots_with_limits_after_authority(roots, limits, cancellation, || {})
+        self.load_roots_with_limits_after_hooks(roots, limits, cancellation, || {}, || {})
     }
 
+    #[cfg(test)]
     fn load_roots_with_limits_after_authority(
         &mut self,
         roots: &[Url],
         limits: WorkspaceLimits,
         cancellation: &dyn CancellationCheck,
+        after_authority: impl FnOnce(),
+    ) -> Result<(), String> {
+        self.load_roots_with_limits_after_hooks(roots, limits, cancellation, || {}, after_authority)
+    }
+
+    fn load_roots_with_limits_after_hooks(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+        cancellation: &dyn CancellationCheck,
+        after_root_classification: impl FnOnce(),
         after_authority: impl FnOnce(),
     ) -> Result<(), String> {
         self.last_load_failed_closed = false;
@@ -312,6 +330,7 @@ impl WorkspaceResources {
         );
         paths.sort();
         paths.dedup();
+        after_root_classification();
         let preserve_previous = std::cell::Cell::new(false);
         let load_result = (|| {
             let authority = (!paths.is_empty())
@@ -323,6 +342,16 @@ impl WorkspaceResources {
                 })
                 .transpose()
                 .map_err(|error| error.to_string())?;
+            if let Some(authority) = &authority
+                && let Some(changed) = paths
+                    .iter()
+                    .find(|root| authority.root_policy(root).is_none())
+            {
+                return Err(format!(
+                    "workspace root changed while its filesystem authority was established: {}",
+                    changed.display()
+                ));
+            }
             after_authority();
             let scan_settings = directory_roots
                 .iter()
@@ -352,10 +381,12 @@ impl WorkspaceResources {
                 .as_ref()
                 .filter(|_| !directory_roots.is_empty())
                 .map(|policy| {
-                    policy.session_for_roots(
-                        &directory_roots,
-                        adocweave_host::FilesystemReadLimits::default(),
-                    )
+                    policy
+                        .access_existing(
+                            directory_roots.clone(),
+                            adocweave_host::FilesystemReadLimits::default(),
+                        )?
+                        .session()
                 })
                 .transpose()
                 .map_err(|error| error.to_string())?;
@@ -427,10 +458,8 @@ impl WorkspaceResources {
                         let session = authority
                             .as_ref()
                             .expect("a discovered candidate has filesystem authority")
-                            .session_for_roots(
-                                std::slice::from_ref(&scope.workspace_root),
-                                plan.filesystem_reads,
-                            )
+                            .access_existing([scope.workspace_root.clone()], plan.filesystem_reads)
+                            .and_then(|access| access.session())
                             .map_err(|error| error.to_string())?;
                         entry.insert(Arc::new(Mutex::new(session)))
                     }
@@ -472,10 +501,14 @@ impl WorkspaceResources {
             self.roots = paths.clone();
             self.directory_roots = directory_roots;
             self.single_file_roots = single_file_roots;
+            self.scan_settings = scan_settings;
             self.filesystem_policy = authority;
             self.filesystems = filesystems;
             self.project_plans = project_plans;
             self.resource_projects = resource_projects;
+            self.include_resources.clear();
+            self.include_dependencies.clear();
+            self.pending_include_dependencies.clear();
             self.retained_layers = retained_layers;
             self.next_disk_version = next_disk_version;
             Ok(())
@@ -495,10 +528,14 @@ impl WorkspaceResources {
         self.roots = roots;
         self.directory_roots.clear();
         self.single_file_roots.clear();
+        self.scan_settings.clear();
         self.filesystem_policy = None;
         self.filesystems.clear();
         self.project_plans.clear();
         self.resource_projects.clear();
+        self.include_resources.clear();
+        self.include_dependencies.clear();
+        self.pending_include_dependencies.clear();
         self.retained_layers.clear();
         self.last_load_failed_closed = true;
     }
@@ -522,11 +559,31 @@ impl WorkspaceResources {
         self.inner.snapshot().resources().count()
     }
 
+    pub(crate) fn contains(&self, uri: &Url) -> bool {
+        uri_id(uri)
+            .ok()
+            .is_some_and(|id| self.inner.get(&id).is_some())
+    }
+
+    pub(crate) fn tracks_watched_resource(&self, uri: &Url) -> bool {
+        uri_id(uri)
+            .ok()
+            .is_some_and(|id| self.inner.get(&id).is_some() || self.include_resources.contains(&id))
+    }
+
     pub fn reload_file(&mut self, uri: Url) -> Result<BTreeSet<String>, String> {
         let path = uri
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let id = uri_id(&uri)?;
+        let known_before = self.inner.get(&id).is_some();
+        let known_include = self.include_resources.contains(&id);
+        if !known_before
+            && !known_include
+            && path.extension().and_then(|value| value.to_str()) != Some("adoc")
+        {
+            return Ok(BTreeSet::new());
+        }
         if !self.path_is_analysis_root(&path) {
             return Ok(BTreeSet::new());
         }
@@ -541,6 +598,9 @@ impl WorkspaceResources {
             &admitted_path,
         )
         .map_err(|error| error.to_string())?;
+        if !known_before && !known_include && self.path_is_scan_excluded(&admitted_path) {
+            return Ok(BTreeSet::new());
+        }
         if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
             return self.remove_outside_authority(&id, &admitted_path);
         }
@@ -548,7 +608,11 @@ impl WorkspaceResources {
             adocweave_config::ResolvedResourceLimitPlan::default,
             |snapshot| snapshot.config.resources.limit_plan,
         );
-        let prepared = self.read_workspace_file(&admitted_path, &scope, plan)?;
+        let prepared = if known_include {
+            self.read_workspace_resource(&admitted_path, &scope, plan)?
+        } else {
+            self.read_analysis_root(&admitted_path, &scope, plan)?
+        };
         let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
             let previous_charge = self.retained_charge(&id);
@@ -566,7 +630,7 @@ impl WorkspaceResources {
                     Arc::clone(&prepared.text),
                 )
                 .map_err(|error| error.to_string())?;
-            if !inner.roots().contains(&id) {
+            if !known_before && !known_include && !inner.roots().contains(&id) {
                 inner
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
@@ -592,6 +656,7 @@ impl WorkspaceResources {
                 .map_err(|rollback| format!("{error}; rollback failed: {rollback}"))?;
             return Err(error);
         }
+        let pending_dependents = self.pending_include_dependents(&id);
         self.inner = inner;
         self.retained_layers = retained_layers;
         self.filesystems
@@ -600,7 +665,9 @@ impl WorkspaceResources {
         self.resource_projects.insert(id, scope);
         self.next_disk_version = next_disk_version;
         self.gc_scopes();
-        Ok(strings(affected))
+        let mut affected = strings(affected);
+        affected.extend(pending_dependents);
+        Ok(affected)
     }
 
     fn remove_outside_authority(
@@ -626,13 +693,24 @@ impl WorkspaceResources {
         self.inner = inner;
         self.retained_layers = retained_layers;
         self.resource_projects.remove(id);
+        self.include_resources.remove(id);
+        self.include_dependencies.remove(id);
+        self.pending_include_dependencies.remove(id);
+        for dependencies in self.include_dependencies.values_mut() {
+            dependencies.remove(id);
+        }
+        for (_, dependencies) in self.pending_include_dependencies.values_mut() {
+            dependencies.remove(id);
+        }
+        let pruned = self.prune_unreferenced_include_resources();
         self.gc_scopes();
         let mut affected = strings(affected);
+        affected.extend(pruned);
         affected.insert(id.to_string());
         Ok(affected)
     }
 
-    fn read_workspace_file(
+    fn read_analysis_root(
         &self,
         path: &Path,
         scope: &ProjectScopeId,
@@ -644,6 +722,15 @@ impl WorkspaceResources {
                 path.display()
             ));
         }
+        self.read_workspace_resource(path, scope, plan)
+    }
+
+    fn read_workspace_resource(
+        &self,
+        path: &Path,
+        scope: &ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<PreparedWorkspaceRead, String> {
         if let Some(previous) = self.project_plans.get(scope)
             && previous != &plan
         {
@@ -658,10 +745,8 @@ impl WorkspaceResources {
                 .filesystem_policy
                 .as_ref()
                 .ok_or_else(|| "workspace has no retained filesystem authority".to_owned())?
-                .session_for_roots(
-                    std::slice::from_ref(&scope.workspace_root),
-                    plan.filesystem_reads,
-                )
+                .access_existing([scope.workspace_root.clone()], plan.filesystem_reads)
+                .and_then(|access| access.session())
                 .map_err(|error| error.to_string())?;
             Arc::new(Mutex::new(session))
         };
@@ -794,7 +879,7 @@ impl WorkspaceResources {
             .is_some_and(|previous| previous != &scope)
             && previous_charge.disk_bytes().is_some();
         let prepared_disk = migrating_disk
-            .then(|| self.read_workspace_file(&path, &scope, plan))
+            .then(|| self.read_analysis_root(&path, &scope, plan))
             .transpose()?;
         let next_disk_version = self
             .next_disk_version
@@ -893,7 +978,8 @@ impl WorkspaceResources {
             retained_layers.insert(scope.clone(), budget);
         }
         let mut inner = self.inner.clone();
-        let affected = strings(inner.remove_disk(&id));
+        let mut affected = strings(inner.remove_disk(&id));
+        affected.extend(self.pending_include_dependents(&id));
         self.release_filesystem_charge(scope.as_ref(), &path)?;
         self.inner = inner;
         self.retained_layers = retained_layers;
@@ -942,11 +1028,21 @@ impl WorkspaceResources {
         &mut self,
         root: &Url,
         target: &ResourceId,
+        revision_generation: u64,
     ) -> Result<bool, String> {
         if self.roots.is_empty() {
             return Ok(false);
         }
         let root_id = uri_id(root)?;
+        let starts_new_revision = self
+            .pending_include_dependencies
+            .get(&root_id)
+            .is_none_or(|(generation, _)| *generation != revision_generation);
+        if starts_new_revision {
+            self.pending_include_dependencies
+                .insert(root_id.clone(), (revision_generation, BTreeSet::new()));
+            self.prune_unreferenced_include_resources();
+        }
         let root_scope = self
             .resource_projects
             .get(&root_id)
@@ -962,7 +1058,16 @@ impl WorkspaceResources {
             &self.roots,
             self.filesystem_policy.as_ref(),
         )?;
-        self.try_insert_include_target(&root_scope, &allowed_roots, target.as_str())
+        let inserted =
+            self.try_insert_include_target(&root_scope, &allowed_roots, target.as_str())?;
+        if inserted || self.include_resources.contains(target) {
+            self.pending_include_dependencies
+                .entry(root_id)
+                .or_insert_with(|| (revision_generation, BTreeSet::new()))
+                .1
+                .insert(target.clone());
+        }
+        Ok(inserted)
     }
 
     fn try_insert_include_target(
@@ -1028,7 +1133,14 @@ impl WorkspaceResources {
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<(), String> {
         let id = uri_id(&uri)?;
-        let prepared = self.read_workspace_file(&path, &scope, plan)?;
+        if !self.include_resources.contains(&id)
+            && self.include_resources.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+        {
+            return Err(format!(
+                "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
+            ));
+        }
+        let prepared = self.read_workspace_resource(&path, &scope, plan)?;
         let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
             let charge = RetainedLayerCharge::new(Some(prepared.text.len() as u64), None);
@@ -1056,7 +1168,8 @@ impl WorkspaceResources {
         self.filesystems
             .insert(scope.clone(), Arc::clone(&prepared.filesystem));
         self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id, scope);
+        self.resource_projects.insert(id.clone(), scope);
+        self.include_resources.insert(id);
         self.next_disk_version = next_disk_version;
         Ok(())
     }
@@ -1142,10 +1255,118 @@ impl WorkspaceResources {
             })
     }
 
-    pub fn accept(&mut self, analysis: &WorkspaceAnalysis) -> Result<(), String> {
+    pub fn accept_for_root(
+        &mut self,
+        root: &ResourceId,
+        analysis: &WorkspaceAnalysis,
+    ) -> Result<(), String> {
+        if analysis.root() != root {
+            return Err("workspace analysis root does not match the adoption root".to_owned());
+        }
         self.inner
             .accept(analysis)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let dependencies = analysis
+            .dependencies()
+            .into_iter()
+            .filter(|id| self.include_resources.contains(id))
+            .collect();
+        self.include_dependencies.insert(root.clone(), dependencies);
+        self.pending_include_dependencies.remove(root);
+        self.prune_unreferenced_include_resources();
+        Ok(())
+    }
+
+    pub fn discard_pending_include_dependencies(
+        &mut self,
+        root: &Url,
+        revision_generation: u64,
+    ) -> Result<BTreeSet<String>, String> {
+        let root = uri_id(root)?;
+        if self
+            .pending_include_dependencies
+            .get(&root)
+            .is_some_and(|(generation, _)| *generation <= revision_generation)
+        {
+            self.pending_include_dependencies.remove(&root);
+        }
+        Ok(self.prune_unreferenced_include_resources())
+    }
+
+    pub fn begin_document_revision(
+        &mut self,
+        root: &Url,
+        revision_generation: u64,
+    ) -> Result<BTreeSet<String>, String> {
+        let root = uri_id(root)?;
+        if self
+            .pending_include_dependencies
+            .get(&root)
+            .is_some_and(|(generation, _)| *generation < revision_generation)
+        {
+            self.pending_include_dependencies.remove(&root);
+        }
+        Ok(self.prune_unreferenced_include_resources())
+    }
+
+    pub fn retag_pending_include_dependencies(
+        &mut self,
+        root: &Url,
+        previous_generation: u64,
+        next_generation: u64,
+    ) -> Result<(), String> {
+        let root = uri_id(root)?;
+        if let Some((generation, _)) = self.pending_include_dependencies.get_mut(&root)
+            && *generation == previous_generation
+        {
+            *generation = next_generation;
+        }
+        Ok(())
+    }
+
+    pub fn forget_include_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
+        let root = uri_id(root)?;
+        self.include_dependencies.remove(&root);
+        self.pending_include_dependencies.remove(&root);
+        Ok(self.prune_unreferenced_include_resources())
+    }
+
+    fn prune_unreferenced_include_resources(&mut self) -> BTreeSet<String> {
+        let retained = self
+            .include_dependencies
+            .values()
+            .flat_map(BTreeSet::iter)
+            .chain(
+                self.pending_include_dependencies
+                    .values()
+                    .flat_map(|(_, dependencies)| dependencies),
+            )
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let stale = self
+            .include_resources
+            .difference(&retained)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut affected = BTreeSet::new();
+        for id in stale {
+            let Ok(uri) = Url::parse(id.as_str()) else {
+                continue;
+            };
+            if let Ok(removed) = self.remove_disk(&uri) {
+                self.include_resources.remove(&id);
+                affected.extend(removed);
+            }
+        }
+        affected
+    }
+
+    fn pending_include_dependents(&self, id: &ResourceId) -> BTreeSet<String> {
+        self.pending_include_dependencies
+            .iter()
+            .filter(|(_, (_, dependencies))| dependencies.contains(id))
+            .map(|(root, _)| root.to_string())
+            .collect()
     }
 
     pub const fn generation(&self) -> Generation {
@@ -1231,6 +1452,36 @@ impl WorkspaceResources {
 
     fn path_is_analysis_root(&self, path: &Path) -> bool {
         path_is_analysis_root(path, &self.directory_roots, &self.single_file_roots)
+    }
+
+    fn path_is_scan_excluded(&self, path: &Path) -> bool {
+        if self.single_file_roots.contains(path) {
+            return false;
+        }
+        let Some(root) = self
+            .directory_roots
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+        else {
+            return false;
+        };
+        let Some(settings) = self.scan_settings.get(root) else {
+            return false;
+        };
+        let mut directory = path.parent();
+        while let Some(candidate) = directory {
+            if candidate == root {
+                break;
+            }
+            if let Ok(relative) = candidate.strip_prefix(root)
+                && settings.excludes(relative)
+            {
+                return true;
+            }
+            directory = candidate.parent();
+        }
+        false
     }
 }
 
@@ -1576,7 +1827,7 @@ mod tests {
             .clone();
         assert!(
             resources
-                .load_missing_include(&source_uri, &target)
+                .load_missing_include(&source_uri, &target, 1)
                 .expect("load include")
         );
         assert_eq!(
@@ -1593,6 +1844,46 @@ mod tests {
             )
             .expect("workspace analysis");
         assert!(analysis.analysis.source().contains("included"));
+
+        std::fs::write(&included, "updated include\n").expect("updated include");
+        resources
+            .reload_file(included_uri.clone())
+            .expect("reload known include");
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
+            "a watched include must not become an analysis root",
+        );
+        assert_eq!(
+            resources
+                .get(&included_uri)
+                .expect("updated include resource")
+                .text()
+                .as_ref(),
+            "updated include\n",
+        );
+
+        let unrelated = generated.join("unrelated.adoc");
+        let unrelated_uri = Url::from_file_path(&unrelated).expect("unrelated URI");
+        std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
+        assert!(
+            resources
+                .reload_file(unrelated_uri.clone())
+                .expect("ignore excluded watcher discovery")
+                .is_empty()
+        );
+        assert!(resources.get(&unrelated_uri).is_none());
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
+        );
+        resources
+            .discard_pending_include_dependencies(&source_uri, 1)
+            .expect("discard provisional include role");
+        assert!(
+            resources.get(&included_uri).is_none(),
+            "a terminal analysis result must release provisional includes"
+        );
     }
 
     #[test]
@@ -1703,6 +1994,123 @@ mod tests {
                 .as_ref(),
             "= Trusted\n",
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retained_root_covers_reload_open_and_missing_include_after_replacement() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"generated\"]\n",
+            ),
+        )
+        .expect("trusted configuration");
+        let document = root.0.join("root.adoc");
+        let included = generated.join("part.txt");
+        std::fs::write(&document, "include::generated/part.txt[]\n").expect("trusted document");
+        std::fs::write(&included, "trusted include\n").expect("trusted include");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&document).expect("document URI");
+        let include_uri = Url::from_file_path(&included).expect("include URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial load");
+
+        let displaced = root.0.with_extension("retained-reload");
+        std::fs::rename(&root.0, &displaced).expect("displace trusted workspace");
+        std::fs::create_dir_all(root.0.join("generated")).expect("replacement workspace");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 99\n",
+        )
+        .expect("replacement configuration");
+        std::fs::write(&document, "replacement document\n").expect("replacement document");
+        std::fs::write(root.0.join("generated/part.txt"), "replacement include\n")
+            .expect("replacement include");
+        std::fs::write(
+            displaced.join("root.adoc"),
+            "include::generated/part.txt[]\ntrusted reload\n",
+        )
+        .expect("trusted reload");
+
+        resources
+            .reload_file(document_uri.clone())
+            .expect("reload through retained root");
+        assert!(
+            resources
+                .resource_text(&document_uri)
+                .expect("reloaded resource")
+                .contains("trusted reload")
+        );
+        assert!(
+            resources
+                .load_missing_include(
+                    &document_uri,
+                    &ResourceId::new(include_uri.to_string()).expect("include ID"),
+                    1,
+                )
+                .expect("load include through retained root")
+        );
+        resources
+            .upsert_open(
+                document_uri.clone(),
+                1,
+                "include::generated/part.txt[]\noverlay\n",
+            )
+            .expect("open through retained configuration");
+        let input = resources.input(&document_uri).expect("workspace input");
+        let analysis = input
+            .analyze(
+                &adocweave::AnalysisOptions::default(),
+                &adocweave::CancellationToken::new(),
+            )
+            .expect("workspace analysis");
+        assert!(analysis.analysis.source().contains("trusted include"));
+        assert!(!analysis.analysis.source().contains("replacement include"));
+
+        std::fs::remove_dir_all(&root.0).expect("remove replacement workspace");
+        std::fs::rename(&displaced, &root.0).expect("restore trusted workspace");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn root_replacement_before_authority_fails_without_panicking() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let outside = TestDirectory::new();
+        std::fs::write(root.0.join("trusted.adoc"), "trusted\n").expect("trusted source");
+        std::fs::write(outside.0.join("outside.adoc"), "outside\n").expect("outside source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let displaced = root.0.with_extension("before-authority");
+        let mut resources = WorkspaceResources::default();
+
+        let loaded = resources.load_roots_with_limits_after_hooks(
+            std::slice::from_ref(&root_uri),
+            adapter_managed_workspace_limits(),
+            &NeverCancel,
+            || {
+                std::fs::rename(&root.0, &displaced).expect("displace trusted workspace");
+                symlink(&outside.0, &root.0).expect("redirect workspace root");
+            },
+            || {},
+        );
+
+        std::fs::remove_file(&root.0).expect("remove replacement symlink");
+        std::fs::rename(&displaced, &root.0).expect("restore trusted workspace");
+        let error = loaded.expect_err("changed authority must fail closed");
+        assert!(
+            error.contains("workspace root changed while its filesystem authority was established")
+        );
+        assert!(resources.inner.roots().is_empty());
+        assert!(resources.last_load_failed_closed());
     }
 
     #[test]

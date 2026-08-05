@@ -446,7 +446,7 @@ async fn protocol_registers_file_watchers_and_survives_client_rejection() {
         );
         assert_eq!(
             registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["globPattern"],
-            "**/*.adoc"
+            "**/*"
         );
         assert_eq!(
             registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["kind"],

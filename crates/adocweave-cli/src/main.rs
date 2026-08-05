@@ -120,6 +120,18 @@ fn read_primary_in_session(
     Ok(source.as_bytes().to_vec())
 }
 
+fn retained_write_policy(
+    path: &Path,
+    filesystem: &adocweave_host::LocalFilesystemSession,
+) -> Result<adocweave_host::LocalTargetPolicy, CliError> {
+    filesystem.policy_for_path(path).cloned().ok_or_else(|| {
+        CliError::Path(format!(
+            "write target is outside its retained filesystem authority: {}",
+            path.display()
+        ))
+    })
+}
+
 fn filesystem_authority(
     boundary: PathBuf,
 ) -> Result<adocweave_host::LocalFilesystemPolicy, CliError> {
@@ -158,43 +170,30 @@ fn filesystem_from_authority(
     independent_roots: Vec<PathBuf>,
     limits: adocweave_host::FilesystemReadLimits,
 ) -> Result<adocweave_host::LocalFilesystemSession, CliError> {
-    let roots = extend_filesystem_authority(authority, anchor, confined_roots, independent_roots)?;
-    authority
-        .session_for_roots(&roots, limits)
+    filesystem_access_from_authority(authority, anchor, confined_roots, independent_roots, limits)?
+        .session()
         .map_err(local_include::LocalIncludeError::Host)
         .map_err(CliError::Include)
 }
 
-fn extend_filesystem_authority(
+fn filesystem_access_from_authority(
     authority: &mut adocweave_host::LocalFilesystemPolicy,
     anchor: &Path,
     confined_roots: Vec<PathBuf>,
     independent_roots: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, CliError> {
-    let mut roots = Vec::new();
-    let mut derived = Vec::new();
-    for root in confined_roots {
-        if root == anchor {
-            roots.push(anchor.to_owned());
-        } else {
-            derived.push(root);
-        }
-    }
-    roots.extend(
-        authority
-            .add_confined_roots(anchor, derived)
-            .map_err(local_include::LocalIncludeError::Host)
-            .map_err(CliError::Include)?,
-    );
-    roots.extend(
-        authority
-            .add_independent_roots(independent_roots)
-            .map_err(local_include::LocalIncludeError::Host)
-            .map_err(CliError::Include)?,
-    );
-    roots.sort();
-    roots.dedup();
-    Ok(roots)
+    limits: adocweave_host::FilesystemReadLimits,
+) -> Result<adocweave_host::LocalFilesystemAccess, CliError> {
+    authority
+        .access_derived(
+            anchor,
+            adocweave_host::DerivedFilesystemRoots {
+                confined: confined_roots,
+                independent: independent_roots,
+            },
+            limits,
+        )
+        .map_err(local_include::LocalIncludeError::Host)
+        .map_err(CliError::Include)
 }
 
 fn partition_roots_below_anchor(
@@ -439,21 +438,40 @@ fn process_check(
     source_id: &str,
     analysis_options: &AnalysisOptions,
     preprocess_options: &adocweave::preprocess::PreprocessOptions,
-    resource_limits: adocweave_host::FilesystemReadLimits,
-    local: Option<(&std::path::Path, &std::path::Path, &str)>,
+    local: Option<(
+        &std::path::Path,
+        &std::path::Path,
+        &str,
+        &adocweave_host::LocalFilesystemSession,
+    )>,
 ) -> Result<CheckOutcome, CliError> {
+    let local = local
+        .map(|(base, root, source_id, filesystem)| {
+            let policy = filesystem
+                .policy_for_path(root)
+                .ok_or_else(|| {
+                    CliError::Path(format!(
+                        "local target root is outside its retained filesystem authority: {}",
+                        root.display()
+                    ))
+                })?
+                .derive_confined_directory(root)
+                .map_err(CliError::LocalTarget)?;
+            let limits = filesystem.limits();
+            Ok(commands::check::LocalContext {
+                base,
+                source_id,
+                session: adocweave_host::LocalTargetSession::new(policy, limits.max_files, limits),
+            })
+        })
+        .transpose()?;
     commands::check::process(
         input,
         check,
         source_id,
         analysis_options,
         preprocess_options,
-        resource_limits,
-        local.map(|(base, root, source_id)| commands::check::LocalContext {
-            base,
-            root,
-            source_id,
-        }),
+        local,
     )
     .map_err(check_error)
 }
@@ -518,83 +536,263 @@ fn charge_scan_entry(scanned_entries: &mut usize) -> Result<(), CliError> {
     Ok(())
 }
 
-fn collect_input_paths(arguments: &Arguments) -> Result<Vec<PathBuf>, CliError> {
+struct CollectedInputPaths {
+    files: Vec<PathBuf>,
+    directory_selected: bool,
+}
+
+fn glob_scan_root(pattern: &str) -> Option<PathBuf> {
+    let mut root = PathBuf::new();
+    for component in Path::new(pattern).components() {
+        let authored = component.as_os_str().to_string_lossy();
+        if authored
+            .chars()
+            .any(|character| matches!(character, '*' | '?' | '['))
+        {
+            return Some(if root.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                root
+            });
+        }
+        root.push(component.as_os_str());
+    }
+    None
+}
+
+fn relative_path_from(base: &Path, target: &Path) -> PathBuf {
+    let base = base.components().collect::<Vec<_>>();
+    let target = target.components().collect::<Vec<_>>();
+    let shared = base
+        .iter()
+        .zip(&target)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in shared..base.len() {
+        relative.push("..");
+    }
+    for component in &target[shared..] {
+        relative.push(component.as_os_str());
+    }
+    relative
+}
+
+fn absolute_lexical_path(anchor: &Path, authored: &Path) -> PathBuf {
+    let candidate = if authored.is_absolute() {
+        authored.to_owned()
+    } else {
+        anchor.join(authored)
+    };
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn retained_input_candidate(
+    authority: &mut adocweave_host::LocalFilesystemPolicy,
+    anchor: &Path,
+    authored: &Path,
+) -> Result<(adocweave_host::LocalFilesystemAccess, PathBuf), CliError> {
+    if authored == Path::new(".") {
+        let access = authority
+            .access_existing(
+                [anchor.to_owned()],
+                adocweave_host::FilesystemReadLimits::default(),
+            )
+            .map_err(local_include::LocalIncludeError::Host)
+            .map_err(CliError::Include)?;
+        let candidate = access
+            .roots()
+            .first()
+            .cloned()
+            .ok_or_else(|| CliError::Path("input authority has no root".to_owned()))?;
+        return Ok((access, candidate));
+    }
+    let absolute = if authored.is_absolute() {
+        authored.to_owned()
+    } else {
+        anchor.join(authored)
+    };
+    let Some(file_name) = absolute.file_name() else {
+        let (mut confined, mut independent) = (Vec::new(), Vec::new());
+        partition_roots_below_anchor(anchor, [absolute.clone()], &mut confined, &mut independent);
+        let access = filesystem_access_from_authority(
+            authority,
+            anchor,
+            confined,
+            independent,
+            adocweave_host::FilesystemReadLimits::default(),
+        )?;
+        let candidate = access.roots()[0].clone();
+        return Ok((access, candidate));
+    };
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| CliError::Path("input path has no parent directory".to_owned()))?;
+    let explicitly_independent = authored.is_absolute() && !authored.starts_with(anchor)
+        || authored
+            .components()
+            .any(|component| component == std::path::Component::ParentDir);
+    let (confined, independent) = if explicitly_independent {
+        (Vec::new(), vec![parent.to_owned()])
+    } else {
+        (vec![parent.to_owned()], Vec::new())
+    };
+    let access = filesystem_access_from_authority(
+        authority,
+        anchor,
+        confined,
+        independent,
+        adocweave_host::FilesystemReadLimits::default(),
+    )?;
+    let policy_root = access
+        .roots()
+        .iter()
+        .max_by_key(|root| root.components().count())
+        .cloned()
+        .ok_or_else(|| CliError::Path("input authority has no root".to_owned()))?;
+    Ok((access, policy_root.join(file_name)))
+}
+
+fn collect_input_paths(
+    arguments: &Arguments,
+    authority: &mut adocweave_host::LocalFilesystemPolicy,
+    anchor: &Path,
+) -> Result<CollectedInputPaths, CliError> {
+    let primary = arguments.input.clone();
     let mut pending = arguments
         .input
         .iter()
         .chain(&arguments.additional_inputs)
         .cloned()
+        .map(|path| (path, true))
         .collect::<Vec<_>>();
+    let mut patterns = Vec::new();
+    for authored in &arguments.glob_patterns {
+        let pattern = glob::Pattern::new(authored)
+            .map_err(|error| CliError::Path(format!("invalid glob pattern {authored}: {error}")))?;
+        let root = glob_scan_root(authored).unwrap_or_else(|| {
+            Path::new(authored)
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map_or_else(|| PathBuf::from("."), Path::to_owned)
+        });
+        pending.push((root, false));
+        patterns.push((pattern, Path::new(authored).is_absolute()));
+    }
     let mut scanned_entries = pending.len();
     if scanned_entries > MAX_SCAN_ENTRIES {
         return Err(CliError::Path(
             "directory scan entry limit exceeded".to_owned(),
         ));
     }
-    for pattern in &arguments.glob_patterns {
-        let matches = glob::glob(pattern)
-            .map_err(|error| CliError::Path(format!("invalid glob pattern {pattern}: {error}")))?;
-        for path in matches {
-            charge_scan_entry(&mut scanned_entries)?;
-            pending.push(
-                path.map_err(|error| CliError::Path(format!("cannot read glob match: {error}")))?,
-            );
-        }
-    }
     pending.sort();
     let mut files = std::collections::BTreeSet::new();
-    while let Some(path) = pending.pop() {
-        let metadata = fs::symlink_metadata(&path).map_err(|source| CliError::Read {
-            source_name: path.display().to_string(),
-            source,
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(CliError::Path(format!(
-                "input paths must not be symbolic links: {}",
-                path.display()
-            )));
-        }
-        if metadata.is_dir() {
-            let mut children = Vec::new();
-            for child in fs::read_dir(&path).map_err(|source| CliError::Read {
-                source_name: path.display().to_string(),
-                source,
-            })? {
-                children.push(child.map_err(|source| CliError::Read {
-                    source_name: path.display().to_string(),
-                    source,
-                })?);
-                charge_scan_entry(&mut scanned_entries)?;
+    let mut directories = std::collections::BTreeSet::new();
+    let mut explicit_directories = std::collections::BTreeSet::new();
+    let mut directory_selected = false;
+    for (path, explicit) in pending {
+        let is_primary = primary.as_ref() == Some(&path);
+        let (access, candidate) = match retained_input_candidate(authority, anchor, &path) {
+            Ok(candidate) => candidate,
+            Err(CliError::Include(local_include::LocalIncludeError::Host(
+                adocweave_host::ResourceError::Missing(_),
+            ))) if !explicit => continue,
+            Err(CliError::LocalTarget(adocweave_host::LocalTargetError::Missing(_)))
+                if !explicit =>
+            {
+                continue;
             }
-            children.sort_by_key(fs::DirEntry::file_name);
-            for entry in children.into_iter().rev() {
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path).map_err(|source| CliError::Read {
+            Err(CliError::Include(local_include::LocalIncludeError::Host(
+                adocweave_host::ResourceError::Missing(_),
+            )))
+            | Err(CliError::LocalTarget(adocweave_host::LocalTargetError::Missing(_))) => {
+                return Err(CliError::Read {
                     source_name: path.display().to_string(),
-                    source,
-                })?;
-                if metadata.file_type().is_symlink() {
-                    continue;
-                } else if metadata.is_dir()
-                    || path.extension().and_then(|value| value.to_str()) == Some("adoc")
-                {
-                    pending.push(path);
+                    source: std::io::Error::from(std::io::ErrorKind::NotFound),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        let policy = access.policy_for_path(&candidate).ok_or_else(|| {
+            CliError::Path(format!(
+                "input is outside its retained filesystem authority: {}",
+                path.display()
+            ))
+        })?;
+        match policy.inspect_directory_no_symlinks(&candidate) {
+            Ok(directory) => {
+                let parent_root = policy.root().to_owned();
+                directory_selected |= is_primary;
+                let retained = filesystem_access_from_authority(
+                    authority,
+                    &parent_root,
+                    vec![directory],
+                    Vec::new(),
+                    adocweave_host::FilesystemReadLimits::default(),
+                )?;
+                directories.extend(retained.roots().iter().cloned());
+                if explicit {
+                    explicit_directories.extend(retained.roots().iter().cloned());
                 }
             }
-            continue;
+            Err(adocweave_host::LocalTargetError::NotDirectory(_)) => {
+                let file = policy
+                    .inspect_candidate_no_symlinks(&candidate)
+                    .map_err(CliError::LocalTarget)?;
+                files.insert(file);
+            }
+            Err(adocweave_host::LocalTargetError::Missing(_)) if !explicit => continue,
+            Err(adocweave_host::LocalTargetError::Missing(_)) => {
+                return Err(CliError::Read {
+                    source_name: path.display().to_string(),
+                    source: std::io::Error::from(std::io::ErrorKind::NotFound),
+                });
+            }
+            Err(error) => return Err(CliError::LocalTarget(error)),
         }
-        if !metadata.is_file() {
-            return Err(CliError::Path(format!(
-                "input is not a regular file: {}",
-                path.display()
-            )));
-        }
-        files.insert(path.canonicalize().map_err(|source| CliError::Read {
-            source_name: path.display().to_string(),
-            source,
-        })?);
     }
-    Ok(files.into_iter().collect())
+    if !directories.is_empty() {
+        let filesystem = authority
+            .access_existing(directories, adocweave_host::FilesystemReadLimits::default())
+            .and_then(|access| access.session())
+            .map_err(local_include::LocalIncludeError::Host)
+            .map_err(CliError::Include)?;
+        for path in filesystem
+            .discover_adoc_paths()
+            .map_err(local_include::LocalIncludeError::Host)
+            .map_err(CliError::Include)?
+        {
+            charge_scan_entry(&mut scanned_entries)?;
+            let explicitly_selected = explicit_directories
+                .iter()
+                .any(|root| path.starts_with(root));
+            let glob_selected = patterns.iter().any(|(pattern, absolute)| {
+                if *absolute {
+                    pattern.matches_path(&path)
+                } else {
+                    let relative = relative_path_from(anchor, &path);
+                    pattern.matches_path(&relative)
+                }
+            });
+            if explicitly_selected || glob_selected {
+                files.insert(path);
+            }
+        }
+    }
+    Ok(CollectedInputPaths {
+        files: files.into_iter().collect(),
+        directory_selected,
+    })
 }
 
 /// Names the scope one input belongs to.
@@ -682,8 +880,28 @@ fn apply_safe_fixes(
 }
 
 fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
-    let paths = collect_input_paths(arguments)?;
-    let directory_selected = arguments.input.as_ref().is_some_and(|path| path.is_dir());
+    let boundary = env::current_dir().map_err(|source| CliError::Read {
+        source_name: "current directory".to_owned(),
+        source,
+    })?;
+    let mut filesystem_authority = filesystem_authority(boundary)?;
+    let authority_root = filesystem_authority.roots()[0].clone();
+    let cli_base_dir = arguments
+        .base_dir
+        .as_ref()
+        .map(|path| absolute_lexical_path(&authority_root, path));
+    let cli_allowed_roots = arguments
+        .allowed_roots
+        .iter()
+        .map(|path| absolute_lexical_path(&authority_root, path))
+        .collect::<Vec<_>>();
+    let cli_project_root = arguments
+        .project_root
+        .as_ref()
+        .map(|path| absolute_lexical_path(&authority_root, path));
+    let collected = collect_input_paths(arguments, &mut filesystem_authority, &authority_root)?;
+    let paths = collected.files;
+    let directory_selected = collected.directory_selected;
     let explicit_path_mode = matches!(
         arguments.command,
         CommandOptions::Format(options) if options.uses_explicit_path_mode()
@@ -704,12 +922,6 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
             "no AsciiDoc files matched the input paths".to_owned(),
         ));
     }
-    let boundary = env::current_dir().map_err(|source| CliError::Read {
-        source_name: "current directory".to_owned(),
-        source,
-    })?;
-    let mut filesystem_authority = filesystem_authority(boundary)?;
-    let authority_root = filesystem_authority.roots()[0].clone();
     let boundary_policy = filesystem_authority
         .root_policy(&authority_root)
         .expect("the initial authority retains its root")
@@ -727,6 +939,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 ));
             }
             let mut workflow = commands::format::BatchWorkflow::new(*options, paths.len());
+            let mut write_policies = std::collections::BTreeMap::new();
             for path in &paths {
                 let resolved = resolved_inputs
                     .get(path)
@@ -749,11 +962,11 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     )?;
                 }
                 let source_base = path.parent().expect("canonical input path has a parent");
-                let base_dir = arguments.base_dir.as_deref().unwrap_or(source_base);
+                let base_dir = cli_base_dir.as_deref().unwrap_or(source_base);
                 let allowed_roots = if arguments.allowed_roots.is_empty() {
                     &config.resources.roots
                 } else {
-                    &arguments.allowed_roots
+                    &cli_allowed_roots
                 };
                 let project_key = resolved.scope.clone();
                 let filesystem = match project_filesystems.entry(project_key.clone()) {
@@ -764,6 +977,11 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             std::iter::once(authority_root.clone()).chain(
                                 paths
                                     .iter()
+                                    .filter(|path| {
+                                        resolved_inputs
+                                            .get(*path)
+                                            .is_some_and(|resolved| resolved.scope == project_key)
+                                    })
                                     .filter_map(|path| path.parent().map(Path::to_owned)),
                             ),
                             arguments,
@@ -780,6 +998,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     }
                 };
                 let original = read_primary_in_session(path, filesystem)?;
+                write_policies.insert(path.clone(), retained_write_policy(path, filesystem)?);
                 if include {
                     let source = decode_input(&original)?;
                     let prepared = local_include::prepare_with_session(
@@ -833,10 +1052,16 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     outcome
                         .pending_writes
                         .into_iter()
-                        .map(|write| PendingWrite {
-                            path: write.path,
-                            original: write.original,
-                            replacement: write.replacement,
+                        .map(|write| {
+                            let policy = write_policies
+                                .remove(&write.path)
+                                .expect("each pending write retains its input authority");
+                            PendingWrite {
+                                path: write.path,
+                                original: write.original,
+                                replacement: write.replacement,
+                                policy,
+                            }
                         })
                         .collect(),
                 )?;
@@ -866,7 +1091,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .expect("every collected input has a resolved project");
                 let config = &resolved.config;
                 let source_id = path.to_string_lossy();
-                let project_root = arguments.project_root.clone().or_else(|| {
+                let project_root = cli_project_root.clone().or_else(|| {
                     config
                         .local_targets
                         .enabled
@@ -894,7 +1119,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                 let allowed_roots = if arguments.allowed_roots.is_empty() {
                     &config.resources.roots
                 } else {
-                    &arguments.allowed_roots
+                    &cli_allowed_roots
                 };
                 let project_key = resolved.scope.clone();
                 let filesystem = match project_filesystems.entry(project_key.clone()) {
@@ -905,6 +1130,11 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             std::iter::once(authority_root.clone()).chain(
                                 paths
                                     .iter()
+                                    .filter(|path| {
+                                        resolved_inputs
+                                            .get(*path)
+                                            .is_some_and(|resolved| resolved.scope == project_key)
+                                    })
                                     .filter_map(|path| path.parent().map(Path::to_owned)),
                             ),
                             arguments,
@@ -921,6 +1151,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     }
                 };
                 let original = read_primary_in_session(path, filesystem)?;
+                let write_policy = retained_write_policy(path, filesystem)?;
                 let checked = if check.fix {
                     apply_safe_fixes(&original, check, &config.analysis)?
                 } else {
@@ -933,6 +1164,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                             path: path.clone(),
                             original,
                             replacement: checked.clone(),
+                            policy: write_policy,
                         });
                     }
                 }
@@ -941,10 +1173,7 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .map(|root| (source_base.as_path(), root.as_path(), source_id.as_ref()));
                 let outcome = if include {
                     let source = decode_input(&checked)?;
-                    let base_dir = arguments
-                        .base_dir
-                        .as_deref()
-                        .unwrap_or(source_base.as_path());
+                    let base_dir = cli_base_dir.as_deref().unwrap_or(source_base.as_path());
                     let mut prepared = prepare_includes(IncludePreparation {
                         source,
                         source_id: source_id.to_string(),
@@ -989,8 +1218,8 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                         &source_id,
                         &config.analysis,
                         &config.preprocess,
-                        config.resources.limit_plan.filesystem_reads,
-                        local_context,
+                        local_context
+                            .map(|(base, root, source_id)| (base, root, source_id, &*filesystem)),
                     )?
                 };
                 counts.merge(outcome.counts);
@@ -1426,6 +1655,19 @@ fn run() -> Result<ExitCode, CliError> {
             })?;
             let mut filesystem_authority = filesystem_authority(boundary)?;
             let authority_root = filesystem_authority.roots()[0].clone();
+            let cli_base_dir = arguments
+                .base_dir
+                .as_ref()
+                .map(|path| absolute_lexical_path(&authority_root, path));
+            let cli_allowed_roots = arguments
+                .allowed_roots
+                .iter()
+                .map(|path| absolute_lexical_path(&authority_root, path))
+                .collect::<Vec<_>>();
+            let cli_project_root = arguments
+                .project_root
+                .as_ref()
+                .map(|path| absolute_lexical_path(&authority_root, path));
             let boundary_policy = filesystem_authority
                 .root_policy(&authority_root)
                 .expect("the initial authority retains its root")
@@ -1456,9 +1698,9 @@ fn run() -> Result<ExitCode, CliError> {
             let allowed_roots = if arguments.allowed_roots.is_empty() {
                 project_config.resources.roots.clone()
             } else {
-                arguments.allowed_roots.clone()
+                cli_allowed_roots
             };
-            let project_root = arguments.project_root.clone().or_else(|| {
+            let project_root = cli_project_root.or_else(|| {
                 project_config
                     .local_targets
                     .enabled
@@ -1507,11 +1749,12 @@ fn run() -> Result<ExitCode, CliError> {
                     &allowed_roots,
                     project_root.as_deref(),
                 );
-                let preview_filesystem_roots = extend_filesystem_authority(
+                let preview_filesystem_access = filesystem_access_from_authority(
                     &mut filesystem_authority,
                     &authority_root,
                     confined_roots,
                     independent_roots,
+                    project_config.resources.limit_plan.filesystem_reads,
                 )?;
                 PREVIEW_SHUTDOWN.store(false, std::sync::atomic::Ordering::Release);
                 install_preview_signal_handlers();
@@ -1519,14 +1762,13 @@ fn run() -> Result<ExitCode, CliError> {
                     commands::preview::RunRequest {
                         input_path,
                         include,
-                        base_dir: arguments.base_dir.as_deref(),
+                        base_dir: cli_base_dir.as_deref(),
                         allowed_roots: &allowed_roots,
                         project_root: project_root.as_deref(),
                         project: &project_config,
                         css,
                         configuration_policy: boundary_policy.clone(),
-                        filesystem_policy: filesystem_authority,
-                        filesystem_roots: preview_filesystem_roots,
+                        filesystem_access: preview_filesystem_access,
                         server: commands::preview::ServerOptions {
                             bind: *bind,
                             port: *port,
@@ -1538,6 +1780,16 @@ fn run() -> Result<ExitCode, CliError> {
                 .map_err(preview_error)?;
                 return Ok(ExitCode::SUCCESS);
             }
+            let explicit_stylesheet_authorities = match &arguments.command {
+                CommandOptions::Convert { css, .. } => Some(
+                    commands::html_policy::ExplicitStylesheetAuthorities::new(
+                        &project_config.html,
+                        css,
+                    )
+                    .map_err(cli_error::html_policy_error)?,
+                ),
+                _ => None,
+            };
             let source_id = input_path.as_ref().map_or_else(
                 || "<stdin>".to_owned(),
                 |path| path.to_string_lossy().into_owned(),
@@ -1578,25 +1830,41 @@ fn run() -> Result<ExitCode, CliError> {
                     None,
                 )
             };
+            if primary_filesystem.is_none()
+                && matches!(arguments.command, CommandOptions::Check(_))
+                && let Some(project_root) = project_root.as_deref()
+            {
+                let base = local_context
+                    .as_ref()
+                    .map(|(base, _, _)| base.clone())
+                    .unwrap_or_else(|| project_root.to_owned());
+                let (confined_roots, independent_roots) = processing_filesystem_roots(
+                    &authority_root,
+                    [base],
+                    &arguments,
+                    &allowed_roots,
+                    Some(project_root),
+                );
+                primary_filesystem = Some(filesystem_from_authority(
+                    &mut filesystem_authority,
+                    &authority_root,
+                    confined_roots,
+                    independent_roots,
+                    project_config.resources.limit_plan.filesystem_reads,
+                )?);
+            }
             validate_resource_plan([input.len() as u64], project_config.resources.limit_plan)?;
             let mut retained_resources = ProjectRetainedBudget::default();
             let mut prepared = None;
             let processed = if include {
                 let source = decode_input(&input)?;
-                let base_dir = match arguments.base_dir.clone() {
-                    Some(base_dir) => base_dir.canonicalize().map_err(|source| CliError::Read {
-                        source_name: base_dir.display().to_string(),
-                        source,
+                let base_dir = match cli_base_dir.clone() {
+                    Some(base_dir) => base_dir,
+                    None => primary_base.clone().ok_or_else(|| {
+                        CliError::Usage(
+                            "--include with standard input requires --base-dir".to_owned(),
+                        )
                     })?,
-                    None => input_path
-                        .as_ref()
-                        .and_then(|path| path.canonicalize().ok())
-                        .and_then(|path| path.parent().map(PathBuf::from))
-                        .ok_or_else(|| {
-                            CliError::Usage(
-                                "--include with standard input requires --base-dir".to_owned(),
-                            )
-                        })?,
                 };
                 let source_id = input_path.as_ref().map_or_else(
                     || "<stdin>".to_owned(),
@@ -1685,9 +1953,15 @@ fn run() -> Result<ExitCode, CliError> {
                         &source_id,
                         &project_config.analysis,
                         &project_config.preprocess,
-                        project_config.resources.limit_plan.filesystem_reads,
-                        local_context.as_ref().map(|(base, root, source_id)| {
-                            (base.as_path(), root.as_path(), source_id.as_str())
+                        local_context.as_ref().and_then(|(base, root, source_id)| {
+                            primary_filesystem.as_ref().map(|filesystem| {
+                                (
+                                    base.as_path(),
+                                    root.as_path(),
+                                    source_id.as_str(),
+                                    filesystem,
+                                )
+                            })
                         }),
                     )
                 }?;
@@ -1716,18 +1990,19 @@ fn run() -> Result<ExitCode, CliError> {
                         &project_config.html,
                         *complete,
                         css,
-                        |path| {
-                            if project_config
-                                .html
-                                .stylesheet_files
-                                .contains(&path.to_owned())
-                            {
+                        |origin, path| match origin {
+                            commands::html_policy::StylesheetFileOrigin::ProjectConfiguration => {
                                 configuration_stylesheets
                                     .read_candidate_bytes(path)
                                     .map(|loaded| loaded.into_parts().1)
                                     .map_err(io::Error::other)
-                            } else {
-                                fs::read(path)
+                            }
+                            commands::html_policy::StylesheetFileOrigin::CommandLine => {
+                                explicit_stylesheet_authorities
+                                    .as_ref()
+                                    .expect("convert retains command-line stylesheet authorities")
+                                    .read_authored(path)
+                                    .map(|(_, bytes)| bytes)
                             }
                         },
                     )

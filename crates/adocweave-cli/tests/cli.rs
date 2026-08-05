@@ -1520,6 +1520,40 @@ fn check_glob_deduplicates_files_and_emits_source_ids() {
 }
 
 #[test]
+fn multi_file_check_resolves_relative_include_base_once() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-check-relative-base-{unique}"));
+    let resources = root.join("resources");
+    std::fs::create_dir_all(&resources).expect("resources");
+    std::fs::write(resources.join("part.adoc"), "part\n").expect("include");
+    std::fs::write(root.join("a.adoc"), "include::part.adoc[]\n").expect("first");
+    std::fs::write(root.join("b.adoc"), "include::part.adoc[]\n").expect("second");
+
+    let output = adocweave()
+        .current_dir(&root)
+        .args([
+            "check",
+            "--include",
+            "--base-dir",
+            "resources",
+            "a.adoc",
+            "b.adoc",
+        ])
+        .output()
+        .expect("multi-file check");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn color_never_is_plain_and_color_always_is_explicit() {
     let plain = run_with_stdin(&["check", "--color", "never", "-"], b"text  \n");
     let colored = run_with_stdin(&["check", "--color", "always", "-"], b"text  \n");

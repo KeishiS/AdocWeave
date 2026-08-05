@@ -5,9 +5,13 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_resource::FilesystemReadLimits;
 
@@ -18,6 +22,46 @@ use crate::local_resource::FilesystemReadLimits;
 /// changing directory into an unbounded wait.
 #[cfg(target_os = "linux")]
 const CONFINED_OPEN_ATTEMPTS: u32 = 8;
+
+#[cfg(target_os = "linux")]
+static NEXT_REPLACEMENT_FILE: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(target_os = "linux")]
+struct TemporaryReplacement {
+    path: PathBuf,
+    file: fs::File,
+    committed: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for TemporaryReplacement {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static FORCED_OPENAT2_ERROR: std::cell::Cell<Option<rustix::io::Errno>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+#[cfg(target_os = "linux")]
+fn confined_openat2(
+    root: &fs::File,
+    relative: &Path,
+    flags: rustix::fs::OFlags,
+    resolve: rustix::fs::ResolveFlags,
+) -> rustix::io::Result<rustix::fd::OwnedFd> {
+    #[cfg(test)]
+    if let Some(error) = FORCED_OPENAT2_ERROR.with(std::cell::Cell::get) {
+        return Err(error);
+    }
+    rustix::fs::openat2(root, relative, flags, rustix::fs::Mode::empty(), resolve)
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct CandidateReadCapacity {
@@ -202,6 +246,116 @@ impl LocalTargetPolicy {
         }
     }
 
+    /// Compares a regular file through its retained parent-directory handle.
+    ///
+    /// Linux resolves the target, temporary file and rename from the retained
+    /// parent-directory handle, so replacing an ancestor path cannot redirect
+    /// the read. `Ok(false)` reports a concurrent content change.
+    #[cfg(target_os = "linux")]
+    pub fn candidate_contents_match(
+        &self,
+        candidate: &Path,
+        expected: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        use std::os::fd::AsRawFd;
+
+        let candidate = self.normalize_candidate(candidate)?;
+        let parent = candidate.parent().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no parent directory".to_owned())
+        })?;
+        let file_name = candidate.file_name().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no file name".to_owned())
+        })?;
+        let directory = self.open_directory_no_symlinks(parent)?;
+        let target =
+            PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(file_name);
+        Ok(read_for_comparison(&target, expected.len(), &candidate)? == expected)
+    }
+
+    /// Rechecks a regular file immediately before replacing it atomically.
+    ///
+    /// Linux resolves the target, temporary file and rename from the retained
+    /// parent-directory handle, so replacing an ancestor path cannot redirect
+    /// the write. `Ok(false)` reports a content change observed by the final
+    /// recheck. The comparison and rename are separate operations, so this is
+    /// not a compare-and-swap against writers that ignore this API.
+    #[cfg(target_os = "linux")]
+    pub fn replace_candidate_after_recheck(
+        &self,
+        candidate: &Path,
+        original: &[u8],
+        replacement: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        use std::os::fd::AsRawFd;
+
+        let candidate = self.normalize_candidate(candidate)?;
+        let parent = candidate.parent().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no parent directory".to_owned())
+        })?;
+        let file_name = candidate.file_name().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no file name".to_owned())
+        })?;
+        let directory = self.open_directory_no_symlinks(parent)?;
+        let descriptor_root = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+        let target = descriptor_root.join(file_name);
+        let metadata = fs::symlink_metadata(&target)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(LocalTargetError::NotFile(candidate));
+        }
+        if read_for_comparison(&target, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+
+        let mut temporary = None;
+        for _ in 0..CONFINED_OPEN_ATTEMPTS {
+            let sequence = NEXT_REPLACEMENT_FILE.fetch_add(1, Ordering::Relaxed);
+            let path =
+                descriptor_root.join(format!(".adocweave-{}-{sequence}.tmp", std::process::id()));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    temporary = Some(TemporaryReplacement {
+                        path,
+                        file,
+                        committed: false,
+                    });
+                    break;
+                }
+                Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(source) => return Err(classify_io(candidate.clone(), source)),
+            }
+        }
+        let mut temporary = temporary.ok_or_else(|| {
+            LocalTargetError::Unverifiable(format!(
+                "could not create a unique temporary file for {}",
+                candidate.display()
+            ))
+        })?;
+        temporary
+            .file
+            .set_permissions(metadata.permissions())
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        temporary
+            .file
+            .write_all(replacement)
+            .and_then(|()| temporary.file.sync_all())
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        if read_for_comparison(&target, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+        fs::rename(&temporary.path, &target)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        temporary.committed = true;
+        directory
+            .sync_all()
+            .map_err(|source| classify_io(candidate, source))?;
+        Ok(true)
+    }
+
     #[cfg(target_os = "linux")]
     pub(crate) fn root_directory_handle(&self) -> Result<fs::File, LocalTargetError> {
         use rustix::fs::{Mode, OFlags, openat};
@@ -222,7 +376,7 @@ impl LocalTargetPolicy {
         candidate: &Path,
     ) -> Result<fs::File, LocalTargetError> {
         use rustix::fd::OwnedFd;
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat, openat2};
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
 
         let relative = candidate
             .strip_prefix(&self.root)
@@ -233,11 +387,10 @@ impl LocalTargetPolicy {
         let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let mut attempts = 0;
         let directory = loop {
-            let outcome = openat2(
+            let outcome = confined_openat2(
                 self.root_handle.as_ref(),
                 relative,
                 flags,
-                Mode::empty(),
                 ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS | ResolveFlags::NO_SYMLINKS,
             );
             attempts += 1;
@@ -287,10 +440,7 @@ impl LocalTargetPolicy {
     /// candidate spelling while opening it relative to `root_handle` lets the
     /// derived policy continue to name the same logical namespace after the
     /// root's directory entry is concurrently replaced.
-    pub(crate) fn derive_confined_directory(
-        &self,
-        candidate: &Path,
-    ) -> Result<Self, LocalTargetError> {
+    pub fn derive_confined_directory(&self, candidate: &Path) -> Result<Self, LocalTargetError> {
         #[cfg(target_os = "linux")]
         {
             let relative = candidate
@@ -480,7 +630,7 @@ impl LocalTargetPolicy {
         follow_symlinks: bool,
     ) -> Result<OpenedTarget, LocalTargetError> {
         use rustix::fd::OwnedFd;
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat, openat2};
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
 
         let relative = candidate
             .strip_prefix(&self.root)
@@ -500,7 +650,7 @@ impl LocalTargetPolicy {
             if !follow_symlinks {
                 resolve |= ResolveFlags::NO_SYMLINKS;
             }
-            let outcome = openat2(root, relative, flags, Mode::empty(), resolve);
+            let outcome = confined_openat2(root, relative, flags, resolve);
             attempts += 1;
             if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS
             {
@@ -610,6 +760,38 @@ fn read_bounded_utf8(
         canonical_path,
         source,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn read_for_comparison(
+    path: &Path,
+    expected_len: usize,
+    logical_path: &Path,
+) -> Result<Vec<u8>, LocalTargetError> {
+    use rustix::fs::{Mode, OFlags, open};
+
+    let file = open(
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(fs::File::from)
+    .map_err(|error| classify_errno(logical_path, error))?;
+    if !file
+        .metadata()
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?
+        .is_file()
+    {
+        return Err(LocalTargetError::NotFile(logical_path.to_owned()));
+    }
+    let limit = u64::try_from(expected_len)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut current = Vec::with_capacity(expected_len.saturating_add(1));
+    file.take(limit)
+        .read_to_end(&mut current)
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?;
+    Ok(current)
 }
 
 #[cfg(target_os = "linux")]
@@ -1036,6 +1218,9 @@ fn reject_symlink_components(root: &Path, candidate: &Path) -> Result<(), LocalT
 fn classify_errno(path: &Path, source: rustix::io::Errno) -> LocalTargetError {
     if source == rustix::io::Errno::XDEV {
         return LocalTargetError::OutsideRoot(path.to_owned());
+    }
+    if source == rustix::io::Errno::NOTDIR {
+        return LocalTargetError::NotDirectory(path.to_owned());
     }
     classify_io(
         path.to_owned(),
@@ -1880,6 +2065,23 @@ mod tests {
         assert_ne!(loaded.source(), "= Outside");
         fs::remove_file(&root.0).expect("remove replacement symlink");
         fs::rename(displaced, &root.0).expect("restore trusted root");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn openat2_unavailable_errors_use_the_handle_relative_fallback() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        for error in [rustix::io::Errno::NOSYS, rustix::io::Errno::INVAL] {
+            FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(error)));
+            let mut session =
+                LocalTargetSession::new(policy.clone(), 1, FilesystemReadLimits::default());
+            let loaded = session
+                .read_utf8(&root.0.join("docs"), "guide.adoc")
+                .expect("fallback read");
+            FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+            assert_eq!(loaded.source(), "= Guide");
+        }
     }
 
     #[cfg(target_os = "linux")]

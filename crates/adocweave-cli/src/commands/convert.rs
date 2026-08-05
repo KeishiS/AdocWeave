@@ -4,7 +4,7 @@ use std::path::Path;
 use adocweave::output::html::RenderPolicy;
 use adocweave::{AnalysisOptions, Engine, ParseError};
 
-use super::html_policy::{self, StylesheetArgument};
+use super::html_policy::{self, StylesheetArgument, StylesheetFileOrigin};
 
 #[derive(Debug)]
 pub(crate) enum Error {
@@ -19,9 +19,9 @@ pub(crate) fn run(
     html: &adocweave_config::HtmlSettings,
     complete: bool,
     stylesheets: &[StylesheetArgument],
-    mut read: impl FnMut(&Path) -> io::Result<Vec<u8>>,
+    mut read: impl FnMut(StylesheetFileOrigin, &Path) -> io::Result<Vec<u8>>,
 ) -> Result<String, Error> {
-    let policy = html_policy::build(html, complete, stylesheets, |_, path| read(path), || false)
+    let policy = html_policy::build(html, complete, stylesheets, &mut read, || false)
         .map_err(Error::Html)?;
     process(input, analysis_options, &policy)
 }
@@ -56,7 +56,7 @@ mod tests {
             &adocweave_config::HtmlSettings::default(),
             false,
             &[],
-            |_| unreachable!("no stylesheet files"),
+            |_, _| unreachable!("no stylesheet files"),
         )
         .expect("converted output");
 
@@ -74,7 +74,7 @@ mod tests {
             &adocweave_config::HtmlSettings::default(),
             false,
             &[],
-            |_| unreachable!("no stylesheet files"),
+            |_, _| unreachable!("no stylesheet files"),
         )
         .expect_err("invalid UTF-8");
 

@@ -164,7 +164,6 @@ pub(crate) fn check_error(error: commands::check::Error) -> CliError {
         commands::check::Error::Analysis(source) => CliError::Analysis(source),
         commands::check::Error::Position(source) => CliError::Position(source),
         commands::check::Error::Include(source) => CliError::Include(source),
-        commands::check::Error::LocalTarget(source) => CliError::LocalTarget(source),
         commands::check::Error::FixConflict(source) => CliError::FixConflict(source),
         commands::check::Error::Serialize(message) => CliError::Serialize(message),
     }

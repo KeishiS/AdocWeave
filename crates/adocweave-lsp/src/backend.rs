@@ -31,6 +31,7 @@ const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
 const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
 const MAX_WATCH_JOURNAL_URI_BYTES: usize = 1024 * 1024;
+const WATCH_SCAN_RECOVERY_DEBOUNCE_MS: u64 = 100;
 
 pub(crate) struct Backend {
     client: ClientSocket,
@@ -51,6 +52,7 @@ struct ActiveWorkspaceScan {
     sequence: u64,
     cancellation: Arc<CancellationToken>,
     accept_result: bool,
+    rejection: Option<String>,
 }
 
 struct WorkspaceScanStart {
@@ -60,6 +62,7 @@ struct WorkspaceScanStart {
 
 struct WorkspaceScanCompletion {
     accept_result: bool,
+    rejection: Option<String>,
     next: Option<WorkspaceScanStart>,
 }
 
@@ -67,6 +70,7 @@ impl WorkspaceScanControl {
     fn request_replacement(&mut self) -> Option<WorkspaceScanStart> {
         if let Some(active) = &mut self.active {
             active.accept_result = false;
+            active.rejection = None;
             active.cancellation.cancel();
             self.pending = true;
             return None;
@@ -74,10 +78,10 @@ impl WorkspaceScanControl {
         Some(self.start())
     }
 
-    fn reject_result_and_queue_follow_up(&mut self) {
+    fn reject_result(&mut self, reason: String) {
         if let Some(active) = &mut self.active {
             active.accept_result = false;
-            self.pending = true;
+            active.rejection.get_or_insert(reason);
         }
     }
 
@@ -97,6 +101,7 @@ impl WorkspaceScanControl {
         let next = start_next.then(|| self.start());
         Some(WorkspaceScanCompletion {
             accept_result: active.accept_result,
+            rejection: active.rejection,
             next,
         })
     }
@@ -104,6 +109,7 @@ impl WorkspaceScanControl {
     fn cancel(&mut self) {
         if let Some(active) = &mut self.active {
             active.accept_result = false;
+            active.rejection = None;
             active.cancellation.cancel();
         }
         self.pending = false;
@@ -117,6 +123,7 @@ impl WorkspaceScanControl {
             sequence: self.sequence,
             cancellation: Arc::clone(&cancellation),
             accept_result: true,
+            rejection: None,
         });
         WorkspaceScanStart {
             sequence: self.sequence,
@@ -191,23 +198,57 @@ impl WatchedChangeJournal {
 struct WorkspaceScanCoordinator {
     control: WorkspaceScanControl,
     watched_changes: WatchedChangeJournal,
+    recovery_generation: u64,
+    recovery_needed: bool,
 }
 
 impl WorkspaceScanCoordinator {
     fn request_replacement(&mut self) -> Option<WorkspaceScanStart> {
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_needed = false;
         self.watched_changes.clear();
         self.control.request_replacement()
     }
 
-    fn record_watched_changes(&mut self, changes: &[FileEvent]) {
+    fn record_watched_changes(&mut self, changes: &[FileEvent]) -> Option<u64> {
         if self.control.accepts_active_result() && !self.watched_changes.record(changes) {
             // The journal can no longer reconstruct all changes made after the
             // worker took its snapshot. Keep the incrementally updated service
             // state and reject that snapshot instead of installing older
-            // contents over it. The worker is allowed to finish so repeated
-            // notifications cannot keep restarting the scan.
-            self.control.reject_result_and_queue_follow_up();
+            // contents over it. The worker is allowed to finish and reports a
+            // bounded failure instead of retrying forever under a notification
+            // stream that exceeds this safety limit.
+            self.control.reject_result(format!(
+                "workspace watch journal limit exceeded: at most {MAX_WATCH_JOURNAL_ENTRIES} entries and {MAX_WATCH_JOURNAL_URI_BYTES} URI bytes may change during one scan"
+            ));
+            self.recovery_needed = true;
         }
+        if self.recovery_needed && !changes.is_empty() {
+            self.recovery_generation = self.recovery_generation.saturating_add(1);
+            Some(self.recovery_generation)
+        } else {
+            None
+        }
+    }
+
+    fn request_recovery(&mut self, generation: u64) -> Option<WorkspaceScanStart> {
+        if !self.recovery_needed || generation != self.recovery_generation {
+            return None;
+        }
+        self.recovery_needed = false;
+        self.watched_changes.clear();
+        if self.control.active.is_some() {
+            self.control.pending = true;
+            None
+        } else {
+            Some(self.control.start())
+        }
+    }
+
+    fn request_quiet_recovery(&mut self) -> u64 {
+        self.recovery_needed = true;
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_generation
     }
 
     fn complete(
@@ -232,6 +273,9 @@ impl WorkspaceScanCoordinator {
             }
         } else {
             self.watched_changes.clear();
+            if let Some(error) = completion.rejection {
+                jobs.extend(service.workspace_scan_failed(error));
+            }
         }
         Some(WorkspaceScanTransition {
             jobs,
@@ -242,6 +286,8 @@ impl WorkspaceScanCoordinator {
     fn cancel(&mut self) {
         self.control.cancel();
         self.watched_changes.clear();
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_needed = false;
     }
 }
 
@@ -265,6 +311,10 @@ struct AnalysisCompleted {
 struct WorkspaceScanned {
     sequence: u64,
     scan: Result<crate::service::WorkspaceScan, String>,
+}
+
+struct WorkspaceScanRecovery {
+    generation: u64,
 }
 
 struct WorkspaceScanTransition {
@@ -351,10 +401,17 @@ impl Backend {
                 if project_configuration_changed {
                     state.schedule_workspace_scan();
                 } else {
-                    state
+                    let changes = state.service.workspace_files_changed_with_journal(params);
+                    let mut recovery_generation = state
                         .workspace_scans
-                        .record_watched_changes(&params.changes);
-                    for job in state.service.workspace_files_changed(params) {
+                        .record_watched_changes(&changes.journal);
+                    if changes.recovery_required {
+                        recovery_generation = Some(state.workspace_scans.request_quiet_recovery());
+                    }
+                    if let Some(generation) = recovery_generation {
+                        state.schedule_workspace_scan_recovery(generation);
+                    }
+                    for job in changes.jobs {
                         state.schedule_analysis(job);
                     }
                 }
@@ -496,6 +553,12 @@ impl Backend {
                     state.spawn_workspace_scan(next);
                 }
                 ControlFlow::Continue(())
+            })
+            .event::<WorkspaceScanRecovery>(|state, recovery| {
+                if let Some(start) = state.workspace_scans.request_recovery(recovery.generation) {
+                    state.spawn_workspace_scan(start);
+                }
+                ControlFlow::Continue(())
             });
 
         ServiceBuilder::new()
@@ -570,6 +633,17 @@ impl Backend {
             .await
             .map_err(|error| format!("workspace scan worker failed: {error}"));
             let _ = client.emit(WorkspaceScanned { sequence, scan });
+        });
+    }
+
+    fn schedule_workspace_scan_recovery(&self, generation: u64) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
+            ))
+            .await;
+            let _ = client.emit(WorkspaceScanRecovery { generation });
         });
     }
 
@@ -779,6 +853,20 @@ where
     T: Send + 'static,
     F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
 {
+    run_cpu_request_with_completion_hook(limit, document_cancellation, operation, || {}).await
+}
+
+async fn run_cpu_request_with_completion_hook<T, F, H>(
+    limit: Arc<Semaphore>,
+    document_cancellation: Option<Arc<CancellationToken>>,
+    operation: F,
+    after_worker: H,
+) -> Result<T, ResponseError>
+where
+    T: Send + 'static,
+    F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+    H: FnOnce(),
+{
     let request_cancellation = Arc::new(CancellationToken::new());
     let cancel_on_drop = CancelWorkerOnDrop(request_cancellation.clone());
     let permit = limit
@@ -801,6 +889,7 @@ where
         })()
     })
     .await;
+    after_worker();
     let response = finish_cpu_request(&cancellation, result);
     drop(cancel_on_drop);
     response
@@ -958,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_overflow_rejects_the_snapshot_without_restarting_the_worker() {
+    fn journal_overflow_waits_for_quiet_before_restarting_the_worker() {
         let mut coordinator = WorkspaceScanCoordinator::default();
         let active = coordinator.request_replacement().expect("initial scan");
         let uri = Url::parse("file:///workspace/root.adoc").expect("URI");
@@ -968,17 +1057,26 @@ mod tests {
             0,
             usize::MAX,
         ));
-        coordinator.record_watched_changes(&[FileEvent::new(uri, FileChangeType::CHANGED)]);
+        let recovery = coordinator
+            .record_watched_changes(&[FileEvent::new(uri, FileChangeType::CHANGED)])
+            .expect("recovery generation");
 
         assert!(!active.cancellation.is_cancelled());
         assert!(!coordinator.control.accepts_active_result());
+        assert!(coordinator.request_recovery(recovery).is_none());
+        assert!(!active.cancellation.is_cancelled());
         let completion = coordinator
             .control
             .complete(active.sequence)
             .expect("completion");
         assert!(!completion.accept_result);
-        let follow_up = completion.next.expect("one follow-up");
-        assert!(!follow_up.cancellation.is_cancelled());
+        assert!(completion.next.is_some());
+        assert!(
+            completion
+                .rejection
+                .as_deref()
+                .is_some_and(|message| message.contains("watch journal limit exceeded"))
+        );
     }
 
     #[test]
@@ -993,7 +1091,7 @@ mod tests {
             document_uri.clone(),
             FileChangeType::CHANGED,
         )];
-        coordinator.record_watched_changes(&changes);
+        let _ = coordinator.record_watched_changes(&changes);
         let _ = service.workspace_files_changed(DidChangeWatchedFilesParams { changes });
 
         let transition = coordinator
@@ -1018,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_overflow_keeps_incremental_state_when_the_old_scan_finishes() {
+    fn journal_overflow_keeps_incremental_state_and_finishes_with_a_bounded_error() {
         let (root, document_uri, mut service) = scan_race_service("adocweave-scan-overflow");
         let mut coordinator = WorkspaceScanCoordinator::default();
         let active = coordinator.request_replacement().expect("active scan");
@@ -1034,7 +1132,9 @@ mod tests {
                 .watched_changes
                 .record_with_limits(&changes, 0, usize::MAX)
         );
-        coordinator.record_watched_changes(&changes);
+        let first_recovery = coordinator
+            .record_watched_changes(&changes)
+            .expect("first recovery generation");
         let _ = service.workspace_files_changed(DidChangeWatchedFilesParams { changes });
 
         let transition = coordinator
@@ -1047,7 +1147,10 @@ mod tests {
             )
             .expect("scan completion");
 
-        assert!(transition.next.is_some(), "one follow-up scan is retained");
+        assert!(
+            transition.next.is_none(),
+            "recovery waits for the quiet timer"
+        );
         assert_eq!(
             service
                 .workspace_resource(&document_uri)
@@ -1055,6 +1158,23 @@ mod tests {
                 .as_ref(),
             "= After\n",
             "the rejected snapshot must not replace the watched update",
+        );
+        let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+        assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("workspace watch journal limit exceeded")
+        }));
+        let final_recovery = coordinator
+            .record_watched_changes(&[FileEvent::new(document_uri, FileChangeType::CHANGED)])
+            .expect("updated recovery generation");
+        assert!(coordinator.request_recovery(first_recovery).is_none());
+        let recovery = coordinator
+            .request_recovery(final_recovery)
+            .expect("one recovery after notifications stop");
+        assert!(
+            !recovery.cancellation.is_cancelled(),
+            "the bounded recovery worker starts after the quiet period"
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -1224,6 +1344,26 @@ mod tests {
         assert_content_modified(Err::<(), _>(QueryError::Internal(
             "query failed".to_owned(),
         )));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn asynchronous_path_checks_document_change_after_worker_completion() {
+        async fn assert_content_modified(result: QueryResult<()>) {
+            let document_cancellation = Arc::new(CancellationToken::new());
+            let cancel_after_worker = document_cancellation.clone();
+            let error = run_cpu_request_with_completion_hook(
+                Arc::new(Semaphore::new(1)),
+                Some(document_cancellation),
+                move |_| result,
+                move || cancel_after_worker.cancel(),
+            )
+            .await
+            .expect_err("content modified");
+            assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+        }
+
+        assert_content_modified(Ok(())).await;
+        assert_content_modified(Err(QueryError::Internal("worker error".to_owned()))).await;
     }
 
     #[test]

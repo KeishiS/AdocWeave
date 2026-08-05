@@ -36,8 +36,7 @@ pub(crate) struct RunRequest<'request> {
     pub(crate) project: &'request adocweave_config::ResolvedProjectConfig,
     pub(crate) css: &'request [StylesheetArgument],
     pub(crate) configuration_policy: adocweave_host::LocalTargetPolicy,
-    pub(crate) filesystem_policy: adocweave_host::LocalFilesystemPolicy,
-    pub(crate) filesystem_roots: Vec<PathBuf>,
+    pub(crate) filesystem_access: adocweave_host::LocalFilesystemAccess,
     pub(crate) server: ServerOptions,
 }
 
@@ -52,83 +51,36 @@ struct BuildRequest<'request> {
 }
 
 #[derive(Clone)]
-struct ExplicitStylesheetAuthority {
-    authored: PathBuf,
-    candidate: PathBuf,
-    policy: adocweave_host::LocalTargetPolicy,
-}
-
-#[derive(Clone)]
 struct PreviewAuthorities {
     configuration_policy: adocweave_host::LocalTargetPolicy,
-    filesystem_policy: adocweave_host::LocalFilesystemPolicy,
-    filesystem_roots: Vec<PathBuf>,
-    filesystem_limits: adocweave_host::FilesystemReadLimits,
-    explicit_stylesheets: Vec<ExplicitStylesheetAuthority>,
+    filesystem_access: adocweave_host::LocalFilesystemAccess,
+    explicit_stylesheets: html_policy::ExplicitStylesheetAuthorities,
 }
 
 impl PreviewAuthorities {
     fn new(request: &RunRequest<'_>) -> Result<Self, Error> {
-        let explicit_stylesheets = request
-            .css
-            .iter()
-            .filter_map(|argument| match argument {
-                StylesheetArgument::File(path) => Some(path),
-                StylesheetArgument::Url(_) => None,
-            })
-            .map(|authored| {
-                let parent = authored
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."));
-                let file_name = authored.file_name().ok_or_else(|| {
-                    Error::Path(format!(
-                        "stylesheet path has no file name: {}",
-                        authored.display()
-                    ))
-                })?;
-                let policy = adocweave_host::LocalTargetPolicy::new(parent)
-                    .map_err(|error| Error::Path(error.to_string()))?;
-                Ok(ExplicitStylesheetAuthority {
-                    authored: authored.clone(),
-                    candidate: policy.root().join(file_name),
-                    policy,
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
+        let explicit_stylesheets =
+            html_policy::ExplicitStylesheetAuthorities::new(&request.project.html, request.css)
+                .map_err(Error::Html)?;
         Ok(Self {
             configuration_policy: request.configuration_policy.clone(),
-            filesystem_policy: request.filesystem_policy.clone(),
-            filesystem_roots: request.filesystem_roots.clone(),
-            filesystem_limits: request.project.resources.limit_plan.filesystem_reads,
+            filesystem_access: request.filesystem_access.clone(),
             explicit_stylesheets,
         })
-    }
-
-    fn explicit(&self, authored: &Path) -> Option<&ExplicitStylesheetAuthority> {
-        self.explicit_stylesheets
-            .iter()
-            .find(|authority| authority.authored == authored)
     }
 
     fn workspace_policy_for(
         &self,
         candidate: &Path,
     ) -> Result<&adocweave_host::LocalTargetPolicy, Error> {
-        let root = self
-            .filesystem_roots
-            .iter()
-            .filter(|root| candidate.starts_with(root))
-            .max_by_key(|root| root.components().count())
+        self.filesystem_access
+            .policy_for_path(candidate)
             .ok_or_else(|| {
                 Error::Path(format!(
                     "preview path is outside its filesystem authority: {}",
                     candidate.display()
                 ))
-            })?;
-        self.filesystem_policy.root_policy(root).ok_or_else(|| {
-            Error::Path("preview filesystem root has no retained authority".to_owned())
-        })
+            })
     }
 
     fn absolute_workspace_candidate(&self, path: &Path) -> PathBuf {
@@ -153,19 +105,11 @@ impl PreviewAuthorities {
             .map_err(|error| Error::Path(error.to_string()))
     }
 
-    fn explicit_for_candidate(&self, candidate: &Path) -> Option<&ExplicitStylesheetAuthority> {
-        self.explicit_stylesheets
-            .iter()
-            .find(|authority| authority.candidate == candidate)
-    }
-
     fn snapshot(
         &self,
         dependencies: &[preview::Dependency],
     ) -> BTreeMap<preview::Dependency, preview::Fingerprint> {
-        let mut workspace = self
-            .filesystem_policy
-            .session_for_roots(&self.filesystem_roots, self.filesystem_limits);
+        let mut workspace = self.filesystem_access.session();
         let mut configuration =
             crate::configuration_stylesheet_session(self.configuration_policy.clone());
         dependencies
@@ -197,18 +141,10 @@ impl PreviewAuthorities {
                         .map(|loaded| preview::Fingerprint::from_loaded_bytes(loaded.source()))
                         .map_err(|error| error.to_string()),
                     preview::DependencyAuthority::ExplicitStylesheet => self
-                        .explicit_for_candidate(dependency.path())
-                        .ok_or_else(|| "explicit stylesheet authority is missing".to_owned())
-                        .and_then(|authority| {
-                            let mut session =
-                                crate::configuration_stylesheet_session(authority.policy.clone());
-                            session
-                                .read_candidate_bytes_no_symlinks(&authority.candidate)
-                                .map(|loaded| {
-                                    preview::Fingerprint::from_loaded_bytes(loaded.source())
-                                })
-                                .map_err(|error| error.to_string())
-                        }),
+                        .explicit_stylesheets
+                        .read_candidate(dependency.path())
+                        .map(|(_, bytes)| preview::Fingerprint::from_loaded_bytes(&bytes))
+                        .map_err(|error| error.to_string()),
                 }
                 .unwrap_or_else(|error| preview::Fingerprint::unavailable(&error));
                 (dependency, fingerprint)
@@ -220,17 +156,7 @@ impl PreviewAuthorities {
         &self,
         authored: &Path,
     ) -> io::Result<(preview::Dependency, Vec<u8>, preview::Fingerprint)> {
-        let authority = self.explicit(authored).ok_or_else(|| {
-            io::Error::other(format!(
-                "explicit stylesheet authority is missing: {}",
-                authored.display()
-            ))
-        })?;
-        let mut session = crate::configuration_stylesheet_session(authority.policy.clone());
-        let loaded = session
-            .read_candidate_bytes_no_symlinks(&authority.candidate)
-            .map_err(io::Error::other)?;
-        let (path, bytes) = loaded.into_parts();
+        let (path, bytes) = self.explicit_stylesheets.read_authored(authored)?;
         let dependency = preview::Dependency::explicit_stylesheet(path);
         let fingerprint = preview::Fingerprint::from_loaded_bytes(&bytes);
         Ok((dependency, bytes, fingerprint))
@@ -338,12 +264,8 @@ pub(crate) fn run(request: RunRequest<'_>, shutdown: &AtomicBool) -> Result<(), 
                             .chain(
                                 build_authorities
                                     .explicit_stylesheets
-                                    .iter()
-                                    .map(|authority| {
-                                        preview::Dependency::explicit_stylesheet(
-                                            authority.candidate.clone(),
-                                        )
-                                    }),
+                                    .candidates()
+                                    .map(preview::Dependency::explicit_stylesheet),
                             )
                             .collect::<Vec<_>>();
                     dependencies.extend(build_authorities.snapshot(&fallback));
@@ -380,8 +302,8 @@ fn build_with_stage_hook(
     let plan = request.project.resources.limit_plan;
     let mut filesystem = request
         .authorities
-        .filesystem_policy
-        .session_for_roots(&request.authorities.filesystem_roots, plan.filesystem_reads)
+        .filesystem_access
+        .session()
         .map_err(local_include::LocalIncludeError::Host)
         .map_err(Error::Include)?;
     let loaded = filesystem
@@ -563,6 +485,12 @@ mod tests {
             .root_policy(&filesystem_roots[0])
             .expect("configuration policy")
             .clone();
+        let filesystem_access = filesystem_policy
+            .access_existing(
+                filesystem_roots,
+                project.resources.limit_plan.filesystem_reads,
+            )
+            .expect("filesystem access");
         PreviewAuthorities::new(&RunRequest {
             input_path: &root.join("manual.adoc"),
             include: true,
@@ -572,8 +500,7 @@ mod tests {
             project,
             css,
             configuration_policy,
-            filesystem_policy,
-            filesystem_roots,
+            filesystem_access,
             server: ServerOptions {
                 bind: "127.0.0.1".parse().expect("loopback"),
                 port: 0,
@@ -581,6 +508,66 @@ mod tests {
             },
         })
         .expect("preview authorities")
+    }
+
+    #[test]
+    fn preview_rejects_excess_stylesheets_before_opening_authorities() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let filesystem_policy = adocweave_host::LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            adocweave_host::FilesystemReadLimits::default(),
+        )
+        .expect("filesystem policy");
+        let filesystem_roots = filesystem_policy.roots().to_vec();
+        let configuration_policy = filesystem_policy
+            .root_policy(&filesystem_roots[0])
+            .expect("configuration policy")
+            .clone();
+        let project = adocweave_config::ResolvedProjectConfig {
+            html: adocweave_config::HtmlSettings {
+                stylesheet_urls: vec!["https://example.com/project.css".to_owned()],
+                ..adocweave_config::HtmlSettings::default()
+            },
+            ..adocweave_config::ResolvedProjectConfig::default()
+        };
+        let css = (0..16)
+            .map(|index| {
+                StylesheetArgument::File(
+                    root.path()
+                        .join(format!("missing-{index}"))
+                        .join("style.css"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let filesystem_access = filesystem_policy
+            .access_existing(
+                filesystem_roots,
+                project.resources.limit_plan.filesystem_reads,
+            )
+            .expect("filesystem access");
+
+        let result = PreviewAuthorities::new(&RunRequest {
+            input_path: &root.path().join("manual.adoc"),
+            include: false,
+            base_dir: Some(root.path()),
+            allowed_roots: &[],
+            project_root: Some(root.path()),
+            project: &project,
+            css: &css,
+            configuration_policy,
+            filesystem_access,
+            server: ServerOptions {
+                bind: "127.0.0.1".parse().expect("loopback"),
+                port: 0,
+                debounce_ms: 0,
+            },
+        });
+
+        assert!(matches!(
+            result,
+            Err(Error::Html(html_policy::Error::Stylesheet(message)))
+                if message == "stylesheet count exceeds the limit of 16"
+        ));
     }
 
     #[test]
@@ -672,6 +659,87 @@ mod tests {
             observed,
             &preview::Fingerprint::from_loaded_bytes(b"later snapshot\n")
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn build_keeps_all_retained_authorities_after_root_replacement() {
+        let parent = tempfile::tempdir().expect("temporary parent");
+        let root = parent.path().join("workspace");
+        std::fs::create_dir(&root).expect("workspace");
+        let input = root.join("manual.adoc");
+        let include = root.join("chapter.adoc");
+        let configured = root.join("configured.css");
+        let explicit = root.join("explicit.css");
+        std::fs::write(&input, "trusted input\ninclude::chapter.adoc[]\n").expect("trusted input");
+        std::fs::write(&include, "trusted include\n").expect("trusted include");
+        std::fs::write(&configured, "/* trusted configured */").expect("configured stylesheet");
+        std::fs::write(&explicit, "/* trusted explicit */").expect("explicit stylesheet");
+        let project = adocweave_config::ResolvedProjectConfig {
+            html: adocweave_config::HtmlSettings {
+                stylesheet_files: vec![configured.clone()],
+                ..adocweave_config::HtmlSettings::default()
+            },
+            ..adocweave_config::ResolvedProjectConfig::default()
+        };
+        let css = [StylesheetArgument::File(explicit.clone())];
+        let authorities = test_authorities(&root, &project, &css);
+        let displaced = parent.path().join("retained-workspace");
+
+        std::fs::rename(&root, &displaced).expect("displace workspace");
+        std::fs::create_dir(&root).expect("replacement workspace");
+        std::fs::write(&input, "outside input\n").expect("replacement input");
+        std::fs::write(&include, "outside include\n").expect("replacement include");
+        std::fs::write(&configured, "/* outside configured */")
+            .expect("replacement configured stylesheet");
+        std::fs::write(&explicit, "/* outside explicit */")
+            .expect("replacement explicit stylesheet");
+
+        let mut dependencies = BTreeMap::new();
+        let build = build(
+            BuildRequest {
+                input_path: &input,
+                include: true,
+                base_dir: &root,
+                project_root: &root,
+                project: &project,
+                css: &css,
+                authorities: &authorities,
+            },
+            &CancellationToken::new(),
+            &mut dependencies,
+        )
+        .expect("preview build");
+
+        assert!(build.html.contains("trusted input"));
+        assert!(build.html.contains("trusted include"));
+        assert!(!build.html.contains("outside"));
+        assert_eq!(
+            dependencies.get(&preview::Dependency::workspace(&input)),
+            Some(&preview::Fingerprint::from_loaded_bytes(
+                b"trusted input\ninclude::chapter.adoc[]\n"
+            ))
+        );
+        assert_eq!(
+            dependencies.get(&preview::Dependency::workspace(&include)),
+            Some(&preview::Fingerprint::from_loaded_bytes(
+                b"trusted include\n"
+            ))
+        );
+        assert_eq!(
+            dependencies.get(&preview::Dependency::configuration(&configured)),
+            Some(&preview::Fingerprint::from_loaded_bytes(
+                b"/* trusted configured */"
+            ))
+        );
+        assert_eq!(
+            dependencies.get(&preview::Dependency::explicit_stylesheet(&explicit)),
+            Some(&preview::Fingerprint::from_loaded_bytes(
+                b"/* trusted explicit */"
+            ))
+        );
+        std::fs::remove_dir_all(&root).expect("remove replacement workspace");
+        std::fs::rename(displaced, &root).expect("restore workspace");
     }
 
     #[cfg(target_os = "linux")]

@@ -53,7 +53,10 @@ handleを公開しません。
 
 ``LocalFilesystemSession``はrootごとのadapterと全rootで共有する処理上限を所有します。
 ``LocalFilesystemPolicy``は正規化したpathだけでなく取得済みのroot handleも所有し、session作成時にpathから
-rootを開き直しません。Linuxのディレクトリ走査は保持したhandleから子ディレクトリを開いて列挙します。
+rootを開き直しません。用途ごとに選択したroot handle、対応するpathおよび読込上限は
+``LocalFilesystemAccess``へまとめ、呼出側が別のpolicyとroot path一覧を組み合わせられないようにします。
+Linuxのディレクトリ走査は保持したhandleから
+子ディレクトリを開いて列挙します。
 project設定は探索とUTF-8読込を一つのhandle相対sessionで行い、検査済みpathを別のfilesystem操作で開き直しません。
 CLIは作業ディレクトリのroot handleから、その範囲内の入力ディレクトリと設定由来のresource rootを派生させます。
 設定由来のstylesheetも同じroot handleから上限付きbyte列として読みます。command lineで明示したrootは、作業
@@ -63,6 +66,8 @@ CLIは作業ディレクトリのroot handleから、その範囲内の入力デ
 live previewの依存関係は、workspace、設定由来stylesheet、command lineで指定したstylesheetのauthorityを
 識別子に含めます。監視時も各authorityから新しい上限付きsessionを作って本文を読み、raw pathからhash対象を
 開き直しません。
+Linuxの``format --write``と``check --fix``は、入力読込時に選んだauthorityから対象の親ディレクトリを開き、
+内容の再確認、一時ファイルの作成およびrenameを同じディレクトリhandleに対して実行します。
 ``LocalFilesystemPolicy``が同時に保持するrootは128件までとします。この上限は本文の読込件数とは独立して適用し、
 設定や引数だけでprocessのfile descriptorを使い切ることを防ぎます。
 ``LoadedFilesystemSource``は``LogicalSourceId``と不変な本文を保持し、検査したfileのprovenanceを
@@ -81,6 +86,9 @@ dangling symlink、directory、通常fileおよびrenameを同じcontract suite�
 Linuxでは実filesystemを使い、policy作成と対象読込の間で名前空間を差し替える決定的testも実行します。
 同じroot handleだけを参照することを、単一resource、policyから遅れて作るsession、workspace走査および
 project設定読込、CLIの本文読込および設定由来stylesheet読込で確認します。
+CLIの書込では、policy作成後にrootのpathをroot外へのsymlinkへ差し替えても、保持したディレクトリだけが
+更新されることを確認します。
+書込直前の内容比較とrenameは別操作であり、このAPIを使わないwriterに対するcompare-and-swapは保証しません。
 portable adapterのtestは静的状態でのroot境界と、capabilityが競合耐性を
 宣言しないことを固定します。設定から派生するrootは全platformでanchor外とsymlinkを拒否しますが、macOSと
 Windowsでは検査中の同時変更まで防いだとはみなしません。
