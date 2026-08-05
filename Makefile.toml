@@ -249,6 +249,7 @@ args = [
   "tools/textlint-plugin-npx-smoke.test.mjs",
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-release-smoke.test.mjs",
+  "tools/textlint-plugin-e2e/installed-tree.test.mjs",
   "tools/verify-textlint-plugin-reproducibility.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",

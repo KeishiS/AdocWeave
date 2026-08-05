@@ -21,26 +21,29 @@ import {
   assertConsumerTreeUnchanged,
   verifyInstalledConsumerTree,
 } from "./textlint-plugin-e2e/installed-tree.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
-const TEXTLINT_VERSION = "15.8.0";
-const PACKAGE_NAME = "@adocweave/textlint-plugin-asciidoc";
-const PLUGIN_NAME = "@adocweave/asciidoc";
+const PACKAGE_CONTRACT = loadTextlintPluginPackageContract();
+const TEXTLINT_VERSION = PACKAGE_CONTRACT.compatibility.textlintVersion;
+const TEXTLINT_TYPES_VERSION = PACKAGE_CONTRACT.compatibility.textlintTypesVersion;
+const PACKAGE_NAME = PACKAGE_CONTRACT.identity.packageName;
+const PLUGIN_NAME = PACKAGE_CONTRACT.identity.pluginName;
 const EXPECTED_LINE = 3;
 const EXPECTED_COLUMN = 6;
 const CONSUMER_FIXTURE = fileURLToPath(new URL("./textlint-plugin-e2e/", import.meta.url));
 
 const fileCases = [
-  { name: "sample.adoc", newline: "\n" },
-  { name: "sample.asciidoc", newline: "\r\n" },
-  { name: "sample.asc", newline: "\n" },
+  ...PACKAGE_CONTRACT.extensions.map((extension, index) => ({
+    name: `sample${extension}`,
+    newline: index === 1 ? "\r\n" : "\n",
+  })),
   { name: "sample.guide", newline: "\n" },
 ];
 
-const stdinCases = [
-  { name: "stdin.adoc", newline: "\n" },
-  { name: "stdin.asciidoc", newline: "\r\n" },
-  { name: "stdin.asc", newline: "\n" },
-];
+const stdinCases = PACKAGE_CONTRACT.extensions.map((extension, index) => ({
+  name: `stdin${extension}`,
+  newline: index === 1 ? "\r\n" : "\n",
+}));
 
 const probeRule = String.raw`"use strict";
 
@@ -181,20 +184,20 @@ export function assertDiagnostics(stdout, expectedPaths) {
 }
 
 async function assertInstalledPackage(root) {
-  const packageRoot = join(root, "node_modules", "@adocweave", "textlint-plugin-asciidoc");
+  const packageRoot = join(root, "node_modules", ...PACKAGE_NAME.split("/"));
   assert.equal((await lstat(packageRoot)).isSymbolicLink(), false, "installed plugin must not be a symlink");
   const manifestPath = join(packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   assert.equal(manifest.name, PACKAGE_NAME, `installed package name must be ${PACKAGE_NAME}`);
   assert.deepEqual(manifest.peerDependencies, {
-    "@textlint/types": TEXTLINT_VERSION,
+    "@textlint/types": TEXTLINT_TYPES_VERSION,
     textlint: TEXTLINT_VERSION,
-  }, `installed plugin peer dependencies must be pinned to ${TEXTLINT_VERSION}`);
+  }, "installed plugin peer dependencies must match the package contract");
   const require = createRequire(import.meta.url);
   assert.deepEqual(
-    Object.keys(require(join(packageRoot, "wasm", "adocweave_textlint_wasm.cjs"))),
-    ["parseText"],
-    "packed WebAssembly wrapper must export only parseText",
+    Object.keys(require(join(packageRoot, PACKAGE_CONTRACT.wasm.wrapperPath))),
+    PACKAGE_CONTRACT.wasm.exportNames,
+    "packed WebAssembly wrapper exports must match the package contract",
   );
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
@@ -224,7 +227,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   const manifestBefore = await readFile(manifestPath);
   const lockBefore = await readFile(lockPath);
   const treeBefore = verifyInstalledConsumerTree(cwd);
-  await cacheFixedMetadata(treeBefore, { cwd, environment, npm });
   result = await runProcess(npm.command, [
     ...npm.arguments,
     "install",
@@ -232,7 +234,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
     "--no-audit",
     "--no-fund",
     "--no-save",
-    "--package-lock=false",
     "--legacy-peer-deps",
     "--offline",
     archive,
@@ -242,25 +243,6 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   assert.deepEqual(await readFile(lockPath), lockBefore, "plugin追加により固定lockfileが変化しました");
   const treeAfter = verifyInstalledConsumerTree(cwd, { allowPlugin: true });
   assertConsumerTreeUnchanged(treeBefore, treeAfter);
-}
-
-async function cacheFixedMetadata(inventory, { cwd, environment, npm }) {
-  const pending = [...new Map(inventory.map((entry) => [`${entry.name}@${entry.version}`, entry])).values()];
-  async function worker() {
-    for (let entry = pending.shift(); entry; entry = pending.shift()) {
-      const result = await runProcess(npm.command, [
-        ...npm.arguments,
-        "cache",
-        "add",
-        "--ignore-scripts",
-        `${entry.name}@${entry.version}`,
-      ], { cwd, env: environment });
-      if (result.code !== 0) {
-        throw new Error(diagnosticForUnexpectedExit(`cache fixed metadata ${entry.name}`, result));
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: 8 }, () => worker()));
 }
 
 export async function installLatestCompatibleConsumer({ archive, cwd }) {

@@ -128,7 +128,11 @@ export function parseMakeTasks(source) {
     const dependencies = dependencyBody === undefined
       ? undefined
       : [...dependencyBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-    tasks.set(header[1], { alias, dependencies });
+    const argumentBody = body.match(/^args\s*=\s*\[([\s\S]*?)\]/m)?.[1];
+    const args = argumentBody === undefined
+      ? undefined
+      : [...argumentBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    tasks.set(header[1], { alias, args, dependencies });
   });
   return tasks;
 }
@@ -142,6 +146,9 @@ function requireTask(tasks, name, expected) {
   if (Object.hasOwn(expected, "dependencies") &&
       JSON.stringify(actual.dependencies) !== JSON.stringify(expected.dependencies)) {
     fail(`${name} dependencies must exactly match the canonical gate`);
+  }
+  if (Object.hasOwn(expected, "args") && JSON.stringify(actual.args) !== JSON.stringify(expected.args)) {
+    fail(`${name} arguments must exactly match the canonical gate`);
   }
 }
 
@@ -712,6 +719,22 @@ export function validateReleaseWorkflowPolicy({
       "platform-contract",
       "docs-check",
       "adoc-check-targets",
+    ],
+  });
+  requireTask(tasks, "platform-contract", {
+    args: [
+      "--test",
+      "tools/native-lsp-smoke.test.mjs",
+      "tools/platform-contract.test.mjs",
+      "tools/release-installation-e2e.test.mjs",
+      "tools/textlint-plugin-npx-smoke.test.mjs",
+      "tools/textlint-plugin-post-release-smoke.test.mjs",
+      "tools/textlint-plugin-release-smoke.test.mjs",
+      "tools/textlint-plugin-e2e/installed-tree.test.mjs",
+      "tools/verify-textlint-plugin-reproducibility.test.mjs",
+      "tools/native-change-plan.test.mjs",
+      "tools/verify-native-pr-candidate.test.mjs",
+      "tools/config-schema.test.mjs",
     ],
   });
   // The gate is split so a change that cannot reach Rust source still runs the

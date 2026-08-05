@@ -23,6 +23,7 @@ function fixture() {
     name: "example",
     version: packageEntry.version,
   }));
+  writeFileSync(join(root, packagePath, "index.js"), "export const value = 1;\n");
   writeFileSync(join(root, "package-lock.json"), JSON.stringify({
     name: "consumer",
     version: "0.0.0",
@@ -47,11 +48,13 @@ function mutateJson(path, mutation) {
 test("固定lockfileと実install treeのname、version、resolved、integrityを照合する", () => {
   const root = fixture();
   try {
-    assert.deepEqual(verifyInstalledConsumerTree(root), [{
+    const inventory = verifyInstalledConsumerTree(root);
+    assert.deepEqual(inventory.map(({ contentDigest: _, ...entry }) => entry), [{
       path: packagePath,
       name: "example",
       ...packageEntry,
     }]);
+    assert.match(inventory[0].contentDigest, /^sha256-[A-Za-z0-9+/]+={0,2}$/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -113,11 +116,82 @@ test("実treeとhidden lockの余分または欠落packageを拒否する", () =
 });
 
 test("plugin以外のinventory変更を拒否する", () => {
-  const before = [{ path: packagePath, name: "example", ...packageEntry }];
+  const before = [{ path: packagePath, name: "example", ...packageEntry, contentDigest: "sha256-before" }];
   assert.doesNotThrow(() => assertConsumerTreeUnchanged(before, structuredClone(before)));
   const after = structuredClone(before);
   after[0].version = "1.2.4";
   assert.throws(() => assertConsumerTreeUnchanged(before, after), /実install treeが変化しました/);
+});
+
+test("plugin追加前後のpackage本文改変を拒否する", () => {
+  const root = fixture();
+  try {
+    const before = verifyInstalledConsumerTree(root);
+    writeFileSync(join(root, packagePath, "index.js"), "export const value = 999;\n");
+    const after = verifyInstalledConsumerTree(root);
+    assert.notEqual(after[0].contentDigest, before[0].contentDigest);
+    assert.throws(
+      () => assertConsumerTreeUnchanged(before, after),
+      /実install treeが変化しました/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function optionalFixture(entries, installedPaths) {
+  const root = mkdtempSync(join(tmpdir(), "adocweave-optional-consumer-test-"));
+  mkdirSync(join(root, "node_modules"), { recursive: true });
+  const packages = { "": { name: "consumer", version: "0.0.0" }, ...entries };
+  const installed = {};
+  for (const path of installedPaths) {
+    mkdirSync(join(root, path), { recursive: true });
+    const parts = path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length).split("/");
+    const name = parts[0].startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+    writeFileSync(join(root, path, "package.json"), JSON.stringify({
+      name,
+      version: entries[path].version,
+    }));
+    installed[path] = entries[path];
+  }
+  writeFileSync(join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages }));
+  writeFileSync(join(root, "node_modules", ".package-lock.json"), JSON.stringify({
+    lockfileVersion: 3,
+    packages: installed,
+  }));
+  return root;
+}
+
+test("省略されたoptional親packageの子孫も期待treeから除外する", () => {
+  const parent = "node_modules/darwin-parent";
+  const child = `${parent}/node_modules/child`;
+  const entries = {
+    [parent]: { ...packageEntry, optional: true, os: ["darwin"] },
+    [child]: { ...packageEntry, optional: true },
+  };
+  const root = optionalFixture(entries, []);
+  try {
+    assert.deepEqual(
+      verifyInstalledConsumerTree(root, { platform: { os: "linux", cpu: "x64", libc: "glibc" } }),
+      [],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux以外ではlibc制約をOS判定に使用しない", () => {
+  const path = "node_modules/libc-marked";
+  const entries = { [path]: { ...packageEntry, optional: true, libc: ["glibc"] } };
+  const root = optionalFixture(entries, [path]);
+  try {
+    assert.equal(
+      verifyInstalledConsumerTree(root, { platform: { os: "darwin", cpu: "arm64" } }).length,
+      1,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("固定lockfileのlinkまたは固定されていない取得元を拒否する", () => {

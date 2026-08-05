@@ -805,6 +805,16 @@ test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       makefile: inputs.makefile.replace(
+        '  "tools/textlint-plugin-e2e/installed-tree.test.mjs",\n',
+        "",
+      ),
+    }),
+    /platform-contract arguments must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
         'dependencies = ["quality-fast", "quality-rust", "quality-adapters"]',
         'dependencies = ["quality-fast", "quality-rust"]',
       ),
