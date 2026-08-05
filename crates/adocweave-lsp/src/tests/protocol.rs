@@ -396,7 +396,7 @@ async fn protocol_async_lsp_lifecycle_rejects_requests_in_invalid_states() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn protocol_registers_file_watchers_and_survives_client_rejection() {
+async fn protocol_registers_all_extensions_for_include_recovery_and_survives_rejection() {
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     let (server_stream, client_stream) = tokio::io::duplex(64 * 1024);
@@ -447,6 +447,14 @@ async fn protocol_registers_file_watchers_and_survives_client_rejection() {
         assert_eq!(
             registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["globPattern"],
             "**/*"
+        );
+        assert_eq!(
+            registration["params"]["registrations"][0]["registerOptions"]["watchers"]
+                .as_array()
+                .expect("watchers")
+                .len(),
+            1,
+            "one all-extension watcher must cover missing non-adoc include creation"
         );
         assert_eq!(
             registration["params"]["registrations"][0]["registerOptions"]["watchers"][0]["kind"],
