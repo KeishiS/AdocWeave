@@ -3,6 +3,7 @@ import process from "node:process";
 
 import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
 import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
@@ -220,6 +221,7 @@ function verifyRepository() {
   const publicConformance = json("fixtures/public-conformance.json");
   const worker = json("web-worker/package.json");
   const textlintPlugin = json("packages/textlint-plugin-asciidoc/package.json");
+  const textlintContract = loadTextlintPluginPackageContract();
   const extension = read("editors/zed/extension.toml");
   const extensionCargo = read("editors/zed/Cargo.toml");
   const dist = read("dist-workspace.toml");
@@ -276,7 +278,6 @@ function verifyRepository() {
     "release manifest": manifest.packageVersion,
     "distribution plan": plan.packageVersion,
     "browser package": worker.version,
-    "textlint plugin package": textlintPlugin.version,
     "cross-runtime conformance manifest": conformance.packageVersion,
     "public conformance manifest": publicConformance.packageVersion,
     "Zed extension": tomlValue(extension, "version"),
@@ -358,7 +359,8 @@ function verifyRepository() {
   if (JSON.stringify(plan.releaseMetadata) !== JSON.stringify(EXPECTED_RELEASE_METADATA)) {
     fail("release metadata asset plan is not canonical");
   }
-  if (!cargo.includes("publish = false") || worker.private !== true || textlintPlugin.private !== true ||
+  if (!cargo.includes("publish = false") || worker.private !== true ||
+      textlintPlugin.private !== textlintContract.identity.private ||
       !extensionCargo.includes("publish = false")) {
     fail("non-GitHub package registries must remain disabled");
   }
@@ -368,12 +370,11 @@ function verifyRepository() {
       fail(`textlint plugin must have zero runtime npm dependencies: ${field}`);
     }
   }
-  if (textlintPlugin.engines?.node !== ">=20.18.0 <25" ||
-      JSON.stringify(textlintPlugin.peerDependencies) !== JSON.stringify({
-        "@textlint/types": "15.8.0",
-        textlint: "15.8.0"
-      })) {
-    fail("textlint plugin runtime compatibility range is not canonical");
+  if (textlintPlugin.name !== "adocweave-textlint-plugin-development" ||
+      textlintPlugin.version !== "0.0.0" || textlintPlugin.private !== true ||
+      textlintPlugin.type !== "module" ||
+      JSON.stringify(Object.keys(textlintPlugin).sort()) !== JSON.stringify(["name", "private", "type", "version"])) {
+    fail("textlint plugin development manifest must not duplicate public package metadata");
   }
   for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) {
     if (textlintPlugin.scripts?.[name]) fail(`textlint plugin must not define ${name}`);

@@ -71,18 +71,6 @@
     },
     {
       "type": "literal",
-      "path": "packages/textlint-plugin-asciidoc/package.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "packages/textlint-plugin-asciidoc/package-lock.json",
-      "template": "\"version\": \"{version}\"",
-      "count": 2
-    },
-    {
-      "type": "literal",
       "path": "release/distribution-plan.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1

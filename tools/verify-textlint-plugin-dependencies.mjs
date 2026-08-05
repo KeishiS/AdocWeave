@@ -1,37 +1,48 @@
 import { readFileSync } from "node:fs";
 
 import { fetchedSafely } from "./npm-lock-policy.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const manifest = JSON.parse(
   readFileSync("packages/textlint-plugin-asciidoc/package.json", "utf8"),
 );
+const consumerManifest = JSON.parse(
+  readFileSync("tools/textlint-plugin-e2e/package.json", "utf8"),
+);
 const lock = JSON.parse(
-  readFileSync("packages/textlint-plugin-asciidoc/package-lock.json", "utf8"),
+  readFileSync("tools/textlint-plugin-e2e/package-lock.json", "utf8"),
 );
 const recorded = JSON.parse(
-  readFileSync("security/textlint-plugin-build-licenses.json", "utf8"),
+  readFileSync("security/textlint-plugin-e2e-build-licenses.json", "utf8"),
 );
+const contract = loadTextlintPluginPackageContract();
+const fixedDependencies = {
+  "@textlint/types": contract.compatibility.textlintTypesVersion,
+  textlint: contract.compatibility.textlintVersion,
+};
 
 if (
-  manifest.name !== "@adocweave/textlint-plugin-asciidoc" ||
-  manifest.private !== true ||
-  lock.lockfileVersion !== 3 ||
-  lock.packages?.[""]?.name !== manifest.name ||
-  lock.packages?.[""]?.version !== manifest.version
+  JSON.stringify(manifest) !== JSON.stringify({
+    name: "adocweave-textlint-plugin-development",
+    version: "0.0.0",
+    private: contract.identity.private,
+    type: "module",
+  }) ||
+  lock.lockfileVersion !== 3
 ) {
-  throw new Error("textlint pluginのmanifestとlockfileが一致しません");
+  throw new Error("textlint pluginのmanifestまたはconsumer lockfileを解釈できません");
+}
+const consumer = lock.packages?.[""];
+if (consumer?.name !== "@adocweave/textlint-plugin-e2e" || consumer?.version !== "0.0.0" ||
+    JSON.stringify(consumerManifest.dependencies) !== JSON.stringify(fixedDependencies) ||
+    JSON.stringify(consumer?.dependencies) !== JSON.stringify(fixedDependencies)) {
+  throw new Error("textlint pluginの固定consumer依存を解釈できません");
 }
 for (const field of ["dependencies", "optionalDependencies", "bundledDependencies"]) {
   const value = manifest[field];
   if (value && (Array.isArray(value) ? value.length : Object.keys(value).length) !== 0) {
     throw new Error(`textlint pluginに実行時依存があります: ${field}`);
   }
-}
-if (JSON.stringify(manifest.peerDependencies) !== JSON.stringify({
-  "@textlint/types": "15.8.0",
-  textlint: "15.8.0"
-})) {
-  throw new Error("textlint pluginのpeer dependencyを解釈できません");
 }
 for (const name of ["preinstall", "install", "postinstall", "prepare", "prepack", "postpack"]) {
   if (manifest.scripts?.[name]) throw new Error(`textlint pluginに禁止されたscriptがあります: ${name}`);

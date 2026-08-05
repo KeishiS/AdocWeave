@@ -1,0 +1,59 @@
+{
+  "$schema": "./textlint-plugin-package-contract.schema.json",
+  "schemaVersion": 1,
+  "identity": {
+    "packageName": "@adocweave/textlint-plugin-asciidoc",
+    "pluginName": "@adocweave/asciidoc",
+    "private": true
+  },
+  "extensions": [
+    ".adoc",
+    ".asciidoc",
+    ".asc"
+  ],
+  "compatibility": {
+    "nodeEngine": ">=20.18.0 <25",
+    "textlintVersion": "15.8.0",
+    "textlintTypesVersion": "15.8.0"
+  },
+  "files": [
+    { "path": "LICENSE-APACHE", "source": "LICENSE-APACHE" },
+    { "path": "LICENSE-MIT", "source": "LICENSE-MIT" },
+    { "path": "README.adoc", "source": "packages/textlint-plugin-asciidoc/README.adoc" },
+    { "path": "THIRD_PARTY_NOTICES.adoc", "generator": "third-party-notices" },
+    { "path": "adapter.mjs", "source": "packages/textlint-plugin-asciidoc/adapter.mjs" },
+    { "path": "bridge.mjs", "source": "packages/textlint-plugin-asciidoc/bridge.mjs" },
+    { "path": "index.d.mts", "source": "packages/textlint-plugin-asciidoc/index.d.mts" },
+    { "path": "index.mjs", "source": "packages/textlint-plugin-asciidoc/index.mjs" },
+    { "path": "package.json", "generator": "package-manifest" },
+    { "path": "position.mjs", "source": "packages/textlint-plugin-asciidoc/position.mjs" },
+    { "path": "processor.mjs", "source": "packages/textlint-plugin-asciidoc/processor.mjs" },
+    { "path": "wasm/adocweave_textlint_wasm.cjs", "generator": "wasm-wrapper" },
+    { "path": "wasm/adocweave_textlint_wasm_bg.wasm", "generator": "wasm-binary" }
+  ],
+  "wasm": {
+    "exportNames": ["parseText"],
+    "maximumMemoryBytes": 268435456,
+    "wrapperPath": "wasm/adocweave_textlint_wasm.cjs",
+    "binaryPath": "wasm/adocweave_textlint_wasm_bg.wasm"
+  },
+  "archive": {
+    "fileCount": 13,
+    "maximumPackedBytes": 8388608,
+    "maximumUnpackedBytes": 16777216
+  },
+  "e2eMatrix": [
+    { "runner": "ubuntu-24.04", "node": "20.18.0" },
+    { "runner": "ubuntu-24.04", "node": "21.7.3" },
+    { "runner": "ubuntu-24.04", "node": "22.18.0" },
+    { "runner": "ubuntu-24.04", "node": "23.11.1" },
+    { "runner": "ubuntu-24.04", "node": "release" },
+    { "runner": "macos-15", "node": "release" },
+    { "runner": "windows-2025", "node": "release" }
+  ],
+  "oneShot": {
+    "rulePackage": "textlint-rule-preset-ja-technical-writing",
+    "ruleVersion": "12.0.2",
+    "preset": "ja-technical-writing"
+  }
+}

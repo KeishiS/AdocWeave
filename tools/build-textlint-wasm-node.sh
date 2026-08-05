@@ -6,12 +6,15 @@ if [[ $# -ne 2 ]]; then
   exit 2
 fi
 
-readonly root="$(git rev-parse --show-toplevel)"
+readonly root="${ADOCWEAVE_SOURCE_ROOT:-$(git rev-parse --show-toplevel)}"
 readonly output_directory="$1"
 readonly target_directory="$2"
-readonly maximum_memory_bytes=268435456
 
 cd "$root"
+readonly maximum_memory_bytes="$(node --input-type=module -e '
+  import { loadTextlintPluginPackageContract } from "./tools/textlint-plugin-package-contract.mjs";
+  process.stdout.write(String(loadTextlintPluginPackageContract().wasm.maximumMemoryBytes));
+')"
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo-home -C link-arg=--max-memory=$maximum_memory_bytes"
 cargo build \
   -p adocweave-textlint-wasm \

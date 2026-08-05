@@ -50,7 +50,16 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "web-worker/client.mjs",
     "tools/browser-release-smoke.mjs",
     "tools/package-textlint-plugin-release.sh",
+    "tools/stage-textlint-plugin-package.mjs",
+    "tools/textlint-plugin-package-contract.mjs",
+    "tools/verify-textlint-plugin-package.mjs",
+    "tools/verify-textlint-plugin-reproducibility.mjs",
+    "tools/textlint-plugin-npx-smoke.mjs",
+    "tools/textlint-plugin-post-release-smoke.mjs",
+    "tools/textlint-plugin-e2e/package-lock.json",
     "tools/build-textlint-wasm-node.sh",
+    "tools/textlint-plugin-compatibility-probe.mjs",
+    "tools/textlint-plugin-compatibility-probe.test.mjs",
     "tools/verify-textlint-wasm-memory.mjs",
     "packages/textlint-plugin-asciidoc/processor.mjs",
     "tools/protocol-rust-codegen.mjs",
@@ -308,6 +317,13 @@ test("検査の定義を変える変更ではすべてを実行する", () => {
   }
 });
 
+test("互換性観測workflowの変更はpolicyとcandidate検証へ到達する", () => {
+  const pathname = ".github/workflows/textlint-plugin-compatibility-probe.yml";
+  assert.deepEqual(candidateImpact(pathname), { global: true, native: true });
+  const scope = qualityScope([pathname]);
+  assert.deepEqual(Object.values(scope), Array(Object.keys(scope).length).fill(true));
+});
+
 test("分類できないpathと空の変更集合ではすべてを実行する", () => {
   // 未分類のpathをすり抜けさせると、検証されないまま公開されます。
   const unknown = qualityScope(["brand-new-directory/thing.rs"]);
@@ -338,6 +354,14 @@ test("依存監査が読むすべての入力が監査を要求する", () => {
       "tools/verify-textlint-dependencies.mjs",
       "tools/verify-textlint-dependencies.test.mjs",
       "tools/generate-third-party-notices.mjs",
+      "tools/package-textlint-plugin-release.sh",
+      "tools/stage-textlint-plugin-package.mjs",
+      "tools/textlint-plugin-package-contract.mjs",
+      "tools/verify-textlint-plugin-package.mjs",
+      "tools/verify-textlint-plugin-reproducibility.mjs",
+      "tools/textlint-plugin-e2e/package-lock.json",
+      "release/textlint-plugin-package-contract.json",
+      "release/textlint-plugin-package-contract.schema.json",
       "Cargo.lock",
       "Cargo.toml",
       "deny.toml",

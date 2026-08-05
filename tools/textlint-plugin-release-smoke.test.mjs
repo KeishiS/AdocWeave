@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -10,6 +10,9 @@ import {
   npmInvocation,
   runTextlintPluginReleaseSmoke,
 } from "./textlint-plugin-release-smoke.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+
+const packageContract = loadTextlintPluginPackageContract();
 
 test("公開tgzを実CLI相当の経路で検査する", async () => {
   const { archive, root } = await createFixtureArchive();
@@ -18,7 +21,7 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
     await runTextlintPluginReleaseSmoke(archive, {
       installPackage: async ({ archive: installedArchive, cwd }) => {
         assert.equal(installedArchive, archive);
-        await writeManifest(cwd, "@adocweave/textlint-plugin-asciidoc", "15.8.0");
+        await writeManifest(cwd);
       },
       invokeTextlint: async ({ args, cli, cwd, input }) => {
         assert.equal(cli, join(cwd, "node_modules", "textlint", "bin", "textlint.js"));
@@ -29,7 +32,7 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
         ]);
         const config = JSON.parse(await readFile(join(cwd, ".textlintrc.json"), "utf8"));
         assert.deepEqual(config.plugins, {
-          "@adocweave/asciidoc": { extensions: [".guide"] },
+          [packageContract.identity.pluginName]: { extensions: [".guide"] },
         });
         assert.deepEqual(config.rules, {});
         const paths = input === undefined
@@ -46,22 +49,19 @@ test("公開tgzを実CLI相当の経路で検査する", async () => {
     await rm(root, { recursive: true, force: true });
   }
 
-  assert.equal(invocations.length, 5);
+  const extensionCount = packageContract.extensions.length;
+  assert.equal(invocations.length, extensionCount + 2);
   assert.deepEqual(invocations[0].paths.map((path) => basename(path)), [
-    "sample.adoc",
-    "sample.asciidoc",
-    "sample.asc",
+    ...packageContract.extensions.map((extension) => `sample${extension}`),
     "sample.guide",
   ]);
-  assert.deepEqual(invocations.slice(1, 4).map(({ paths }) => basename(paths[0])), [
-    "stdin.adoc",
-    "stdin.asciidoc",
-    "stdin.asc",
+  assert.deepEqual(invocations.slice(1, 1 + extensionCount).map(({ paths }) => basename(paths[0])), [
+    ...packageContract.extensions.map((extension) => `stdin${extension}`),
   ]);
-  assert.ok(invocations.slice(1, 4).every(({ args }) => args.includes("--stdin")));
+  assert.ok(invocations.slice(1, 1 + extensionCount).every(({ args }) => args.includes("--stdin")));
   assert.equal(invocations[1].input, fixtureSource("\n"));
   assert.equal(invocations[2].input, fixtureSource("\r\n"));
-  assert.ok(invocations[4].args.includes("--fix"));
+  assert.ok(invocations.at(-1).args.includes("--fix"));
 });
 
 test("--fixによる入力変更を検出する", async () => {
@@ -69,11 +69,7 @@ test("--fixによる入力変更を検出する", async () => {
   try {
     await assert.rejects(
       runTextlintPluginReleaseSmoke(archive, {
-        installPackage: async ({ cwd }) => writeManifest(
-          cwd,
-          "@adocweave/textlint-plugin-asciidoc",
-          "15.8.0",
-        ),
+        installPackage: async ({ cwd }) => writeManifest(cwd),
         invokeTextlint: async ({ args, cwd, input }) => {
           const paths = input === undefined
             ? args.filter((argument) => /\.(?:adoc|asciidoc|asc|guide)$/.test(argument))
@@ -138,17 +134,26 @@ async function createFixtureArchive() {
   return { archive, root };
 }
 
-async function writeManifest(cwd, packageName, textlintVersion) {
-  const plugin = join(cwd, "node_modules", "@adocweave", "textlint-plugin-asciidoc");
+async function writeManifest(cwd) {
+  const plugin = join(cwd, "node_modules", ...packageContract.identity.packageName.split("/"));
   const textlint = join(cwd, "node_modules", "textlint");
   await mkdir(join(textlint, "bin"), { recursive: true });
-  await mkdir(join(plugin, "wasm"), { recursive: true });
-  await writeFile(join(plugin, "package.json"), JSON.stringify({ name: packageName }));
+  const wrapper = join(plugin, packageContract.wasm.wrapperPath);
+  await mkdir(dirname(wrapper), { recursive: true });
+  await writeFile(join(plugin, "package.json"), JSON.stringify({
+    name: packageContract.identity.packageName,
+    peerDependencies: {
+      "@textlint/types": packageContract.compatibility.textlintTypesVersion,
+      textlint: packageContract.compatibility.textlintVersion,
+    },
+  }));
   await writeFile(
-    join(plugin, "wasm", "adocweave_textlint_wasm.cjs"),
+    wrapper,
     "module.exports = { parseText() {} };\n",
   );
-  await writeFile(join(textlint, "package.json"), JSON.stringify({ version: textlintVersion }));
+  await writeFile(join(textlint, "package.json"), JSON.stringify({
+    version: packageContract.compatibility.textlintVersion,
+  }));
 }
 
 function diagnostics(paths) {

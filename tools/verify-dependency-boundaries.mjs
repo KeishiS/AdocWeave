@@ -36,7 +36,7 @@ export function validateDependencyBoundaries({ inventory, exceptions, exists, ma
     "browser-worker",
     "vscode-extension",
     "textlint-document-check",
-    "textlint-asciidoc-plugin",
+    "textlint-plugin-consumer-e2e",
     "ci-and-development-tools",
     "fuzz-harness",
   ]);
@@ -68,7 +68,7 @@ export function validateDependabotConfig(config) {
     "cargo\u0000/fuzz",
     "npm\u0000/editors/vscode",
     "npm\u0000/tools/textlint",
-    "npm\u0000/packages/textlint-plugin-asciidoc",
+    "npm\u0000/tools/textlint-plugin-e2e",
     "github-actions\u0000/",
   ]);
   const actual = new Set();

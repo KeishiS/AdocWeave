@@ -1,6 +1,7 @@
 = AdocWeave textlint AsciiDoc plugin
 
-このパッケージは、AsciiDoc文書をAdocWeaveで解析し、textlintが扱うTxtASTへ変換するProcessor Pluginです。
+``@adocweave/textlint-plugin-asciidoc``は、AsciiDoc文書をAdocWeaveで解析し、textlintが扱うTxtASTへ変換する
+Processor Pluginです。
 Node.js、textlintおよびこのパッケージだけで動作し、Rust、Cargoまたは実行時の追加ダウンロードを必要としません。
 
 == 導入
@@ -35,6 +36,8 @@ npx --yes \
 この方法では作業ディレクトリへ``package.json``、``package-lock.json``および``node_modules``を作成しません。
 取得したパッケージはnpmのキャッシュへ保存されます。継続して使う場合は、前述の方法で依存とバージョンを
 プロジェクトへ記録してください。
+
+Releaseで公開した実URLについても、同じ単発実行と公開checksumの一致を公開後に検査します。
 
 ``.textlintrc.json``では、利用する日本語規則などとは別にProcessorを指定します。
 

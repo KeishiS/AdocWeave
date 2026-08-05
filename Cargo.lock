@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adocweave"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-cli"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-config"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "adocweave-host",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-governance"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -52,14 +52,14 @@ dependencies = [
 
 [[package]]
 name = "adocweave-host"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "rustix",
 ]
 
 [[package]]
 name = "adocweave-lsp"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "adocweave-config",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-textlint"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "serde",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-textlint-wasm"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "adocweave-textlint",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-wasm"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
  "js-sys",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "adocweave-workspace"
-version = "0.30.0"
+version = "0.30.1"
 dependencies = [
  "adocweave",
 ]

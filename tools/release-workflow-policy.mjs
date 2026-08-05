@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 // Quality gates allowed to restore a dependency build. They only verify source
@@ -126,9 +128,79 @@ export function parseMakeTasks(source) {
     const dependencies = dependencyBody === undefined
       ? undefined
       : [...dependencyBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-    tasks.set(header[1], { alias, dependencies });
+    const argumentBody = body.match(/^args\s*=\s*\[([\s\S]*?)\]/m)?.[1];
+    const args = argumentBody === undefined
+      ? undefined
+      : [...argumentBody.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    tasks.set(header[1], { alias, args, dependencies });
   });
   return tasks;
+}
+
+export function validateCompatibilityProbeWorkflow({
+  makefile,
+  protectedWorkflows,
+  source,
+}) {
+  const document = parseWorkflow("textlint-plugin-compatibility-probe.yml", source);
+  const triggers = Object.keys(document.on ?? {}).sort();
+  if (JSON.stringify(triggers) !== JSON.stringify(["schedule", "workflow_dispatch"])) {
+    fail("textlint compatibility probe must only support schedule and workflow_dispatch");
+  }
+  if (JSON.stringify(document.on.schedule) !== JSON.stringify([{ cron: "17 6 * * 1" }])) {
+    fail("textlint compatibility probe must use the reviewed weekly schedule");
+  }
+  if (JSON.stringify(document.permissions) !== JSON.stringify({ contents: "read" })) {
+    fail("textlint compatibility probe must only read repository contents");
+  }
+  if (document.concurrency?.group !== "textlint-plugin-compatibility-probe" ||
+      document.concurrency?.["cancel-in-progress"] !== false) {
+    fail("textlint compatibility probe must serialize observations without cancelling a running probe");
+  }
+  const jobNames = Object.keys(document.jobs ?? {});
+  if (JSON.stringify(jobNames) !== JSON.stringify(["observe-latest-resolution"])) {
+    fail("textlint compatibility workflow must contain only the observation job");
+  }
+  const job = document.jobs["observe-latest-resolution"];
+  requireTimeout(job, 30, "textlint compatibility observation must have a timeout");
+  if (job.needs !== undefined || job.if !== undefined || job["continue-on-error"] !== undefined) {
+    fail("textlint compatibility observation must remain an independent scheduled signal");
+  }
+  const checkout = step(
+    job,
+    (item) => item.uses?.startsWith("actions/checkout@"),
+    "textlint compatibility probe checkout is missing",
+  );
+  if (checkout.with?.["persist-credentials"] !== false) {
+    fail("textlint compatibility probe must not persist checkout credentials");
+  }
+  step(
+    job,
+    (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"),
+    "textlint compatibility probe must use the locked Nix environment",
+  );
+  requireExactCommand(
+    step(
+      job,
+      (item) => item.name ===
+        "Build, verify, and observe the latest compatible dependency resolution",
+      "textlint compatibility observation step is missing",
+    ).run,
+    "nix develop .#ci -c cargo make textlint-plugin-compatibility-probe",
+    "textlint compatibility workflow must build, verify, and probe the current checkout",
+  );
+  if (source.includes("secrets.") || /\bgh\s|permissions:\s*write/m.test(source)) {
+    fail("textlint compatibility probe must not receive secrets or mutate GitHub state");
+  }
+  for (const [name, protectedSource] of Object.entries(protectedWorkflows)) {
+    if (protectedSource.includes("textlint-plugin-compatibility-probe")) {
+      fail(`textlint compatibility probe must not enter the ${name} workflow`);
+    }
+  }
+  const tasks = parseMakeTasks(makefile);
+  requireTask(tasks, "textlint-plugin-compatibility-probe", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
 }
 
 function requireTask(tasks, name, expected) {
@@ -140,6 +212,9 @@ function requireTask(tasks, name, expected) {
   if (Object.hasOwn(expected, "dependencies") &&
       JSON.stringify(actual.dependencies) !== JSON.stringify(expected.dependencies)) {
     fail(`${name} dependencies must exactly match the canonical gate`);
+  }
+  if (Object.hasOwn(expected, "args") && JSON.stringify(actual.args) !== JSON.stringify(expected.args)) {
+    fail(`${name} arguments must exactly match the canonical gate`);
   }
 }
 
@@ -192,7 +267,14 @@ export function validateReleaseWorkflowPolicy({
   windowsDistBootstrap,
   windowsDistInstaller,
   browserStartup,
+  textlintPackageContract,
+  compatibilityProbe,
 }) {
+  validateCompatibilityProbeWorkflow({
+    makefile,
+    protectedWorkflows: { contract, publish, release, smoke },
+    source: compatibilityProbe,
+  });
   validateBrowserStartupPolicy(browserStartup);
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
@@ -368,28 +450,51 @@ export function validateReleaseWorkflowPolicy({
     "textlint plugin installation must consume a verified global candidate",
   );
   const textlintMatrix = textlintInstallation?.strategy?.matrix?.include;
-  if (JSON.stringify(textlintMatrix) !== JSON.stringify([
-    { runner: "ubuntu-24.04", node: "20.18.0" },
-    { runner: "ubuntu-24.04", node: "21.7.3" },
-    { runner: "ubuntu-24.04", node: "22.18.0" },
-    { runner: "ubuntu-24.04", node: "23.11.1" },
-    { runner: "ubuntu-24.04", node: "release" },
-    { runner: "macos-15", node: "release" },
-    { runner: "windows-2025", node: "release" },
-  ])) {
+  if (JSON.stringify(textlintMatrix) !== JSON.stringify(textlintPackageContract?.e2eMatrix)) {
     fail("textlint plugin installation E2E must cover the Node.js boundary and all supported operating systems");
   }
   const textlintRun = step(
     textlintInstallation,
-    (item) => item.name === "textlint plugin installation and read-only CLI verification",
+    (item) => item.name === "Fixed textlint consumer installation and read-only CLI verification",
     "textlint plugin installation E2E step is missing",
   ).run;
   requireCommand(
     textlintRun,
-    "node tools/textlint-plugin-release-smoke.mjs",
-    "textlint plugin E2E must exercise the packed release artifact",
+    "node tools/textlint-plugin-consumer-e2e.mjs",
+    "textlint plugin E2E must exercise the packed release artifact through the fixed consumer",
+  );
+  const textlintNpxRun = step(
+    textlintInstallation,
+    (item) => item.name === "Candidate one-shot npx verification",
+    "textlint plugin candidate npx step is missing",
+  ).run;
+  requireCommand(
+    textlintNpxRun,
+    "node tools/textlint-plugin-npx-smoke.mjs",
+    "textlint plugin candidate must exercise the local tarball through one-shot npx",
   );
   requireManifestNodeVersion(textlintInstallation);
+
+  const postReleaseTextlint = releaseJobs["textlint-plugin-post-release-smoke"];
+  if (postReleaseTextlint?.if !==
+      "startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success'") {
+    fail("textlint post-release smoke must run only after successful tag publication");
+  }
+  requireNeeds(
+    postReleaseTextlint,
+    ["publish"],
+    "textlint post-release smoke must be downstream from publication",
+  );
+  const postReleaseRun = step(
+    postReleaseTextlint,
+    (item) => item.name === "Published textlint asset, checksum, and one-shot npx observation",
+    "published textlint observation step is missing",
+  ).run;
+  requireExactCommand(
+    postReleaseRun,
+    "nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke",
+    "post-release smoke must use the task that reads the real GitHub Release URL",
+  );
 
   const mergeGate = releaseJobs["merge-gate"];
   if (mergeGate?.name !== "quality / verify" ||
@@ -688,6 +793,23 @@ export function validateReleaseWorkflowPolicy({
       "adoc-check-targets",
     ],
   });
+  requireTask(tasks, "platform-contract", {
+    args: [
+      "--test",
+      "tools/native-lsp-smoke.test.mjs",
+      "tools/platform-contract.test.mjs",
+      "tools/release-installation-e2e.test.mjs",
+      "tools/textlint-plugin-npx-smoke.test.mjs",
+      "tools/textlint-plugin-compatibility-probe.test.mjs",
+      "tools/textlint-plugin-post-release-smoke.test.mjs",
+      "tools/textlint-plugin-release-smoke.test.mjs",
+      "tools/textlint-plugin-e2e/installed-tree.test.mjs",
+      "tools/verify-textlint-plugin-reproducibility.test.mjs",
+      "tools/native-change-plan.test.mjs",
+      "tools/verify-native-pr-candidate.test.mjs",
+      "tools/config-schema.test.mjs",
+    ],
+  });
   // The gate is split so a change that cannot reach Rust source still runs the
   // document checks, and the other way round. Running `quality-rust` keeps
   // performing both.
@@ -717,12 +839,57 @@ export function validateReleaseWorkflowPolicy({
       "textlint-plugin-check",
     ],
   });
+  requireTask(tasks, "textlint-plugin-check", {
+    dependencies: [
+      "textlint-plugin-public-js-unit",
+      "textlint-plugin-wasm-contract",
+      "textlint-plugin-browser-isolation",
+      "textlint-repository-prose-lint",
+    ],
+  });
+  requireTask(tasks, "textlint-plugin-package-contract-unit", {
+    args: [
+      "--test",
+      "packages/textlint-plugin-asciidoc/package-contract.test.mjs",
+      "packages/textlint-plugin-asciidoc/package-stage.test.mjs",
+      "packages/textlint-plugin-asciidoc/package-archive.test.mjs",
+    ],
+  });
+  requireTask(tasks, "textlint-plugin-package-contract", {
+    dependencies: [
+      "textlint-plugin-package-contract-unit",
+      "package-textlint-plugin-release",
+    ],
+  });
+  requireTask(tasks, "textlint-plugin-release-consumer-e2e", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
+  requireTask(tasks, "textlint-plugin-candidate-npx-smoke", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
+  requireTask(tasks, "textlint-plugin-reproducibility", {});
   requireTask(tasks, "browser-runtime-check", {
     dependencies: ["test-browser-smoke", "test-browser-bundler"],
   });
   requireTask(tasks, "release-global-candidate", {
-    dependencies: ["release-global-artifacts", "browser-runtime-check"],
+    dependencies: [
+      "release-global-artifacts",
+      "browser-runtime-check",
+      "textlint-plugin-release-consumer-e2e",
+      "textlint-plugin-candidate-npx-smoke",
+    ],
   });
+  requireTask(tasks, "release-check", {
+    dependencies: [
+      "ci",
+      "test-profile-release",
+      "wasm-size",
+      "release-global-candidate",
+      "release-installation-e2e-host",
+      "dist-plan",
+    ],
+  });
+  requireTask(tasks, "release-gate", { alias: "release-check" });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],
   });
@@ -762,9 +929,15 @@ export function validateReleaseWorkflowPolicy({
     ["-F draft=false", "publication must be the final mutation"],
     ["gh api --method DELETE", "failed publication must remove its draft"],
   ]) requireCommand(publishRuns, value, message);
-  step(publishJob, (item) =>
+  const attestation = step(publishJob, (item) =>
     item.uses?.startsWith("actions/attest@") && item.with?.["subject-path"] === "artifacts/*",
   "the complete public asset set must be attested");
+  const publication = step(publishJob, (item) =>
+    typeof item.run === "string" && item.run.includes("-F draft=false"),
+  "release publication step is missing");
+  if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(publication)) {
+    fail("public assets must be attested before publication");
+  }
   step(publishJob, (item) => item.if === "failure()", "failed publication must clean up its draft");
   if (publishRuns.includes("/releases/tags/") ||
       /gh release\s+(upload|view|edit)/.test(publishRuns)) {
@@ -777,6 +950,7 @@ export function validateReleaseWorkflowPolicy({
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "installation must have a timeout");
   requireTimeout(textlintInstallation, 15, "textlint plugin installation must have a timeout");
+  requireTimeout(postReleaseTextlint, 15, "textlint post-release smoke must have a timeout");
   requireTimeout(releaseJobs["reuse-candidate"], 15, "tag reuse must have a timeout");
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
   requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");
@@ -800,6 +974,8 @@ export function loadWorkflowPolicyInputs() {
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
     browserStartup: read("tools/browser-startup.mjs"),
+    compatibilityProbe: workflows["textlint-plugin-compatibility-probe.yml"],
+    textlintPackageContract: loadTextlintPluginPackageContract(),
   };
 }
 

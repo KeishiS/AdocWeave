@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KeishiS/adocweave/blob/main/release/textlint-plugin-package-contract.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "identity", "extensions", "compatibility", "files", "wasm", "archive", "e2eMatrix", "oneShot"],
+  "properties": {
+    "$schema": { "const": "./textlint-plugin-package-contract.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "identity": { "$ref": "#/$defs/identity" },
+    "extensions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^\\.[a-z0-9]+$" } },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } },
+    "wasm": { "$ref": "#/$defs/wasm" },
+    "archive": { "$ref": "#/$defs/archive" },
+    "e2eMatrix": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/e2e" } },
+    "oneShot": { "$ref": "#/$defs/oneShot" }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["packageName", "pluginName", "private"],
+      "properties": { "packageName": { "type": "string", "pattern": "^@[a-z0-9-]+/[a-z0-9-]+$" }, "pluginName": { "type": "string", "pattern": "^@[a-z0-9-]+/[a-z0-9-]+$" }, "private": { "const": true } }
+    },
+    "compatibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["nodeEngine", "textlintVersion", "textlintTypesVersion"],
+      "properties": { "nodeEngine": { "type": "string", "pattern": "^>=\\d+\\.\\d+\\.\\d+ <\\d+$" }, "textlintVersion": { "$ref": "#/$defs/version" }, "textlintTypesVersion": { "$ref": "#/$defs/version" } }
+    },
+    "file": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["path", "source"], "properties": { "path": { "$ref": "#/$defs/path" }, "source": { "$ref": "#/$defs/path" } } },
+        { "type": "object", "additionalProperties": false, "required": ["path", "generator"], "properties": { "path": { "$ref": "#/$defs/path" }, "generator": { "enum": ["package-manifest", "third-party-notices", "wasm-wrapper", "wasm-binary"] } } }
+      ]
+    },
+    "path": { "type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?=.+[^/]$)[^\\\\\\u0000]+$" },
+    "wasm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exportNames", "maximumMemoryBytes", "wrapperPath", "binaryPath"],
+      "properties": { "exportNames": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "maximumMemoryBytes": { "type": "integer", "minimum": 65536, "multipleOf": 65536 }, "wrapperPath": { "$ref": "#/$defs/path" }, "binaryPath": { "$ref": "#/$defs/path" } }
+    },
+    "archive": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fileCount", "maximumPackedBytes", "maximumUnpackedBytes"],
+      "properties": { "fileCount": { "type": "integer", "minimum": 1 }, "maximumPackedBytes": { "type": "integer", "minimum": 1 }, "maximumUnpackedBytes": { "type": "integer", "minimum": 1 } }
+    },
+    "e2e": { "type": "object", "additionalProperties": false, "required": ["runner", "node"], "properties": { "runner": { "type": "string" }, "node": { "type": "string" } } },
+    "oneShot": { "type": "object", "additionalProperties": false, "required": ["rulePackage", "ruleVersion", "preset"], "properties": { "rulePackage": { "type": "string", "pattern": "^(@[a-z0-9-]+/)?[a-z0-9-]+$" }, "ruleVersion": { "$ref": "#/$defs/version" }, "preset": { "type": "string", "pattern": "^[a-z0-9-]+$" } } },
+    "version": { "type": "string", "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$" }
+  }
+}

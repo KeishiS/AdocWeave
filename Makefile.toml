@@ -246,7 +246,12 @@ args = [
   "tools/native-lsp-smoke.test.mjs",
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
+  "tools/textlint-plugin-npx-smoke.test.mjs",
+  "tools/textlint-plugin-compatibility-probe.test.mjs",
+  "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-release-smoke.test.mjs",
+  "tools/textlint-plugin-e2e/installed-tree.test.mjs",
+  "tools/verify-textlint-plugin-reproducibility.test.mjs",
   "tools/native-change-plan.test.mjs",
   "tools/verify-native-pr-candidate.test.mjs",
   "tools/config-schema.test.mjs",
@@ -428,22 +433,71 @@ description = "Build the deterministic npm-compatible textlint plugin archive"
 command = "bash"
 args = ["tools/package-textlint-plugin-release.sh"]
 
-[tasks.test-textlint-plugin-release-package]
-description = "Verify textlint plugin archive contents, deterministic bytes, and real CLI behavior"
-dependencies = ["package-textlint-plugin-release"]
+[tasks.textlint-plugin-package-contract-unit]
+description = "Test the package contract, generated stage, and independent archive verifier"
+command = "node"
+args = [
+  "--test",
+  "packages/textlint-plugin-asciidoc/package-contract.test.mjs",
+  "packages/textlint-plugin-asciidoc/package-stage.test.mjs",
+  "packages/textlint-plugin-asciidoc/package-archive.test.mjs",
+]
+
+[tasks.textlint-plugin-package-contract]
+description = "Verify the staged textlint plugin archive against its independent public contract"
+dependencies = [
+  "textlint-plugin-package-contract-unit",
+  "package-textlint-plugin-release",
+]
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
-archive="target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
-first="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-cargo make package-textlint-plugin-release >/dev/null
-second="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-if [ "$first" != "$second" ]; then
-  echo "textlint plugin release archive is not deterministic" >&2
-  exit 1
-fi
-node tools/textlint-plugin-release-smoke.mjs "$archive"
-echo "textlint plugin release package verified: $second"
+node tools/verify-textlint-plugin-package.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+'''
+
+[tasks.textlint-plugin-reproducibility]
+description = "Build and independently verify byte-identical textlint archives in two clean environments"
+command = "node"
+args = ["tools/verify-textlint-plugin-reproducibility.mjs"]
+
+[tasks.test-textlint-plugin-release-package]
+description = "Compatibility alias for the textlint plugin package contract"
+alias = "textlint-plugin-package-contract"
+
+[tasks.textlint-plugin-release-consumer-e2e]
+description = "Install the candidate archive into the fixed consumer and exercise the public CLI"
+dependencies = ["textlint-plugin-package-contract"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/textlint-plugin-consumer-e2e.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+'''
+
+[tasks.textlint-plugin-candidate-npx-smoke]
+description = "Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache"
+dependencies = ["textlint-plugin-package-contract"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/textlint-plugin-npx-smoke.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+'''
+
+[tasks.textlint-plugin-post-release-npx-smoke]
+description = "Observe the published GitHub Release asset, checksum, and one-shot npx path after publication"
+command = "node"
+args = ["tools/textlint-plugin-post-release-smoke.mjs"]
+
+[tasks.textlint-plugin-compatibility-probe]
+description = "Observe the latest transitive npm resolution against a freshly built and verified candidate"
+dependencies = ["textlint-plugin-package-contract"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/textlint-plugin-compatibility-probe.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
 '''
 
 [tasks.test-zed-release-package]
@@ -562,13 +616,19 @@ dependencies = [
   "test-browser-release-package",
   "test-browser-types",
   "test-textlint-plugin-release-package",
+  "textlint-plugin-reproducibility",
   "test-zed-release-package",
   "test-vscode-release-package",
 ]
 
 [tasks.release-global-candidate]
 description = "Build and runtime-test the exact global archives uploaded by candidate CI"
-dependencies = ["release-global-artifacts", "browser-runtime-check"]
+dependencies = [
+  "release-global-artifacts",
+  "browser-runtime-check",
+  "textlint-plugin-release-consumer-e2e",
+  "textlint-plugin-candidate-npx-smoke",
+]
 
 [tasks.browser-runtime-check]
 description = "Run the release-intent browser archive in isolated, fallback, and bundler Chromium paths"
@@ -607,7 +667,7 @@ args = [
   "tools/textlint",
 ]
 
-[tasks.textlint-public-plugin-dependencies]
+[tasks.textlint-plugin-e2e-dependencies]
 private = true
 command = "npm"
 args = [
@@ -616,37 +676,72 @@ args = [
   "ci",
   "--ignore-scripts",
   "--prefix",
-  "packages/textlint-plugin-asciidoc",
+  "tools/textlint-plugin-e2e",
 ]
 
-[tasks.textlint-plugin-check]
-description = "Test the reusable AsciiDoc textlint processor and repository-specific rules"
+[tasks.textlint-public-plugin-dependencies]
+private = true
+alias = "textlint-plugin-e2e-dependencies"
+
+[tasks.textlint-plugin-public-js-unit]
+description = "Test the reusable Processor JavaScript and public TypeScript declarations without generated artifacts"
 dependencies = [
-  "build-textlint-wasm-node",
-  "build-wasm",
-  "textlint-dependencies",
-  "textlint-public-plugin-test",
+  "textlint-plugin-e2e-dependencies",
 ]
-command = "npm"
-args = ["test", "--prefix", "tools/textlint"]
-
-[tasks.textlint-public-plugin-test]
-description = "Test the reusable textlint Processor without generated artifacts"
-dependencies = ["textlint-public-plugin-dependencies"]
 script_runner = "@shell"
 script = '''
 node --test \
-  packages/textlint-plugin-asciidoc/*.test.mjs \
+  packages/textlint-plugin-asciidoc/adapter.test.mjs \
+  packages/textlint-plugin-asciidoc/bridge.test.mjs \
+  packages/textlint-plugin-asciidoc/package.test.mjs \
+  packages/textlint-plugin-asciidoc/position.test.mjs \
+  packages/textlint-plugin-asciidoc/processor.test.mjs
+tsc --project tools/textlint-plugin-e2e/tsconfig.json
+'''
+
+[tasks.textlint-public-plugin-test]
+description = "Compatibility alias for the public textlint plugin JavaScript unit tests"
+alias = "textlint-plugin-public-js-unit"
+
+[tasks.textlint-plugin-wasm-contract]
+description = "Exercise the dedicated textlint WebAssembly through the public Processor boundary"
+dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
+script_runner = "@shell"
+script = '''
+node --test \
+  tools/textlint/processor.test.mjs \
   tools/verify-textlint-wasm-memory.test.mjs
-tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext \
-  packages/textlint-plugin-asciidoc/types.test-d.mts
+'''
+
+[tasks.textlint-plugin-browser-isolation]
+description = "Verify that textlint exports stay out of the Browser WebAssembly artifact"
+dependencies = ["build-textlint-wasm-node", "build-wasm"]
+command = "node"
+args = ["--test", "tools/textlint/browser-boundary.test.mjs"]
+
+[tasks.textlint-repository-prose-lint]
+description = "Test repository-specific prose policy and lint authored AsciiDoc without modifying files"
+dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
+script_runner = "@shell"
+script = '''
+node --test \
+  tools/textlint/repository-lint-config.test.mjs \
+  tools/textlint/terminology-rule.test.mjs
+npm run lint --prefix tools/textlint
 '''
 
 [tasks.docs-prose-lint]
-description = "Check authored AsciiDoc prose without modifying files"
-dependencies = ["build-textlint-wasm-node", "textlint-dependencies"]
-command = "npm"
-args = ["run", "lint", "--prefix", "tools/textlint"]
+description = "Compatibility alias for the repository prose lint task"
+alias = "textlint-repository-prose-lint"
+
+[tasks.textlint-plugin-check]
+description = "Run the separated public JS, dedicated WASM, Browser isolation, and repository prose gates"
+dependencies = [
+  "textlint-plugin-public-js-unit",
+  "textlint-plugin-wasm-contract",
+  "textlint-plugin-browser-isolation",
+  "textlint-repository-prose-lint",
+]
 
 [tasks.build-conformance-native]
 description = "Build the native JSON conformance adapter"
@@ -1015,10 +1110,7 @@ dependencies = [
   "ci",
   "test-profile-release",
   "wasm-size",
-  "test-browser-release-package",
-  "test-textlint-plugin-release-package",
-  "test-zed-release-package",
-  "test-vscode-release-package",
+  "release-global-candidate",
   "release-installation-e2e-host",
   "dist-plan",
 ]

@@ -69,6 +69,61 @@ test("every external action requires a full commit SHA", () => {
   );
 });
 
+test("latest textlint compatibility probe stays scheduled, read-only, bounded, and non-gating", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const [current, replacement, pattern] of [
+    ["  schedule:\n", "  pull_request:\n", /only support schedule and workflow_dispatch/],
+    ["cron: '17 6 * * 1'", "cron: '0 * * * *'", /reviewed weekly schedule/],
+    ["permissions:\n  contents: read", "permissions:\n  contents: write", /only read repository contents/],
+    ["cancel-in-progress: false", "cancel-in-progress: true", /without cancelling a running probe/],
+    ["timeout-minutes: 30", "timeout-minutes: 0", /must have a timeout/],
+    [
+      "nix develop .#ci -c cargo make textlint-plugin-compatibility-probe",
+      "nix develop .#ci -c node --version",
+      /build, verify, and probe the current checkout/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        compatibilityProbe: inputs.compatibilityProbe.replace(current, replacement),
+      }),
+      pattern,
+    );
+  }
+
+  assert.throws(
+    () => validatePinnedActions({
+      "textlint-plugin-compatibility-probe.yml": inputs.compatibilityProbe.replace(
+        /actions\/checkout@[0-9a-f]{40}/,
+        "actions/checkout@v7",
+      ),
+    }),
+    /not pinned/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        "[tasks.textlint-plugin-compatibility-probe]\n" +
+          "description = \"Observe the latest transitive npm resolution against a freshly built and verified candidate\"\n" +
+          "dependencies = [\"textlint-plugin-package-contract\"]",
+        "[tasks.textlint-plugin-compatibility-probe]\n" +
+          "description = \"Observe the latest transitive npm resolution against a freshly built and verified candidate\"\n" +
+          "dependencies = []",
+      ),
+    }),
+    /textlint-plugin-compatibility-probe dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: `${inputs.release}\n# textlint-plugin-compatibility-probe\n`,
+    }),
+    /must not enter the release workflow/,
+  );
+});
+
 test("build and publish workflows cannot receive repository secrets", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
@@ -96,6 +151,22 @@ test("publisher cannot omit its named environment or cleanup", () => {
       publish: inputs.publish.replace("if: failure()", "if: success()"),
     }),
     /clean up its draft/,
+  );
+});
+
+test("publisherは公開前に全assetをattestする", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const attestStart = inputs.publish.indexOf("      - name: Public asset attestations\n");
+  const publicationStart = inputs.publish.indexOf("      - name: Complete release publication\n");
+  const cleanupStart = inputs.publish.indexOf("      - name: Incomplete draft removal\n");
+  assert.ok(attestStart >= 0 && publicationStart > attestStart && cleanupStart > publicationStart);
+  const publish = inputs.publish.slice(0, attestStart) +
+    inputs.publish.slice(publicationStart, cleanupStart) +
+    inputs.publish.slice(attestStart, publicationStart) +
+    inputs.publish.slice(cleanupStart);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, publish }),
+    /attested before publication/,
   );
 });
 
@@ -247,8 +318,8 @@ test("every global candidate must run the browser archive runtime gate", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       makefile: inputs.makefile.replace(
-        'dependencies = ["release-global-artifacts", "browser-runtime-check"]',
-        'dependencies = ["release-global-artifacts"]',
+        '  "textlint-plugin-candidate-npx-smoke",\n]',
+        ']',
       ),
     }),
     /release-global-candidate dependencies must exactly match/,
@@ -300,9 +371,14 @@ test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検
       /Node\.js boundary/,
     ],
     [
-      "node tools/textlint-plugin-release-smoke.mjs",
+      "node tools/textlint-plugin-consumer-e2e.mjs",
       "node --version # textlint smoke omitted",
       /packed release artifact/,
+    ],
+    [
+      "node tools/textlint-plugin-npx-smoke.mjs",
+      "node --version # npx smoke omitted",
+      /one-shot npx/,
     ],
   ]) {
     assert.throws(
@@ -313,6 +389,68 @@ test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検
       pattern,
     );
   }
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        "[tasks.textlint-plugin-candidate-npx-smoke]\n" +
+          "description = \"Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache\"\n" +
+          "dependencies = [\"textlint-plugin-package-contract\"]",
+        "[tasks.textlint-plugin-candidate-npx-smoke]\n" +
+          "description = \"Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache\"\n" +
+          "dependencies = []",
+      ),
+    }),
+    /textlint-plugin-candidate-npx-smoke dependencies must exactly match/,
+  );
+});
+
+test("textlint matrixはpackage contractと完全に一致する", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const e2eMatrix = [
+    { runner: "ubuntu-24.04", node: "20.18.0" },
+    { runner: "ubuntu-24.04", node: "21.7.3" },
+    { runner: "ubuntu-24.04", node: "22.18.0" },
+    { runner: "ubuntu-24.04", node: "23.11.1" },
+    { runner: "ubuntu-24.04", node: "release" },
+    { runner: "macos-15", node: "release" },
+    { runner: "windows-2025", node: "release" },
+  ];
+  validateReleaseWorkflowPolicy({
+    ...inputs,
+    textlintPackageContract: { e2eMatrix },
+  });
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      textlintPackageContract: { e2eMatrix: e2eMatrix.slice(0, -1) },
+    }),
+    /all supported operating systems/,
+  );
+});
+
+test("公開後smokeはpublicationの後だけに実行し公開前gateへ入れない", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "needs: [publish]\n    runs-on: ubuntu-24.04",
+        "needs: [release-plan]\n    runs-on: ubuntu-24.04",
+      ),
+    }),
+    /downstream from publication/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "      - textlint-plugin-installation-e2e\n",
+        "      - textlint-plugin-installation-e2e\n      - textlint-plugin-post-release-smoke\n",
+      ),
+    }),
+    /final pull request gate must wait/,
+  );
 });
 
 test("candidate preflight cannot continue after a job or step failure", () => {
@@ -734,6 +872,26 @@ test("quality required check aggregates every canonical local unit", () => {
 
 test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
   const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "packages/textlint-plugin-asciidoc/package-archive.test.mjs",\n',
+        "",
+      ),
+    }),
+    /textlint-plugin-package-contract-unit arguments must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "tools/textlint-plugin-e2e/installed-tree.test.mjs",\n',
+        "",
+      ),
+    }),
+    /platform-contract arguments must exactly match/,
+  );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,

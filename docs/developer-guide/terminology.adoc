@@ -47,7 +47,7 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 --
 // textlint-enable adocweave-terminology
 
-この節の規則は``cargo make docs-prose-lint``で検査します。AdocWeaveが文章として分類した箇所だけを
+この節の規則は``cargo make textlint-repository-prose-lint``で検査します。AdocWeaveが文章として分類した箇所だけを
 検査するため、code、URLおよびAsciiDocの構文記号を対象にしません。検査が見るのは禁止語だけで、何に
 直すかは書き手が文脈で決めます。正しい表現が一つに定まらなくても検査は成立します。
 

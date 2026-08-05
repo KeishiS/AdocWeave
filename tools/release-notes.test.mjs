@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -11,17 +12,35 @@ import {
 } from "./release-notes.mjs";
 import manifest from "../release-manifest.json" with { type: "json" };
 import protocol from "../protocol/public-api.json" with { type: "json" };
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+
+const textlintContract = loadTextlintPluginPackageContract();
+
+test("textlint対応情報をpackage contractからRelease Notesへ投影する", () => {
+  const source = readFileSync(new URL("./release-notes.mjs", import.meta.url), "utf8");
+  assert.match(source, /loadTextlintPluginPackageContract/);
+  for (const value of [
+    textlintContract.identity.packageName,
+    textlintContract.identity.pluginName,
+    textlintContract.compatibility.nodeEngine,
+    textlintContract.compatibility.textlintVersion,
+  ]) {
+    assert.equal(source.includes(value), false, `Release Notesに契約値を直書きしています：${value}`);
+  }
+});
 
 test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を含む`, () => {
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.29.0");
-  assert.match(notes, /``adocweave-textlint`` crateへ集約/);
-  assert.match(notes, /footnote本文、画像の代替文およびUI macro/);
-  assert.match(notes, /quote以外のcontainerを``BlockQuote``として扱いません/);
-  assert.match(notes, /自動修正を行わない保証は維持/);
-  assert.match(notes, /``npx --package``/);
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.30.0");
+  assert.match(notes, /一つの機械可読な契約へ集約/);
+  assert.match(notes, /公開用``package\.json``と収録ディレクトリを契約とrelease versionから生成/);
+  assert.match(notes, /生成処理と実装を共有しないarchive検証器/);
+  assert.match(notes, /固定したconsumer依存とinstall後のfile tree/);
+  assert.match(notes, /別々の構築環境から同じbyte列のtarball/);
+  assert.match(notes, /公開前のcandidateと公開後のGitHub Release assetを``npx``で実行/);
+  assert.match(notes, /単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -30,18 +49,20 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  assert.match(notes, /破壊的変更：/);
-  assert.match(notes, /``text-projection`` feature/);
-  assert.match(notes, /``adocweave::output::text``を削除/);
+  assert.match(notes, /破壊的変更：ありません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /CLI、Language ServerおよびBrowser packageだけを使う場合、移行作業は不要です/);
-  assert.match(notes, /``adocweave-textlint::plan``と``TxtAstPlan``へ移行/);
-  assert.match(notes, /``textlint@15\.8\.0``/);
-  assert.match(notes, /``@adocweave\/asciidoc`` plugin/);
+  assert.match(notes, /CLI、パーサ、HTMLコンパイラ、Language Server、Browser packageおよびtextlint Processorの利用方法に変更はなく/);
+  assert.match(notes, new RegExp(textlintContract.identity.packageName.replace("/", "\\/")));
+  assert.match(notes, new RegExp(textlintContract.identity.pluginName.replace("/", "\\/")));
+  assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));
+  assert.match(notes, /``npx --package``/);
   assert.match(notes, /日本語規則、用語集および対象文書一覧は公開パッケージへ含めません/);
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
   assert.match(notes, /``parseText``は専用の``adocweave-textlint-wasm``だけに含み/);
   assert.match(notes, /Browser packageには含めません/);
+  assert.match(notes, /パーサAPI、HTMLコンパイラ、Language ServerおよびBrowser APIの動作は変更していません/);
+  assert.match(notes, /textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);

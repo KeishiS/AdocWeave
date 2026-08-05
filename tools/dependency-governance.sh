@@ -47,7 +47,7 @@ cargo deny --config deny.toml --manifest-path editors/zed/Cargo.toml --all-featu
 npm audit --omit=dev --prefix editors/vscode
 npm audit --include=dev --prefix editors/vscode
 npm audit --include=dev --prefix tools/textlint
-npm audit --include=dev --prefix packages/textlint-plugin-asciidoc
+npm audit --include=dev --prefix tools/textlint-plugin-e2e
 
 node tools/verify-dependency-boundaries.mjs
 node tools/verify-vscode-dependencies.mjs
