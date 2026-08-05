@@ -1510,6 +1510,30 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn recursive_scan_exclusion_prunes_a_non_utf8_subtree_before_reading_it() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = TestDirectory::new();
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"**\"]\n",
+        )
+        .expect("project configuration");
+        let opaque = root.0.join(OsString::from_vec(vec![b'n', 0x80]));
+        std::fs::create_dir(&opaque).expect("non-UTF-8 directory");
+        std::fs::write(opaque.join("invalid.adoc"), [0xff]).expect("invalid source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .load_roots(&[root_uri])
+            .expect("excluded subtree is not read");
+        assert!(resources.inner.roots().is_empty());
+    }
+
+    #[test]
     fn each_directory_root_uses_only_its_own_scan_patterns() {
         let first = TestDirectory::new();
         let second = TestDirectory::new();

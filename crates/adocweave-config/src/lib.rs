@@ -62,6 +62,7 @@ pub const MAX_PROJECT_FILE_BYTES: u64 = 1024 * 1024;
 pub const SCHEMA_VERSION: u32 = 1;
 const MAX_WORKSPACE_SCAN_EXCLUDES: usize = 256;
 const MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS: usize = 1024;
+const MAX_WORKSPACE_SCAN_PATTERN_TOTAL_CHARACTERS: usize = 4 * 1024;
 
 /// Stable category for configuration failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -453,9 +454,13 @@ impl WorkspaceScanSettings {
 
     /// Reports whether a workspace-root-relative directory must be pruned.
     pub fn excludes(&self, relative_directory: &Path) -> bool {
+        let components = relative_directory
+            .components()
+            .map(|component| component.as_os_str().to_str())
+            .collect::<Vec<_>>();
         self.exclude
             .iter()
-            .any(|pattern| pattern.matches(relative_directory))
+            .any(|pattern| pattern.matches(&components))
     }
 }
 
@@ -468,7 +473,14 @@ struct WorkspaceScanPattern {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WorkspaceScanPatternSegment {
     Recursive,
-    Component(String),
+    Component(Vec<WorkspaceScanComponentToken>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceScanComponentToken {
+    Literal(char),
+    AnyOne,
+    AnyMany,
 }
 
 impl WorkspaceScanPattern {
@@ -498,40 +510,51 @@ impl WorkspaceScanPattern {
             segments.push(if segment == "**" {
                 WorkspaceScanPatternSegment::Recursive
             } else {
-                WorkspaceScanPatternSegment::Component(segment.to_owned())
+                WorkspaceScanPatternSegment::Component(
+                    segment
+                        .chars()
+                        .map(|token| match token {
+                            '?' => WorkspaceScanComponentToken::AnyOne,
+                            '*' => WorkspaceScanComponentToken::AnyMany,
+                            literal => WorkspaceScanComponentToken::Literal(literal),
+                        })
+                        .collect(),
+                )
             });
         }
         Ok(Self { source, segments })
     }
 
-    fn matches(&self, relative_directory: &Path) -> bool {
-        let Some(components) = relative_directory
-            .components()
-            .map(|component| component.as_os_str().to_str())
-            .collect::<Option<Vec<_>>>()
-        else {
-            return false;
-        };
-        let mut matched = vec![false; components.len() + 1];
-        matched[0] = true;
-        for segment in &self.segments {
-            match segment {
-                WorkspaceScanPatternSegment::Recursive => {
-                    for index in 1..matched.len() {
-                        matched[index] = matched[index] || matched[index - 1];
-                    }
+    fn matches(&self, components: &[Option<&str>]) -> bool {
+        let mut pattern_index = 0;
+        let mut component_index = 0;
+        let mut recursive = None;
+        let mut recursive_length = 0;
+        while component_index < components.len() {
+            match self.segments.get(pattern_index) {
+                Some(WorkspaceScanPatternSegment::Component(pattern))
+                    if components[component_index]
+                        .is_some_and(|component| component_pattern_matches(pattern, component)) =>
+                {
+                    pattern_index += 1;
+                    component_index += 1;
                 }
-                WorkspaceScanPatternSegment::Component(pattern) => {
-                    let mut next = vec![false; matched.len()];
-                    for (index, component) in components.iter().enumerate() {
-                        next[index + 1] =
-                            matched[index] && component_pattern_matches(pattern, component);
-                    }
-                    matched = next;
+                Some(WorkspaceScanPatternSegment::Recursive) => {
+                    recursive = Some(pattern_index);
+                    pattern_index += 1;
+                    recursive_length = component_index;
                 }
+                _ if recursive.is_some() => {
+                    recursive_length += 1;
+                    component_index = recursive_length;
+                    pattern_index = recursive.expect("recursive pattern exists") + 1;
+                }
+                _ => return false,
             }
         }
-        matched.last().copied().unwrap_or(false)
+        self.segments[pattern_index..]
+            .iter()
+            .all(|segment| matches!(segment, WorkspaceScanPatternSegment::Recursive))
     }
 }
 
@@ -542,26 +565,45 @@ fn invalid_workspace_scan_pattern() -> ConfigError {
     )
 }
 
-fn component_pattern_matches(pattern: &str, component: &str) -> bool {
-    let pattern = pattern.chars().collect::<Vec<_>>();
-    let component = component.chars().collect::<Vec<_>>();
-    let mut previous = vec![false; component.len() + 1];
-    previous[0] = true;
-    for token in pattern {
-        let mut current = vec![false; component.len() + 1];
-        if token == '*' {
-            current[0] = previous[0];
-            for index in 1..current.len() {
-                current[index] = previous[index] || current[index - 1];
+fn component_pattern_matches(pattern: &[WorkspaceScanComponentToken], component: &str) -> bool {
+    let mut pattern_index = 0;
+    let mut component_index = 0;
+    let mut wildcard = None;
+    let mut wildcard_end = 0;
+    while component_index < component.len() {
+        let value = component[component_index..]
+            .chars()
+            .next()
+            .expect("component index is a character boundary");
+        match pattern.get(pattern_index) {
+            Some(WorkspaceScanComponentToken::Literal(literal)) if *literal == value => {
+                pattern_index += 1;
+                component_index += value.len_utf8();
             }
-        } else {
-            for (index, value) in component.iter().enumerate() {
-                current[index + 1] = previous[index] && (token == '?' || token == *value);
+            Some(WorkspaceScanComponentToken::AnyOne) => {
+                pattern_index += 1;
+                component_index += value.len_utf8();
             }
+            Some(WorkspaceScanComponentToken::AnyMany) => {
+                wildcard = Some(pattern_index);
+                pattern_index += 1;
+                wildcard_end = component_index;
+            }
+            _ if wildcard.is_some() => {
+                let value = component[wildcard_end..]
+                    .chars()
+                    .next()
+                    .expect("wildcard cannot advance beyond the component");
+                wildcard_end += value.len_utf8();
+                component_index = wildcard_end;
+                pattern_index = wildcard.expect("wildcard pattern exists") + 1;
+            }
+            _ => return false,
         }
-        previous = current;
     }
-    previous.last().copied().unwrap_or(false)
+    pattern[pattern_index..]
+        .iter()
+        .all(|token| *token == WorkspaceScanComponentToken::AnyMany)
 }
 
 /// Local target validation settings.
@@ -734,6 +776,21 @@ impl WorkspaceWire {
             return Err(ConfigError::new(
                 ConfigErrorCode::InvalidLimit,
                 "workspace scan exclude pattern count exceeds the built-in limit",
+            )
+            .at("workspace.scan.exclude"));
+        }
+        let total_characters = self
+            .scan
+            .exclude
+            .iter()
+            .try_fold(0usize, |total, pattern| {
+                total.checked_add(pattern.chars().count())
+            })
+            .unwrap_or(usize::MAX);
+        if total_characters > MAX_WORKSPACE_SCAN_PATTERN_TOTAL_CHARACTERS {
+            return Err(ConfigError::new(
+                ConfigErrorCode::InvalidLimit,
+                "workspace scan exclude pattern characters exceed the built-in limit",
             )
             .at("workspace.scan.exclude"));
         }
@@ -1346,6 +1403,66 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         for path in ["VENDOR", "build/nested/temp", "docs/.venv-file"] {
             assert!(!config.workspace.scan.excludes(Path::new(path)), "{path}");
         }
+
+        let wildcard = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"**/a*?z\"]\n",
+            Path::new("/workspace"),
+        )
+        .expect("valid wildcard pattern");
+        assert!(wildcard.workspace.scan.excludes(Path::new("nested/abcz")));
+        assert!(!wildcard.workspace.scan.excludes(Path::new("nested/az")));
+
+        let unicode = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"emoji/?\", \"**/cache/**\"]\n",
+            Path::new("/workspace"),
+        )
+        .expect("valid Unicode and recursive patterns");
+        assert!(unicode.workspace.scan.excludes(Path::new("emoji/😀")));
+        assert!(
+            unicode
+                .workspace
+                .scan
+                .excludes(Path::new("one/cache/two/three"))
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn recursive_workspace_scan_pattern_crosses_non_utf8_components() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let config = ResolvedProjectConfig::parse(
+            concat!(
+                "schema-version = 1\n",
+                "[workspace.scan]\n",
+                "exclude = [\"**/target\", \"prefix/**\", \"**\", \"*\"]\n",
+            ),
+            Path::new("/workspace"),
+        )
+        .expect("valid scan patterns");
+        let opaque = OsString::from_vec(vec![b'n', 0x80]);
+        let path = PathBuf::from(&opaque).join("target");
+
+        assert!(
+            config.workspace.scan.exclude[0].matches(
+                &path
+                    .components()
+                    .map(|component| component.as_os_str().to_str())
+                    .collect::<Vec<_>>()
+            )
+        );
+        assert!(config.workspace.scan.excludes(&path));
+        assert!(
+            config.workspace.scan.exclude[1].matches(
+                &PathBuf::from("prefix")
+                    .join(&opaque)
+                    .components()
+                    .map(|component| component.as_os_str().to_str())
+                    .collect::<Vec<_>>()
+            )
+        );
+        assert!(!config.workspace.scan.exclude[3].matches(&[opaque.to_str()]));
     }
 
     #[test]
@@ -1388,6 +1505,35 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
         )
         .expect_err("too many patterns");
         assert_eq!(error.code, ConfigErrorCode::InvalidLimit);
+
+        let excessive_characters = (0..5)
+            .map(|index| format!("\"{}-{index}\"", "a".repeat(1020)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let error = ResolvedProjectConfig::parse(
+            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{excessive_characters}]\n"),
+            Path::new("/workspace"),
+        )
+        .expect_err("too many pattern characters");
+        assert_eq!(error.code, ConfigErrorCode::InvalidLimit);
+
+        let exact_total = ['a', 'b', 'c', 'd']
+            .into_iter()
+            .map(|prefix| format!("\"{prefix}{}\"", "x".repeat(1023)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ResolvedProjectConfig::parse(
+            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{exact_total}]\n"),
+            Path::new("/workspace"),
+        )
+        .expect("exact total pattern character limit");
+
+        let unicode_boundary = format!(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"{}\"]\n",
+            "😀".repeat(MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS)
+        );
+        ResolvedProjectConfig::parse(&unicode_boundary, Path::new("/workspace"))
+            .expect("Unicode scalar boundary");
     }
 
     #[test]
