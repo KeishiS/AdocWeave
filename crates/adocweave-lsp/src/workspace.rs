@@ -2183,6 +2183,40 @@ mod tests {
     }
 
     #[test]
+    fn closing_an_open_scan_root_preserves_its_scan_root_role() {
+        let root = TestDirectory::new();
+        let source = root.0.join("root.adoc");
+        std::fs::write(&source, "disk source\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let source_id = uri_id(&source_uri).expect("source ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        resources
+            .upsert_open(source_uri.clone(), 1, "open source\n")
+            .expect("open scan root");
+        resources.close_open(&source_uri).expect("close scan root");
+
+        assert!(resources.inner.roots().contains(&source_id));
+        assert_eq!(
+            resources.analysis_root_roles.get(&source_id),
+            Some(&AnalysisRootRoles {
+                scan_root: true,
+                open_overlay: false,
+            })
+        );
+        assert_eq!(
+            resources
+                .get(&source_uri)
+                .expect("retained disk source")
+                .text()
+                .as_ref(),
+            "disk source\n"
+        );
+    }
+
+    #[test]
     fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
         let root = TestDirectory::new();
         let generated = root.0.join("generated");
