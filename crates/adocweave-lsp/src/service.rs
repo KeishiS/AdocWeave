@@ -11,6 +11,7 @@ use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 use serde::Deserialize;
 
+use crate::cancellation::{QueryCancellation, QueryResult};
 use crate::diagnostics::QuickFixCapabilities;
 use crate::document_symbols::SymbolPresentation;
 use crate::editing;
@@ -1003,10 +1004,12 @@ impl LanguageService {
         ))
     }
 
-    pub fn document_symbols(
+    pub fn document_symbols_cancellable(
         &self,
         uri: &lsp::Url,
-    ) -> Result<Option<lsp::DocumentSymbolResponse>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::DocumentSymbolResponse>> {
+        cancellation.check_now()?;
         let presentation = if self.client.hierarchical_document_symbols {
             SymbolPresentation::Hierarchical
         } else {
@@ -1018,21 +1021,24 @@ impl LanguageService {
                 SymbolPresentation::Flat => lsp::DocumentSymbolResponse::Flat(Vec::new()),
             }));
         };
-        crate::document_symbols::symbols(
+        let response = crate::document_symbols::symbols(
             &document.analysis,
             uri,
             self.position_encoding,
             presentation,
-        )
-        .map(Some)
+        )?;
+        cancellation.check_now()?;
+        Ok(Some(response))
     }
 
-    pub fn code_actions(
+    pub fn code_actions_cancellable(
         &self,
         uri: &lsp::Url,
         range: lsp::Range,
         context: &lsp::CodeActionContext,
-    ) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<Vec<lsp::CodeActionOrCommand>>> {
+        cancellation.check_now()?;
         if !self.client.code_action_quickfix
             || !code_action_kind_requested(context.only.as_deref(), &lsp::CodeActionKind::QUICKFIX)
         {
@@ -1041,7 +1047,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
-        crate::diagnostics::quick_fixes(
+        let actions = crate::diagnostics::quick_fixes(
             uri,
             revision_version_i32(&document.revision),
             &document.analysis,
@@ -1051,22 +1057,36 @@ impl LanguageService {
                 versioned_document_changes: self.client.versioned_document_changes,
                 is_preferred: self.client.code_action_is_preferred,
             },
+        )?;
+        cancellation.check_now()?;
+        Ok(Some(actions))
+    }
+
+    pub fn formatting_cancellable(
+        &self,
+        uri: &lsp::Url,
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<Vec<lsp::TextEdit>>> {
+        cancellation.check_now()?;
+        let Some(document) = self.documents.snapshot(uri.as_str()) else {
+            return Ok(Some(Vec::new()));
+        };
+        editing::formatting(
+            &document.analysis,
+            &document.format,
+            self.position_encoding,
+            cancellation,
         )
         .map(Some)
     }
 
-    pub fn formatting(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::TextEdit>>, String> {
-        let Some(document) = self.documents.snapshot(uri.as_str()) else {
-            return Ok(Some(Vec::new()));
-        };
-        editing::formatting(&document.analysis, &document.format, self.position_encoding).map(Some)
-    }
-
-    pub fn hover(
+    pub fn hover_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
-    ) -> Result<Option<lsp::Hover>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::Hover>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
@@ -1085,32 +1105,38 @@ impl LanguageService {
             self.position_encoding,
             self.client.hover,
         )
+        .map_err(Into::into)
     }
 
-    pub fn completion(
+    pub fn completion_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
-    ) -> Result<Option<lsp::CompletionResponse>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::CompletionResponse>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(presentation::empty_completion()));
         };
         let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
-        presentation::completion(
+        let response = presentation::completion(
             &document.analysis,
             &workspaces,
             uri,
             position,
             self.position_encoding,
-        )
-        .map(Some)
+        )?;
+        cancellation.check_now()?;
+        Ok(Some(response))
     }
 
-    pub fn definition(
+    pub fn definition_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
-    ) -> Result<Option<lsp::GotoDefinitionResponse>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::GotoDefinitionResponse>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
@@ -1124,24 +1150,30 @@ impl LanguageService {
             encoding: self.position_encoding,
             source_document: &source_document,
         };
-        match navigation::definition(&input, uri, position)? {
+        match navigation::definition(&input, uri, position, cancellation)? {
             navigation::Definition::Resolved(response) => Ok(response),
             navigation::Definition::Host(target) => {
                 let request =
                     host_reference_request(&document, uri, target, self.position_encoding);
-                self.host_index
+                cancellation.check_now()?;
+                let result = self
+                    .host_index
                     .definition(&request)
-                    .map(|location| location.map(lsp::GotoDefinitionResponse::Scalar))
+                    .map(|location| location.map(lsp::GotoDefinitionResponse::Scalar));
+                cancellation.check_now()?;
+                Ok(result?)
             }
         }
     }
 
-    pub fn references(
+    pub fn references_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
         include_declaration: bool,
-    ) -> Result<Option<Vec<lsp::Location>>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<Vec<lsp::Location>>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
@@ -1155,10 +1187,15 @@ impl LanguageService {
             encoding: self.position_encoding,
             source_document: &source_document,
         };
-        let result = navigation::references(&input, uri, position, include_declaration)?;
+        let result =
+            navigation::references(&input, uri, position, include_declaration, cancellation)?;
         if let Some(target) = result.host_target {
             let request = host_reference_request(&document, uri, target, self.position_encoding);
-            if let Some(locations) = self.host_index.references(&request, include_declaration)? {
+            cancellation.check_now()?;
+            let locations = self.host_index.references(&request, include_declaration);
+            cancellation.check_now()?;
+            let locations = locations?;
+            if let Some(locations) = locations {
                 return Ok(Some(locations));
             }
         }
@@ -1170,11 +1207,13 @@ impl LanguageService {
     /// `None` tells the client the position cannot be renamed, so it reports
     /// that instead of opening a rename the server would answer with nothing.
     /// The anchor's current text becomes the placeholder the editor offers.
-    pub fn prepare_rename(
+    pub fn prepare_rename_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
-    ) -> Result<Option<lsp::PrepareRenameResponse>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::PrepareRenameResponse>> {
+        cancellation.check_now()?;
         if !self.client.rename_prepare_support {
             return Ok(None);
         }
@@ -1191,12 +1230,14 @@ impl LanguageService {
         )
     }
 
-    pub fn rename(
+    pub fn rename_cancellable(
         &self,
         uri: &lsp::Url,
         position: lsp::Position,
         new_name: &str,
-    ) -> Result<Option<lsp::WorkspaceEdit>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::WorkspaceEdit>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
@@ -1210,15 +1251,26 @@ impl LanguageService {
             return Ok(None);
         };
         let host_request = host_reference_request(&document, uri, key, self.position_encoding);
-        let locations = if let Some(locations) = self.host_index.references(&host_request, true)? {
+        cancellation.check_now()?;
+        let host_locations = self.host_index.references(&host_request, true);
+        cancellation.check_now()?;
+        let host_locations = host_locations?;
+        let locations = if let Some(locations) = host_locations {
             locations
         } else {
-            self.references(uri, position, true)?.unwrap_or_default()
+            self.references_cancellable(uri, position, true, cancellation)?
+                .unwrap_or_default()
         };
+        cancellation.check_now()?;
         Ok(editing::rename_edit(locations, new_name))
     }
 
-    pub fn document_links(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::DocumentLink>>, String> {
+    pub fn document_links_cancellable(
+        &self,
+        uri: &lsp::Url,
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<Vec<lsp::DocumentLink>>> {
+        cancellation.check_now()?;
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(Some(Vec::new()));
         };
@@ -1233,18 +1285,21 @@ impl LanguageService {
             source_document: &source_document,
         };
         let tooltips = self.client.document_link_tooltip;
-        let mut links = navigation::document_links(&input, uri, tooltips)?;
+        let mut links = navigation::document_links(&input, uri, tooltips, cancellation)?;
         for unresolved in std::mem::take(&mut links.unresolved) {
+            cancellation.checkpoint()?;
             let request = host_reference_request(
                 &document,
                 uri,
                 unresolved.target.clone(),
                 self.position_encoding,
             );
+            cancellation.check_now()?;
             let location = self.host_index.definition(&request).ok().flatten();
+            cancellation.check_now()?;
             links.resolve(unresolved, location, tooltips);
         }
-        Ok(Some(links.finish()))
+        Ok(Some(links.finish(cancellation)?))
     }
 
     fn source_document(&self, uri: &lsp::Url) -> Result<SourceDocument, String> {
@@ -1261,10 +1316,12 @@ impl LanguageService {
         SourceDocument::new(source).map_err(|error| error.to_string())
     }
 
-    pub fn semantic_tokens(
+    pub fn semantic_tokens_cancellable(
         &self,
         uri: &lsp::Url,
-    ) -> Result<Option<lsp::SemanticTokensResult>, String> {
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<lsp::SemanticTokensResult>> {
+        cancellation.check_now()?;
         if !self.client.semantic_tokens_full {
             return Ok(None);
         }
@@ -1272,8 +1329,122 @@ impl LanguageService {
         crate::semantic_tokens::response(
             document.as_ref().map(|document| document.analysis.as_ref()),
             self.position_encoding,
+            cancellation,
         )
         .map(Some)
+    }
+
+    #[cfg(test)]
+    fn test_query<T>(result: QueryResult<T>) -> Result<T, String> {
+        result.map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub fn document_symbols(
+        &self,
+        uri: &lsp::Url,
+    ) -> Result<Option<lsp::DocumentSymbolResponse>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.document_symbols_cancellable(uri, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn code_actions(
+        &self,
+        uri: &lsp::Url,
+        range: lsp::Range,
+        context: &lsp::CodeActionContext,
+    ) -> Result<Option<Vec<lsp::CodeActionOrCommand>>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.code_actions_cancellable(uri, range, context, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn formatting(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::TextEdit>>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.formatting_cancellable(uri, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn hover(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+    ) -> Result<Option<lsp::Hover>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.hover_cancellable(uri, position, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn completion(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+    ) -> Result<Option<lsp::CompletionResponse>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.completion_cancellable(uri, position, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn definition(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+    ) -> Result<Option<lsp::GotoDefinitionResponse>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.definition_cancellable(uri, position, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn references(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+        include_declaration: bool,
+    ) -> Result<Option<Vec<lsp::Location>>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.references_cancellable(
+            uri,
+            position,
+            include_declaration,
+            &cancellation,
+        ))
+    }
+
+    #[cfg(test)]
+    pub fn prepare_rename(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+    ) -> Result<Option<lsp::PrepareRenameResponse>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.prepare_rename_cancellable(uri, position, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn rename(
+        &self,
+        uri: &lsp::Url,
+        position: lsp::Position,
+        new_name: &str,
+    ) -> Result<Option<lsp::WorkspaceEdit>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.rename_cancellable(uri, position, new_name, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn document_links(&self, uri: &lsp::Url) -> Result<Option<Vec<lsp::DocumentLink>>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.document_links_cancellable(uri, &cancellation))
+    }
+
+    #[cfg(test)]
+    pub fn semantic_tokens(
+        &self,
+        uri: &lsp::Url,
+    ) -> Result<Option<lsp::SemanticTokensResult>, String> {
+        let cancellation = crate::cancellation::test_cancellation();
+        Self::test_query(self.semantic_tokens_cancellable(uri, &cancellation))
     }
 }
 

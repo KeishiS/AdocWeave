@@ -18,6 +18,7 @@ use serde_json::Value;
 use tokio::sync::Semaphore;
 use tower::ServiceBuilder;
 
+use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
@@ -198,74 +199,112 @@ impl Backend {
                 state.publish_current_diagnostics(uri)
             })
             .request::<request::DocumentSymbolRequest, _>(|state, params| {
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.document_symbols(uri)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.document_symbols_cancellable(uri, cancellation)
+                    },
+                )
             })
             .request::<request::CodeActionRequest, _>(|state, params| {
                 let range = params.range;
                 let context = params.context;
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.code_actions(uri, range, &context)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.code_actions_cancellable(uri, range, &context, cancellation)
+                    },
+                )
             })
             .request::<request::Formatting, _>(|state, params| {
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.formatting(uri)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.formatting_cancellable(uri, cancellation)
+                    },
+                )
             })
             .request::<request::HoverRequest, _>(|state, params| {
                 let request = params.text_document_position_params;
                 let position = request.position;
-                state.cpu_request(request.text_document.uri, move |service, uri| {
-                    service.hover(uri, position)
-                })
+                state.cpu_request(
+                    request.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.hover_cancellable(uri, position, cancellation)
+                    },
+                )
             })
             .request::<request::Completion, _>(|state, params| {
                 let request = params.text_document_position;
                 let position = request.position;
-                state.cpu_request(request.text_document.uri, move |service, uri| {
-                    service.completion(uri, position)
-                })
+                state.cpu_request(
+                    request.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.completion_cancellable(uri, position, cancellation)
+                    },
+                )
             })
             .request::<request::GotoDefinition, _>(|state, params| {
                 let request = params.text_document_position_params;
                 let position = request.position;
-                state.cpu_request(request.text_document.uri, move |service, uri| {
-                    service.definition(uri, position)
-                })
+                state.cpu_request(
+                    request.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.definition_cancellable(uri, position, cancellation)
+                    },
+                )
             })
             .request::<request::References, _>(|state, params| {
                 let request = params.text_document_position;
                 let position = request.position;
                 let include_declaration = params.context.include_declaration;
-                state.cpu_request(request.text_document.uri, move |service, uri| {
-                    service.references(uri, position, include_declaration)
-                })
+                state.cpu_request(
+                    request.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.references_cancellable(
+                            uri,
+                            position,
+                            include_declaration,
+                            cancellation,
+                        )
+                    },
+                )
             })
             .request::<request::DocumentLinkRequest, _>(|state, params| {
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.document_links(uri)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.document_links_cancellable(uri, cancellation)
+                    },
+                )
             })
             .request::<request::SemanticTokensFullRequest, _>(|state, params| {
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.semantic_tokens(uri)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.semantic_tokens_cancellable(uri, cancellation)
+                    },
+                )
             })
             .request::<request::PrepareRenameRequest, _>(|state, params| {
                 let position = params.position;
-                state.cpu_request(params.text_document.uri, move |service, uri| {
-                    service.prepare_rename(uri, position)
-                })
+                state.cpu_request(
+                    params.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.prepare_rename_cancellable(uri, position, cancellation)
+                    },
+                )
             })
             .request::<request::Rename, _>(|state, params| {
                 let request = params.text_document_position;
                 let position = request.position;
                 let new_name = params.new_name;
-                state.cpu_request(request.text_document.uri, move |service, uri| {
-                    service.rename(uri, position, &new_name)
-                })
+                state.cpu_request(
+                    request.text_document.uri,
+                    move |service, uri, cancellation| {
+                        service.rename_cancellable(uri, position, &new_name, cancellation)
+                    },
+                )
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
             .event::<WorkspaceScanned>(|state, scanned| {
@@ -309,12 +348,17 @@ impl Backend {
     ) -> impl std::future::Future<Output = Result<T, ResponseError>> + Send + use<T, F>
     where
         T: Send + 'static,
-        F: FnOnce(&LanguageService, &Url) -> Result<T, String> + Send + 'static,
+        F: FnOnce(&LanguageService, &Url, &QueryCancellation) -> QueryResult<T> + Send + 'static,
     {
         let cancellation = self.service.document_cancellation(&uri);
         let service = self.service.clone();
         let limit = self.cpu_limit.clone();
-        async move { run_cpu_request(limit, cancellation, move |_| operation(&service, &uri)).await }
+        async move {
+            run_cpu_request(limit, cancellation, move |cancellation| {
+                operation(&service, &uri, cancellation)
+            })
+            .await
+        }
     }
 
     /// Reads the workspace roots on a worker and installs the result later.
@@ -547,54 +591,63 @@ async fn run_cpu_request<T, F>(
 ) -> Result<T, ResponseError>
 where
     T: Send + 'static,
-    F: FnOnce(Arc<CancellationToken>) -> Result<T, String> + Send + 'static,
+    F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
 {
-    let cancellation = Arc::new(CancellationToken::new());
-    let cancel_on_drop = CancelWorkerOnDrop(cancellation.clone());
+    run_cpu_request_with_completion(limit, document_cancellation, None, operation).await
+}
+
+async fn run_cpu_request_with_completion<T, F>(
+    limit: Arc<Semaphore>,
+    document_cancellation: Option<Arc<CancellationToken>>,
+    worker_completed: Option<std::sync::mpsc::Sender<()>>,
+    operation: F,
+) -> Result<T, ResponseError>
+where
+    T: Send + 'static,
+    F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+{
+    let request_cancellation = Arc::new(CancellationToken::new());
+    let cancel_on_drop = CancelWorkerOnDrop(request_cancellation.clone());
     let permit = limit
         .acquire_owned()
         .await
         .map_err(|error| internal_error(error.to_string()))?;
-    if cancellation.is_cancelled() {
-        return Err(ResponseError::new(
-            ErrorCode::REQUEST_CANCELLED,
-            "request was cancelled",
-        ));
-    }
-    if document_cancellation
-        .as_ref()
-        .is_some_and(|token| token.is_cancelled())
-    {
-        return Err(content_modified());
-    }
+    let cancellation = Arc::new(QueryCancellation::new(
+        request_cancellation,
+        document_cancellation,
+    ));
+    cancellation.check_now().map_err(query_response_error)?;
+    let worker_cancellation = cancellation.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        if cancellation.is_cancelled()
-            || document_cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-        {
-            return Err("request was cancelled".to_owned());
+        let result = (|| {
+            worker_cancellation.check_now()?;
+            let result = operation(&worker_cancellation);
+            worker_cancellation.check_now()?;
+            result
+        })();
+        if let Some(worker_completed) = worker_completed {
+            let _ = worker_completed.send(());
         }
-        let result = operation(cancellation.clone());
-        if cancellation.is_cancelled() {
-            return Err("request was cancelled".to_owned());
-        }
-        Ok((
-            result,
-            document_cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled()),
-        ))
+        result
     })
-    .await
-    .map_err(|error| internal_error(format!("request worker failed: {error}")))?;
+    .await;
+    let cancellation_result = cancellation.check_now();
     drop(cancel_on_drop);
-    let (result, document_changed) = result.map_err(internal_error)?;
-    if document_changed {
-        return Err(content_modified());
+    cancellation_result.map_err(query_response_error)?;
+    let result =
+        result.map_err(|error| internal_error(format!("request worker failed: {error}")))?;
+    result.map_err(query_response_error)
+}
+
+fn query_response_error(error: QueryError) -> ResponseError {
+    match error {
+        QueryError::RequestCancelled => {
+            ResponseError::new(ErrorCode::REQUEST_CANCELLED, "request was cancelled")
+        }
+        QueryError::ContentModified => content_modified(),
+        QueryError::Internal(message) => internal_error(message),
     }
-    result.map_err(internal_error)
 }
 
 fn internal_error(error: impl ToString) -> ResponseError {
@@ -675,7 +728,7 @@ mod tests {
                     std::thread::yield_now();
                 }
                 cancelled_tx.send(()).expect("cancelled receiver");
-                Err::<(), _>("request was cancelled".to_owned())
+                Err::<(), _>(QueryError::RequestCancelled)
             },
         ));
 
@@ -717,5 +770,99 @@ mod tests {
             .expect_err("content modified");
 
         assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn document_change_after_worker_completion_overrides_success_and_internal_error() {
+        async fn assert_content_modified<T, F>(operation: F)
+        where
+            T: std::fmt::Debug + Send + 'static,
+            F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+        {
+            let document_cancellation = Arc::new(CancellationToken::new());
+            let (completed_tx, completed_rx) = std::sync::mpsc::channel();
+            let mut request = Box::pin(run_cpu_request_with_completion(
+                Arc::new(Semaphore::new(1)),
+                Some(document_cancellation.clone()),
+                Some(completed_tx),
+                operation,
+            ));
+
+            assert!(futures::poll!(&mut request).is_pending());
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker completed its final cancellation check");
+            document_cancellation.cancel();
+
+            let error = request.await.expect_err("content modified");
+            assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+        }
+
+        assert_content_modified(|_| Ok("completed result")).await;
+        assert_content_modified(|_| Err::<(), _>(QueryError::Internal("query failed".to_owned())))
+            .await;
+    }
+
+    #[test]
+    fn query_errors_have_distinct_protocol_codes() {
+        assert_eq!(
+            query_response_error(QueryError::RequestCancelled).code,
+            ErrorCode::REQUEST_CANCELLED
+        );
+        assert_eq!(
+            query_response_error(QueryError::ContentModified).code,
+            ErrorCode::CONTENT_MODIFIED
+        );
+        assert_eq!(
+            query_response_error(QueryError::Internal("broken query".to_owned())).code,
+            ErrorCode::INTERNAL_ERROR
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cancelled_workers_release_both_permits_for_the_next_request() {
+        let limit = Arc::new(Semaphore::new(2));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
+        let mut tasks = Vec::new();
+        for _ in 0..2 {
+            let started_tx = started_tx.clone();
+            let cancelled_tx = cancelled_tx.clone();
+            tasks.push(tokio::spawn(run_cpu_request(
+                limit.clone(),
+                None,
+                move |cancellation| {
+                    started_tx.send(()).expect("started receiver");
+                    while !cancellation.is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    cancelled_tx.send(()).expect("cancelled receiver");
+                    Err::<(), _>(QueryError::RequestCancelled)
+                },
+            )));
+        }
+
+        for _ in 0..2 {
+            started_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("both workers started");
+        }
+        for task in &tasks {
+            task.abort();
+        }
+        for _ in 0..2 {
+            cancelled_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("both workers observed cancellation");
+        }
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            run_cpu_request(limit, None, |_| Ok("next request")),
+        )
+        .await
+        .expect("third request acquired a released permit")
+        .expect("third request succeeded");
+        assert_eq!(result, "next request");
     }
 }

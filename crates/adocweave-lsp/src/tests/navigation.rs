@@ -93,6 +93,34 @@ struct TestHostIndex {
     fail: bool,
 }
 
+#[derive(Debug)]
+struct CancelDuringHostIndex {
+    document: Arc<adocweave::CancellationToken>,
+}
+
+impl HostReferenceIndex for CancelDuringHostIndex {
+    fn definition(&self, _request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
+        self.document.cancel();
+        Ok(Some(lsp::Location::new(
+            uri("file:///stale.adoc"),
+            lsp::Range::default(),
+        )))
+    }
+
+    fn references(
+        &self,
+        _request: &HostReferenceRequest,
+        _include_declaration: bool,
+    ) -> Result<Option<Vec<lsp::Location>>, String> {
+        self.document.cancel();
+        Ok(Some(Vec::new()))
+    }
+
+    fn is_complete(&self) -> bool {
+        true
+    }
+}
+
 impl HostReferenceIndex for TestHostIndex {
     fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String> {
         assert!(request.source_generation > 0);
@@ -163,6 +191,29 @@ fn definition_uses_injected_host_index_for_scheme_references() {
         .expect("references")
         .expect("resolved references");
     assert_eq!(references.len(), 2);
+}
+
+#[test]
+fn host_index_result_is_rejected_when_the_document_changes_during_the_call() {
+    let document = Arc::new(adocweave::CancellationToken::new());
+    let mut service = LanguageService::with_host_index(Arc::new(CancelDuringHostIndex {
+        document: document.clone(),
+    }));
+    open(&mut service, "file:///a.adoc", 1, "xref:note:42[Note]\n");
+    let cancellation = crate::cancellation::QueryCancellation::new(
+        Arc::new(adocweave::CancellationToken::new()),
+        Some(document),
+    );
+
+    let error = service
+        .definition_cancellable(
+            &uri("file:///a.adoc"),
+            lsp::Position::new(0, 8),
+            &cancellation,
+        )
+        .expect_err("stale host result");
+
+    assert_eq!(error, crate::cancellation::QueryError::ContentModified);
 }
 
 #[test]

@@ -130,6 +130,17 @@ worker待機中に要求がキャンセルされた場合は、解析を開始�
 ``$/cancelRequest``を受けた場合は、待機中の解析を開始せず、開始済みの解析へキャンセルを
 伝播します。解析が停止できない段階に達していても、その結果を公開しません。
 
+読み取り要求では、要求固有tokenと文書generation固有tokenを一つの``CancellationCheck``として
+routerからserviceおよび各機能の走査へ渡します。Formatting、References、Rename、Document Link、
+Semantic Tokensなどの走査は入力項目数に基づく一定間隔の検査点で停止します。コアが所有する処理には
+runtime固有tokenを渡さず、この``CancellationCheck``を使用します。途中まで作った応答は返しません。
+取消を受け取るAPIを持たない既存のコアprojectionは呼び出しの前後で確認し、その呼び出し中の停止は
+保証しません。projection後のLSP型への変換では一定間隔の検査点を使用します。
+
+要求固有tokenが発火した場合は``RequestCancelled (-32800)``、処理中に文書tokenが発火した場合は
+``ContentModified (-32801)``を返します。両方が発火した場合は要求の明示的な取消を優先します。
+通常の処理失敗だけを``InternalError (-32603)``とし、error messageから取消の種類を判定しません。
+
 文書解析は要求固有tokenとは別にgeneration固有tokenを持ちます。`didChange`、`didClose`、
 shutdownおよびexitは該当tokenを発火し、解析内部の既存検査点で停止させます。
 
@@ -147,6 +158,10 @@ generationが一致することを再確認します。一致しない解析か�
 読み取り要求も取得時の文書tokenを保持します。要求計算中に``didChange``または``didClose``が
 tokenを発火した場合、計算済みであっても応答を``ContentModified``として破棄します。これにより
 古いFormatting Edit、Code Action、Definitionその他の応答を更新後に送信しません。
+
+``HostReferenceIndex``は既存実装との互換性を保つ同期境界です。Language Serverは呼び出しの直前と
+直後に取消を確認し、呼び出し中に発火したtokenに対する古い結果を採用しません。任意のhost実装の
+同期処理そのものを途中で停止できるとは保証しません。
 
 == ロック規則
 

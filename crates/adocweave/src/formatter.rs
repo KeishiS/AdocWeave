@@ -1,6 +1,6 @@
 //! Conservative, CST-aware source formatting.
 
-use crate::core::Analysis;
+use crate::core::{Analysis, CancellationCheck, NeverCancel};
 #[cfg(test)]
 use crate::core::{AnalysisOptions, ParseError, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
@@ -47,6 +47,29 @@ pub struct FormatOutput {
     pub edits: Vec<TextEdit>,
 }
 
+#[derive(Debug)]
+pub enum FormatError {
+    Cancelled,
+    Position(PositionError),
+}
+
+impl std::fmt::Display for FormatError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("formatting was cancelled"),
+            Self::Position(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for FormatError {}
+
+impl From<PositionError> for FormatError {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+
 impl FormatOutput {
     pub fn changed(&self) -> bool {
         !self.edits.is_empty()
@@ -63,13 +86,30 @@ pub fn format_analysis(
     analysis: &Analysis,
     config: &FormatConfig,
 ) -> Result<FormatOutput, PositionError> {
-    format_syntax(analysis.syntax(), config)
+    match format_analysis_cancellable(analysis, config, &NeverCancel) {
+        Ok(output) => Ok(output),
+        Err(FormatError::Position(error)) => Err(error),
+        Err(FormatError::Cancelled) => unreachable!("NeverCancel cannot cancel formatting"),
+    }
+}
+
+pub fn format_analysis_cancellable(
+    analysis: &Analysis,
+    config: &FormatConfig,
+    cancellation: &dyn CancellationCheck,
+) -> Result<FormatOutput, FormatError> {
+    format_syntax(analysis.syntax(), config, cancellation)
 }
 
 fn format_syntax(
     syntax: &SyntaxTree,
     config: &FormatConfig,
-) -> Result<FormatOutput, PositionError> {
+    cancellation: &dyn CancellationCheck,
+) -> Result<FormatOutput, FormatError> {
+    let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
+    if checkpoint.is_cancelled_now() {
+        return Err(FormatError::Cancelled);
+    }
     let source = syntax.source();
     let source_document = syntax.source_document();
     let protected = syntax.formatting_protected_ranges();
@@ -85,6 +125,9 @@ fn format_syntax(
     let mut blank_count = 0;
 
     for (index, line) in source_document.lines().iter().enumerate() {
+        if checkpoint.is_cancelled() {
+            return Err(FormatError::Cancelled);
+        }
         if protected
             .iter()
             .any(|range| ranges_overlap(*range, line.full_range()))
@@ -98,8 +141,13 @@ fn format_syntax(
             .expect("line ranges are valid");
         let virtual_final = line.full_range().is_empty() && line.ending() == LineEnding::None;
         let blank = content.trim_matches([' ', '\t']).is_empty();
-        let required_attribute_offset =
-            blank && blank_offsets_document_attribute(source_document, index, &attribute_starts);
+        let required_attribute_offset = blank
+            && blank_offsets_document_attribute(
+                source_document,
+                index,
+                &attribute_starts,
+                &mut checkpoint,
+            )?;
 
         if blank && !virtual_final {
             blank_count += 1;
@@ -164,7 +212,7 @@ fn format_syntax(
     let fix = Fix::new("format document", Applicability::Always, edits)
         .expect("formatter emits non-overlapping edits");
     let edits = fix.edits().to_vec();
-    let formatted = apply_edits(source, &edits);
+    let formatted = apply_edits(source, &edits, &mut checkpoint)?;
     Ok(FormatOutput { formatted, edits })
 }
 
@@ -172,28 +220,39 @@ fn blank_offsets_document_attribute(
     document: &crate::source_document::SourceDocument,
     blank_index: usize,
     attribute_starts: &std::collections::BTreeSet<TextSize>,
-) -> bool {
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<bool, FormatError> {
     for line in &document.lines()[blank_index + 1..] {
+        if checkpoint.is_cancelled() {
+            return Err(FormatError::Cancelled);
+        }
         let content = document
             .text(line.content_range())
             .expect("line ranges are valid");
         if content.starts_with("//") {
             continue;
         }
-        return attribute_starts.contains(&line.full_range().start());
+        return Ok(attribute_starts.contains(&line.full_range().start()));
     }
-    false
+    Ok(false)
 }
 
-fn apply_edits(source: &str, edits: &[TextEdit]) -> String {
+fn apply_edits(
+    source: &str,
+    edits: &[TextEdit],
+    checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
+) -> Result<String, FormatError> {
     let mut output = source.to_owned();
     for edit in edits.iter().rev() {
+        if checkpoint.is_cancelled() {
+            return Err(FormatError::Cancelled);
+        }
         output.replace_range(
             edit.range.start().to_usize()..edit.range.end().to_usize(),
             &edit.replacement,
         );
     }
-    output
+    Ok(output)
 }
 
 fn ranges_overlap(left: TextRange, right: TextRange) -> bool {
@@ -206,7 +265,8 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FormatConfig, NewlineStyle, format};
+    use super::{FormatConfig, FormatError, NewlineStyle, format, format_analysis_cancellable};
+    use crate::core::{AnalysisOptions, CancellationCheck, Engine};
     use crate::parser::{AstBlock, parse};
     use crate::syntax::SyntaxKind;
 
@@ -234,6 +294,25 @@ mod tests {
                 AstBlock::Unsupported(_) => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn formatting_stops_before_returning_partial_output_when_cancelled() {
+        struct AlwaysCancel;
+
+        impl CancellationCheck for AlwaysCancel {
+            fn is_cancelled(&self) -> bool {
+                true
+            }
+        }
+
+        let analysis = Engine::new(AnalysisOptions::default())
+            .analyze("line  \n\n")
+            .expect("analysis");
+        assert!(matches!(
+            format_analysis_cancellable(&analysis, &FormatConfig::default(), &AlwaysCancel),
+            Err(FormatError::Cancelled)
+        ));
     }
 
     #[test]

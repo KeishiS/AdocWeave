@@ -6,24 +6,37 @@ use adocweave::semantic::{Inline, ReferenceTargetKind};
 use adocweave::text::{SourceDocument, TextRange};
 use async_lsp::lsp_types as lsp;
 
+use crate::cancellation::{QueryCancellation, QueryResult};
 use crate::position::{PositionEncoding, range_to_lsp};
 
 pub(crate) fn tokens(
     analysis: &Analysis,
     encoding: PositionEncoding,
-) -> Result<lsp::SemanticTokens, String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<lsp::SemanticTokens> {
+    cancellation.check_now()?;
     let source_document = analysis.source_document();
     let mut raw = Vec::<(lsp::Position, u32, u32)>::new();
     for link in project(analysis, &adocweave::resolution::RenderInputs::default()).external_links {
-        push_range(&mut raw, link.target_range, 0, source_document, encoding)?;
+        cancellation.checkpoint()?;
+        push_range(
+            &mut raw,
+            link.target_range,
+            0,
+            source_document,
+            encoding,
+            cancellation,
+        )?;
     }
     for reference in analysis.references() {
+        cancellation.checkpoint()?;
         push_range(
             &mut raw,
             reference.target_range,
             0,
             source_document,
             encoding,
+            cancellation,
         )?;
     }
     for anchor in analysis
@@ -32,14 +45,15 @@ pub(crate) fn tokens(
         .iter()
         .filter(|anchor| anchor.valid)
     {
-        push_range(&mut raw, anchor.id_range, 1, source_document, encoding)?;
-    }
-    for target in analysis
-        .reference_targets()
-        .iter()
-        .filter(|target| target.kind == ReferenceTargetKind::InlineAnchor)
-    {
-        push_range(&mut raw, target.id_range, 1, source_document, encoding)?;
+        cancellation.checkpoint()?;
+        push_range(
+            &mut raw,
+            anchor.id_range,
+            1,
+            source_document,
+            encoding,
+            cancellation,
+        )?;
     }
     let mut inline_ranges = Vec::new();
     adocweave::semantic::walk(analysis.document(), |node| {
@@ -61,13 +75,38 @@ pub(crate) fn tokens(
             | Inline::Reference(_) => {}
         }
     });
-    for (range, token_type) in inline_ranges {
-        push_range(&mut raw, range, token_type, source_document, encoding)?;
+    for target in analysis
+        .reference_targets()
+        .iter()
+        .filter(|target| target.kind == ReferenceTargetKind::InlineAnchor)
+    {
+        cancellation.checkpoint()?;
+        push_range(
+            &mut raw,
+            target.id_range,
+            1,
+            source_document,
+            encoding,
+            cancellation,
+        )?;
     }
+    for (range, token_type) in inline_ranges {
+        cancellation.checkpoint()?;
+        push_range(
+            &mut raw,
+            range,
+            token_type,
+            source_document,
+            encoding,
+            cancellation,
+        )?;
+    }
+    cancellation.check_now()?;
     raw.sort_by_key(|(position, length, token_type)| {
         (position.line, position.character, *length, *token_type)
     });
     raw.dedup();
+    cancellation.check_now()?;
 
     let mut previous = lsp::Position::new(0, 0);
     let data = raw
@@ -98,9 +137,10 @@ pub(crate) fn tokens(
 pub(crate) fn response(
     analysis: Option<&Analysis>,
     encoding: PositionEncoding,
-) -> Result<lsp::SemanticTokensResult, String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<lsp::SemanticTokensResult> {
     let tokens = match analysis {
-        Some(analysis) => tokens(analysis, encoding)?,
+        Some(analysis) => tokens(analysis, encoding, cancellation)?,
         None => lsp::SemanticTokens {
             result_id: None,
             data: Vec::new(),
@@ -115,9 +155,11 @@ fn push_range(
     token_type: u32,
     source_document: &SourceDocument,
     encoding: PositionEncoding,
-) -> Result<(), String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<()> {
     let range = range_to_lsp(range, source_document, encoding)?;
     for line in range.start.line..=range.end.line {
+        cancellation.checkpoint()?;
         let start = if line == range.start.line {
             range.start.character
         } else {
@@ -153,7 +195,8 @@ mod tests {
     }
 
     fn encoded(source: &str, encoding: PositionEncoding) -> Vec<u32> {
-        tokens(&analyze(source), encoding)
+        let cancellation = crate::cancellation::test_cancellation();
+        tokens(&analyze(source), encoding, &cancellation)
             .expect("semantic tokens")
             .data
             .into_iter()
@@ -202,9 +245,12 @@ mod tests {
 
     #[test]
     fn missing_snapshot_has_an_empty_semantic_token_response() {
-        let lsp::SemanticTokensResult::Tokens(tokens) =
-            response(None, PositionEncoding::Utf16).expect("response")
-        else {
+        let lsp::SemanticTokensResult::Tokens(tokens) = response(
+            None,
+            PositionEncoding::Utf16,
+            &crate::cancellation::test_cancellation(),
+        )
+        .expect("response") else {
             panic!("full semantic tokens");
         };
         assert!(tokens.data.is_empty());

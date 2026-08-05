@@ -5,6 +5,7 @@ use adocweave::resolution::ReferenceKey;
 use adocweave::text::SourceDocument;
 use async_lsp::lsp_types as lsp;
 
+use crate::cancellation::{QueryCancellation, QueryResult};
 use crate::position::{PositionEncoding, range_contains_offset, range_to_lsp, request_offset};
 use crate::state::{DocumentSnapshot, WorkspaceAnalysis};
 
@@ -40,13 +41,16 @@ pub(crate) fn definition(
     input: &NavigationInput<'_>,
     uri: &lsp::Url,
     position: lsp::Position,
-) -> Result<Definition, String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<Definition> {
+    cancellation.check_now()?;
     let offset = request_offset(
         input.document.analysis.source_document(),
         position,
         input.encoding,
     )?;
     for workspace in input.workspaces {
+        cancellation.checkpoint()?;
         if let Some((reference, _)) = projected_attribute_reference_at(workspace, uri, offset)
             && let Some(binding_id) = reference.binding_id
             && let Some(binding) = workspace
@@ -83,6 +87,7 @@ pub(crate) fn definition(
         )));
     }
     for workspace in input.workspaces {
+        cancellation.checkpoint()?;
         if let Some(directive) = workspace.projection.directives.iter().find(|directive| {
             directive
                 .source_id
@@ -130,7 +135,9 @@ pub(crate) fn references(
     uri: &lsp::Url,
     position: lsp::Position,
     include_declaration: bool,
-) -> Result<References, String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<References> {
+    cancellation.check_now()?;
     let offset = request_offset(
         input.document.analysis.source_document(),
         position,
@@ -152,6 +159,7 @@ pub(crate) fn references(
     if let Some(binding_origin) = projected_binding_origin {
         let mut locations = Vec::new();
         for workspace in input.workspaces {
+            cancellation.checkpoint()?;
             let Some(binding) = workspace
                 .projection
                 .attribute_bindings
@@ -169,6 +177,7 @@ pub(crate) fn references(
                 locations.push(attribute_origin_location(input, origin)?);
             }
             for reference in &workspace.projection.attribute_references {
+                cancellation.checkpoint()?;
                 if reference.value.binding_id != Some(binding.value.id()) {
                     continue;
                 }
@@ -219,6 +228,7 @@ pub(crate) fn references(
             ));
         }
         for reference in input.document.analysis.attribute_references() {
+            cancellation.checkpoint()?;
             if reference.binding_id == Some(binding_id) {
                 locations.push(lsp::Location::new(
                     uri.clone(),
@@ -289,11 +299,13 @@ pub(crate) fn references(
         locations.push(location);
     }
     for candidate in input.snapshots {
+        cancellation.checkpoint()?;
         let candidate_uri: lsp::Url = candidate
             .uri
             .parse()
             .map_err(|error| format!("invalid open document URI {}: {error}", candidate.uri))?;
         for reference in candidate.analysis.references() {
+            cancellation.checkpoint()?;
             if reference_identity(&candidate_uri, reference.target.as_ref()).as_ref()
                 == Some(&identity)
             {
@@ -309,7 +321,9 @@ pub(crate) fn references(
         }
     }
     for workspace in input.workspaces {
+        cancellation.checkpoint()?;
         for reference in &workspace.projection.references {
+            cancellation.checkpoint()?;
             let Some(source_origin) = reference.origins.first() else {
                 continue;
             };
@@ -354,7 +368,9 @@ pub(crate) fn document_links(
     input: &NavigationInput<'_>,
     uri: &lsp::Url,
     tooltips: bool,
-) -> Result<DocumentLinks, String> {
+    cancellation: &QueryCancellation,
+) -> QueryResult<DocumentLinks> {
+    cancellation.check_now()?;
     let mut links = Vec::new();
     let mut unresolved = Vec::new();
     for link in project(
@@ -363,6 +379,7 @@ pub(crate) fn document_links(
     )
     .external_links
     {
+        cancellation.checkpoint()?;
         if !adocweave::resolution::AuthoredUrlPolicy::default().allows(&link.target) {
             continue;
         }
@@ -381,6 +398,7 @@ pub(crate) fn document_links(
         });
     }
     for reference in input.document.analysis.references() {
+        cancellation.checkpoint()?;
         let range = range_to_lsp(
             reference.target_range,
             input.document.analysis.source_document(),
@@ -400,7 +418,9 @@ pub(crate) fn document_links(
         }
     }
     for workspace in input.workspaces {
+        cancellation.checkpoint()?;
         for directive in &workspace.projection.directives {
+            cancellation.checkpoint()?;
             if directive
                 .source_id
                 .as_ref()
@@ -446,7 +466,11 @@ impl DocumentLinks {
         }
     }
 
-    pub(crate) fn finish(mut self) -> Vec<lsp::DocumentLink> {
+    pub(crate) fn finish(
+        mut self,
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Vec<lsp::DocumentLink>> {
+        cancellation.check_now()?;
         self.links.sort_by_key(|link| {
             (
                 link.range.start.line,
@@ -457,7 +481,8 @@ impl DocumentLinks {
         });
         self.links
             .dedup_by(|left, right| left.range == right.range && left.target == right.target);
-        self.links
+        cancellation.check_now()?;
+        Ok(self.links)
     }
 }
 
@@ -719,15 +744,18 @@ mod tests {
             source_document: &no_projected_source,
         };
         let source = lsp::Url::parse(&first.uri).expect("URI");
+        let cancellation = crate::cancellation::test_cancellation();
 
         let Definition::Resolved(Some(lsp::GotoDefinitionResponse::Scalar(local))) =
-            definition(&input, &source, lsp::Position::new(3, 3)).expect("local definition")
+            definition(&input, &source, lsp::Position::new(3, 3), &cancellation)
+                .expect("local definition")
         else {
             panic!("local scalar definition");
         };
         assert_eq!(local.uri, source);
         let Definition::Resolved(Some(lsp::GotoDefinitionResponse::Scalar(document))) =
-            definition(&input, &source, lsp::Position::new(3, 22)).expect("document definition")
+            definition(&input, &source, lsp::Position::new(3, 22), &cancellation)
+                .expect("document definition")
         else {
             panic!("document scalar definition");
         };
@@ -748,8 +776,9 @@ mod tests {
                 encoding,
                 source_document: &no_projected_source,
             };
-            let result =
-                references(&input, &uri, lsp::Position::new(0, 2), false).expect("references");
+            let cancellation = crate::cancellation::test_cancellation();
+            let result = references(&input, &uri, lsp::Position::new(0, 2), false, &cancellation)
+                .expect("references");
             assert_eq!(result.fallback.len(), 1);
             assert_eq!(result.fallback[0].range.start.character, 2);
             assert_eq!(result.fallback[0].range.end.character, expected_end);
@@ -775,6 +804,11 @@ mod tests {
             unresolved: Vec::new(),
         };
         links.resolve(unresolved, None, false);
-        assert_eq!(links.finish(), vec![direct]);
+        assert_eq!(
+            links
+                .finish(&crate::cancellation::test_cancellation())
+                .expect("links"),
+            vec![direct]
+        );
     }
 }
