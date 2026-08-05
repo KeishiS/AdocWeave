@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use adocweave::SourceId;
 use adocweave::preprocess::{
-    DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions,
-    PreprocessStep, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
-    ResourceLookupResult, ResourceSnapshot, SourceMapping, preprocess, preprocess_and_analyze_with,
-    preprocess_resumable, preprocess_with,
+    DirectiveKind, EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError,
+    PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions, PreprocessStep,
+    ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult,
+    ResourceSnapshot, SourceMapping, preprocess, preprocess_and_analyze_with, preprocess_resumable,
+    preprocess_with,
 };
 use adocweave::{AnalysisOptions, CancellationToken, Engine, NeverCancel};
 use serde_json::Value;
@@ -298,4 +299,36 @@ fn resumable_preprocess_contract_is_public_without_exposing_continuation_state()
         panic!("one supplied resource must complete preprocessing");
     };
     assert_eq!(document.source, "included\n");
+}
+
+#[test]
+fn effective_resumable_contract_accepts_only_the_instance_and_its_clones() {
+    let options =
+        EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
+            .expect("effective options");
+    let clone = options.clone();
+    let separate =
+        EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
+            .expect("separate effective options");
+    assert!(options.same_contract(&clone));
+    assert!(!options.same_contract(&separate));
+
+    let EffectivePreprocessStep::Complete(prepared_for_clone) =
+        options.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
+    else {
+        panic!("preprocessing must complete");
+    };
+    clone
+        .analyze_preprocessed(prepared_for_clone, PreprocessInputs::default())
+        .expect("clone shares the private contract");
+
+    let EffectivePreprocessStep::Complete(prepared_for_separate) =
+        options.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
+    else {
+        panic!("preprocessing must complete");
+    };
+    assert!(matches!(
+        separate.analyze_preprocessed(prepared_for_separate, PreprocessInputs::default()),
+        Err(PreparedAnalysisError::ContractMismatch)
+    ));
 }
