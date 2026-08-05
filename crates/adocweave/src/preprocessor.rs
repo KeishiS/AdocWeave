@@ -2198,6 +2198,45 @@ mod tests {
     }
 
     #[test]
+    fn response_from_an_identical_request_in_another_run_is_rejected() {
+        let snapshot = ResourceSnapshot::default();
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let source = "include::part.adoc[optional]\n";
+        let PreprocessStep::NeedResource(first_run) =
+            preprocess_resumable(source, &PreprocessOptions::default(), &lookup, &NeverCancel)
+        else {
+            panic!("first run must request the resource");
+        };
+        let PreprocessStep::NeedResource(second_run) =
+            preprocess_resumable(source, &PreprocessOptions::default(), &lookup, &NeverCancel)
+        else {
+            panic!("second run must request the resource");
+        };
+        assert_eq!(first_run.request().target(), second_run.request().target());
+        assert_eq!(
+            first_run.request().is_optional(),
+            second_run.request().is_optional()
+        );
+        assert_eq!(
+            first_run.request().source_id(),
+            second_run.request().source_id()
+        );
+        assert_eq!(first_run.request().range(), second_run.request().range());
+        let wrong_response = first_run.request().not_found();
+
+        let PreprocessStep::HostError(error) =
+            second_run.resume(wrong_response, &lookup, &NeverCancel)
+        else {
+            panic!("a response from another run must fail");
+        };
+        assert_eq!(error.kind(), HostResourceErrorKind::ResponseMismatch);
+        assert_eq!(error.target(), "part.adoc");
+    }
+
+    #[test]
     fn host_load_failure_discards_the_continuation() {
         let snapshot = ResourceSnapshot::default();
         let lookup = DeferredLookup {
