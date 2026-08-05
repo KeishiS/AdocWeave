@@ -188,7 +188,8 @@ workspace全体の走査は文書数に比例して時間がかかるため、�
 ``workspace.scan.exclude``に一致したディレクトリを列挙前に枝刈りします。照合は``/``区切りかつ
 大文字と小文字を区別する共通規則を使うため、OSのパス照合機能には依存しません。除外判定は
 ``adocweave-host``へ判定関数として渡し、hostが所有する正規化済みルート、シンボリックリンクの拒否および
-10万項目の上限は変更しません。
+10万項目の上限は変更しません。workspace rootが入れ子の場合、外側の走査は内側のrootへ入らず、内側のrootを
+そのroot自身の設定で走査します。これにより、外側の設定による重複走査で内側の除外規則を迂回しません。
 
 初期scanから除外したresourceは解析rootとして登録しません。ただし、走査で見つかった解析rootのincludeを
 前処理し、snapshotに不足しているlocal resourceだけを同じfilesystem authorityとresource上限の下で

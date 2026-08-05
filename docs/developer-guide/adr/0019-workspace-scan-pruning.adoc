@@ -29,6 +29,9 @@ file watcherが通知した文書およびinclude先には適用しません。�
 includeに必要な文書がsnapshotにない場合だけ、従来のworkspace root、``resources.roots``、symlink検査および
 resource上限を使って読み込みます。読み込んだinclude先は解析の起点として登録しません。
 
+workspace folderが入れ子の場合、外側のfolderの走査では内側のfolderを枝刈りし、内側のfolder自身の走査へ
+委ねます。各folderの走査方針を一つのroot相対名前空間へ限定し、重複走査による除外規則の迂回を防ぎます。
+
 directoryの列挙と走査件数の管理は引き続き``adocweave-host``が所有します。設定の照合結果は、
 ディレクトリを列挙する前に呼ぶ判定関数としてhostへ渡します。parser、HTML compilerおよびCLIは
 この判定関数を渡さないため、入力の選択方法は変わりません。
