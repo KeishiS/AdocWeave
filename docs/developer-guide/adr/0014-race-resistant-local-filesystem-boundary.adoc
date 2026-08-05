@@ -34,7 +34,9 @@ Linux配布targetでは、filesystem policyを作る時点でproject rootのデ�
 workspace走査が終わるまで保持します。そのhandleを起点とする解決とopenを
 同じkernel操作または同じhandle系列で行います。第一選択は``openat2``とし、rootからの脱出、magic linkおよび
 解決途中のroot外移動を禁止するresolve flagを使用します。対象を開いた後のhandleに対して通常ファイルであることを
-検査し、上限付きでbyte列を読み取ります。利用可能なkernelで``openat2``を使用できない場合は、各path要素を
+検査します。さらに、``/proc/self/fd``から得た相対pathを保持中のroot handleから開き直し、device、inodeおよび
+file typeが最初に開いたhandleと一致することを確認してから、上限付きでbyte列を読み取ります。利用可能なkernelで
+``openat2``を使用できない場合は、各path要素を
 ディレクトリhandleから``openat``相当で開き、symlinkを追跡しない保守的fallbackを使用します。このfallbackでは
 root内を指すsymlinkも拒否してよく、競合耐性を下げて受理範囲を維持しません。
 
@@ -102,6 +104,9 @@ Linux配布物では、検査と利用の間にpathを差し替えてroot外を�
 ``HandleRelative``を宣言したままpath検査へ切り替えることはありません。procfs側の不存在や権限不足は、検査対象の
 fileが存在しない、または読めないことを意味しないため、``Missing``や``PermissionDenied``ではなく
 ``Unverifiable``として扱います。
+開いたfileが削除されると、Linuxはdescriptorのpathへ`` (deleted)``を付ける場合があります。この文字列をpathの
+一部として無条件に受理せず、保持中のroot handleから開き直したfileのidentityが一致しない場合は
+``Unverifiable``として扱います。実際のfile名が`` (deleted)``で終わる場合は、identityが一致するため受理します。
 
 platform別adapter、OS errorの安定した分類および決定的な競合test用境界が必要になります。portable Rust APIは
 従来どおり広いplatformで利用できますが、capabilityを確認しないconsumerは敵対的な同時変更への耐性を

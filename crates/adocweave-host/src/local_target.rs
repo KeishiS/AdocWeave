@@ -632,6 +632,16 @@ impl LocalTargetPolicy {
         candidate: &Path,
         follow_symlinks: bool,
     ) -> Result<OpenedTarget, LocalTargetError> {
+        self.open_confined_with_symlinks_after_open(candidate, follow_symlinks, || {})
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_confined_with_symlinks_after_open(
+        &self,
+        candidate: &Path,
+        follow_symlinks: bool,
+        after_open: impl FnOnce(),
+    ) -> Result<OpenedTarget, LocalTargetError> {
         use rustix::fd::OwnedFd;
         use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
 
@@ -699,6 +709,7 @@ impl LocalTargetPolicy {
         {
             return Err(LocalTargetError::NotFile(candidate.to_owned()));
         }
+        after_open();
         let canonical_path = logical_path_from_opened_handle(
             &self.root,
             self.root_handle.as_ref(),
@@ -730,7 +741,101 @@ fn logical_path_from_opened_handle(
     let relative = opened_path
         .strip_prefix(&root_path)
         .map_err(|_| LocalTargetError::Unverifiable(candidate.to_string_lossy().into_owned()))?;
+    verify_opened_path_identity(root_handle, opened, relative, candidate)?;
     Ok(logical_root.join(relative))
+}
+
+#[cfg(target_os = "linux")]
+fn verify_opened_path_identity(
+    root_handle: &fs::File,
+    opened: &fs::File,
+    relative: &Path,
+    candidate: &Path,
+) -> Result<(), LocalTargetError> {
+    use std::os::unix::fs::MetadataExt;
+
+    use rustix::fd::OwnedFd;
+    use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
+
+    let flags = OFlags::PATH | OFlags::CLOEXEC;
+    let mut attempts = 0;
+    let verified = loop {
+        let outcome = confined_openat2(
+            root_handle,
+            relative,
+            flags,
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        );
+        attempts += 1;
+        if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS {
+            continue;
+        }
+        break outcome;
+    };
+    let verified = match verified {
+        Ok(file) => fs::File::from(file),
+        Err(error) if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL => {
+            let mut directory: OwnedFd = openat(
+                root_handle,
+                ".",
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|error| opened_identity_error(candidate, error))?;
+            let mut components = relative.components().peekable();
+            while let Some(component) = components.next() {
+                let Component::Normal(name) = component else {
+                    return Err(opened_identity_mismatch(candidate));
+                };
+                let component_flags = if components.peek().is_some() {
+                    OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+                } else {
+                    flags | OFlags::NOFOLLOW
+                };
+                directory = openat(&directory, name, component_flags, Mode::empty())
+                    .map_err(|error| opened_identity_error(candidate, error))?;
+            }
+            fs::File::from(directory)
+        }
+        Err(error) => return Err(opened_identity_error(candidate, error)),
+    };
+    let opened_metadata = opened
+        .metadata()
+        .map_err(|error| opened_identity_io_error(candidate, error))?;
+    let verified_metadata = verified
+        .metadata()
+        .map_err(|error| opened_identity_io_error(candidate, error))?;
+    if opened_metadata.dev() != verified_metadata.dev()
+        || opened_metadata.ino() != verified_metadata.ino()
+        || opened_metadata.file_type() != verified_metadata.file_type()
+    {
+        return Err(opened_identity_mismatch(candidate));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_error(candidate: &Path, source: rustix::io::Errno) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "cannot verify the opened local target path for {}: {source}",
+        candidate.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_io_error(candidate: &Path, source: std::io::Error) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "cannot verify the opened local target identity for {}: {source}",
+        candidate.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_mismatch(candidate: &Path) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "opened local target no longer matches its filesystem path: {}",
+        candidate.display()
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -1044,7 +1149,7 @@ impl LocalTargetSession {
         capacity: CandidateReadCapacity,
         follow_symlinks: bool,
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
-        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, || {})?;
         if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded);
         }
@@ -1108,8 +1213,7 @@ impl LocalTargetSession {
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
-        after_open();
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
         if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
@@ -1152,6 +1256,7 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
         follow_symlinks: bool,
+        after_open: impl FnOnce(),
     ) -> Result<(PathBuf, fs::File), LocalTargetError> {
         // The number of distinct paths a session may examine is a resource
         // bound on every platform. Only resolution and opening differ below.
@@ -1160,8 +1265,11 @@ impl LocalTargetSession {
         {
             let opened = self.remember(
                 candidate,
-                self.policy
-                    .open_confined_with_symlinks(candidate, follow_symlinks),
+                self.policy.open_confined_with_symlinks_after_open(
+                    candidate,
+                    follow_symlinks,
+                    after_open,
+                ),
             )?;
             self.inspections
                 .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
@@ -1176,6 +1284,7 @@ impl LocalTargetSession {
             self.inspections
                 .insert(candidate.to_owned(), Ok(canonical.clone()));
             let file = self.policy.open_confined(&canonical)?;
+            after_open();
             Ok((canonical, file))
         }
     }
@@ -2201,5 +2310,67 @@ mod tests {
 
         assert_eq!(loaded.source(), "= Guide");
         assert_ne!(loaded.source(), "= Replacement");
+        assert_eq!(loaded.canonical_path(), displaced);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_opened_file_fails_closed_instead_of_accepting_the_deleted_suffix() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let target = root.0.join("docs/guide.adoc");
+
+        let error = session
+            .read_utf8_after_open(&root.0.join("docs"), "guide.adoc", || {
+                fs::remove_file(&target).expect("unlink opened file");
+            })
+            .expect_err("unlinked identity must fail closed");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+        assert_eq!(session.read_files, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_real_file_name_ending_in_deleted_is_preserved() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&target, "literal suffix").expect("suffix source");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+
+        let loaded = session
+            .read_candidate_utf8(&target)
+            .expect("literal suffix is a valid file name");
+
+        assert_eq!(loaded.canonical_path(), target);
+        assert_eq!(loaded.source(), "literal suffix");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn deleted_suffix_collision_cannot_reuse_an_unlinked_files_cache_entry() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+
+        let error = session
+            .read_utf8_after_open(&root.0.join("docs"), "guide.adoc", || {
+                fs::remove_file(&target).expect("unlink opened file");
+            })
+            .expect_err("suffix collision must not verify another inode");
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+
+        let loaded = session
+            .read_candidate_utf8(&suffix)
+            .expect("read the literal suffix file");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), "literal suffix");
+        assert_eq!(session.read_files, 1);
     }
 }

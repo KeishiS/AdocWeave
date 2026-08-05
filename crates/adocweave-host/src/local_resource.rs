@@ -2189,6 +2189,9 @@ mod tests {
             .expect("opened source remains valid");
 
         assert_eq!(loaded.source(), "inside");
+        #[cfg(target_os = "linux")]
+        assert_eq!(loaded.canonical_path(), moved);
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(loaded.canonical_path(), candidate);
     }
 
@@ -2258,5 +2261,35 @@ mod tests {
 
         assert_eq!(loaded.source(), "inside");
         assert_ne!(loaded.source(), "outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_file_does_not_charge_or_cache_a_literal_deleted_suffix_path() {
+        let root = TestDir::new("deleted-suffix-budget");
+        let candidate = root.path().join("part.adoc");
+        let suffix = root.path().join("part.adoc (deleted)");
+        fs::write(&candidate, "opened").expect("opened source");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let error = session
+            .read_utf8_after_open(source_id(), &candidate, || {
+                fs::remove_file(&candidate).expect("unlink opened source");
+            })
+            .expect_err("unlinked identity must fail closed");
+
+        assert!(matches!(error, ResourceError::Unverifiable(_)));
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+
+        let loaded = session
+            .read_utf8(source_id(), &suffix)
+            .expect("literal suffix remains independently readable");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), "literal suffix");
+        assert_eq!(
+            (session.budget().files(), session.budget().bytes()),
+            (1, 14)
+        );
     }
 }
