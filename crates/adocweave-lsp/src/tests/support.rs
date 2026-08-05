@@ -21,9 +21,8 @@ pub(super) fn initialize_with_params(
     params: lsp::InitializeParams,
 ) -> lsp::InitializeResult {
     let result = service.initialize(&params);
-    if let Some(scan) = service.plan_workspace_scan() {
-        let _ = service.apply_workspace_scan(scan);
-    }
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let _ = service.apply_workspace_scan(scan);
     result
 }
 

@@ -3,6 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use adocweave::CancellationCheck;
 use adocweave::output::diagnostics::{RuleSettings, lint_rule};
 use adocweave::output::formatter;
 use adocweave::resolution::ReferenceKey;
@@ -536,9 +537,10 @@ impl LanguageService {
         if params.changes.iter().any(|change| {
             change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
         }) {
-            // A full reload selects the new plan before any changed document
-            // in the same notification is read.
-            return self.reload_project_configuration();
+            // Project files are handled by the backend's asynchronous full
+            // scan. Mixing an incremental resource reload with a new resource
+            // plan would admit files under two different configurations.
+            return Vec::new();
         }
         let mut affected = std::collections::BTreeSet::new();
         for change in params.changes {
@@ -567,14 +569,13 @@ impl LanguageService {
     /// finds. It takes `&self` so a caller can run it on a worker while the
     /// event loop keeps answering requests. Installing the result is
     /// [`Self::apply_workspace_scan`], which is cheap and runs in order.
-    pub fn plan_workspace_scan(&self) -> Option<WorkspaceScan> {
-        if self.workspace_roots.is_empty() {
-            return None;
-        }
+    pub fn plan_workspace_scan(&self, cancellation: &dyn CancellationCheck) -> WorkspaceScan {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        Some(WorkspaceScan {
-            loaded: self.workspace.load_roots_detached(&roots),
-        })
+        WorkspaceScan {
+            loaded: self
+                .workspace
+                .load_roots_detached_with_cancellation(&roots, cancellation),
+        }
     }
 
     /// Installs a completed scan and returns the analyses it makes stale.
@@ -587,16 +588,6 @@ impl LanguageService {
         let outcome = self
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
-        self.finish_reload(outcome, open_sources)
-    }
-
-    fn reload_project_configuration(&mut self) -> Vec<AnalysisJob> {
-        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
-        let open_sources = self.documents.open_sources();
-        let parsed_open_sources = parse_open_sources(&open_sources);
-        let outcome = self
-            .workspace
-            .reload_roots_with_open_sources(&roots, &parsed_open_sources);
         self.finish_reload(outcome, open_sources)
     }
 
@@ -639,9 +630,9 @@ impl LanguageService {
     pub fn workspace_folders_changed(
         &mut self,
         params: lsp::DidChangeWorkspaceFoldersParams,
-    ) -> Vec<AnalysisJob> {
+    ) -> bool {
         if !self.client.workspace_folders {
-            return Vec::new();
+            return false;
         }
         let mut roots = self.workspace_roots.clone();
         for folder in params.event.removed {
@@ -650,42 +641,11 @@ impl LanguageService {
         for folder in params.event.added {
             roots.insert(folder.uri.to_string(), folder.uri);
         }
-        let root_uris = roots.values().cloned().collect::<Vec<_>>();
-        let open_sources = self.documents.open_sources();
-        let parsed_open_sources = parse_open_sources(&open_sources);
-        if let Err(error) = self
-            .workspace
-            .reload_roots_with_open_sources(&root_uris, &parsed_open_sources)
-        {
-            let failed_closed = self.workspace.last_load_failed_closed();
-            self.workspace_error = Some(error.clone());
-            if !failed_closed {
-                return Vec::new();
-            }
-            self.workspace_roots = roots;
-            return open_sources
-                .into_iter()
-                .filter_map(|(uri, _, _)| {
-                    let options = self.analysis_options_for(None);
-                    let mut job = self.documents.reconfigure(&uri, options)?;
-                    attach_workspace(&mut job, Err(error.clone()));
-                    Some(job)
-                })
-                .collect();
+        if roots == self.workspace_roots {
+            return false;
         }
         self.workspace_roots = roots;
-        self.workspace_error = None;
-        open_sources
-            .into_iter()
-            .filter_map(|(uri, _, _)| {
-                let parsed = uri.parse().ok()?;
-                let workspace = self.workspace.input(&parsed);
-                let options = self.analysis_options_for(workspace.as_ref().ok());
-                let mut job = self.documents.reconfigure(&uri, options)?;
-                attach_workspace(&mut job, workspace);
-                Some(job)
-            })
-            .collect()
+        true
     }
 
     /// Returns the effective text a workspace resource holds, if it is known.

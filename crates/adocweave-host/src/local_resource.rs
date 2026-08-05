@@ -248,19 +248,38 @@ impl LocalFilesystemSession {
         &self,
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        self.discover_adoc_paths_with_limit(Self::MAX_SCAN_ENTRIES, exclude_directory)
+        self.discover_adoc_paths_with_control(exclude_directory, || false)
+    }
+
+    /// Discovers `.adoc` candidates with directory pruning and cancellation.
+    ///
+    /// Cancellation is checked before inspecting each queued path and after
+    /// each directory entry is observed. It returns an error so a caller never
+    /// mistakes a partial walk for a complete workspace snapshot.
+    pub fn discover_adoc_paths_with_control(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        self.discover_adoc_paths_with_limit(Self::MAX_SCAN_ENTRIES, exclude_directory, is_cancelled)
     }
 
     fn discover_adoc_paths_with_limit(
         &self,
         scan_entry_limit: usize,
         mut exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
         let mut paths = Vec::new();
         let mut scanned_entries = 0_usize;
         for root in &self.roots {
             let mut pending = VecDeque::from([root.clone()]);
             while let Some(path) = pending.pop_front() {
+                if is_cancelled() {
+                    return Err(ResourceError::Unverifiable(
+                        "local filesystem scan was cancelled".to_owned(),
+                    ));
+                }
                 let metadata =
                     fs::symlink_metadata(&path).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
@@ -281,6 +300,11 @@ impl LocalFilesystemSession {
                         path: path.clone(),
                         source: source.to_string(),
                     })? {
+                        if is_cancelled() {
+                            return Err(ResourceError::Unverifiable(
+                                "local filesystem scan was cancelled".to_owned(),
+                            ));
+                        }
                         children.push(child.map_err(|source| ResourceError::Inspect {
                             path: path.clone(),
                             source: source.to_string(),
@@ -961,15 +985,19 @@ mod tests {
         let session = policy(root.path(), 100).session().expect("session");
 
         assert_eq!(
-            session.discover_adoc_paths_with_limit(2, |_, _| false),
+            session.discover_adoc_paths_with_limit(2, |_, _| false, || false),
             Err(ResourceError::ScanEntryLimit { limit: 2 })
         );
         assert_eq!(
             session
-                .discover_adoc_paths_with_limit(2, |scan_root, relative| {
-                    assert_eq!(scan_root, root.path());
-                    relative == Path::new("excluded")
-                })
+                .discover_adoc_paths_with_limit(
+                    2,
+                    |scan_root, relative| {
+                        assert_eq!(scan_root, root.path());
+                        relative == Path::new("excluded")
+                    },
+                    || false,
+                )
                 .expect("pruned discovery"),
             [root.path().join("kept.adoc")]
         );
@@ -982,16 +1010,42 @@ mod tests {
         let session = policy(root.path(), 100).session().expect("session");
 
         assert_eq!(
-            session.discover_adoc_paths_with_limit(0, |_, _| true),
+            session.discover_adoc_paths_with_limit(0, |_, _| true, || false),
             Err(ResourceError::ScanEntryLimit { limit: 0 })
         );
         assert!(
             session
-                .discover_adoc_paths_with_limit(1, |_, relative| {
-                    relative == Path::new("excluded")
-                })
+                .discover_adoc_paths_with_limit(
+                    1,
+                    |_, relative| relative == Path::new("excluded"),
+                    || false,
+                )
                 .expect("boundary discovery")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn cancelled_discovery_never_returns_a_partial_candidate_set() {
+        let root = TestDir::new("scan-cancelled");
+        fs::write(root.path().join("first.adoc"), "first\n").expect("first source");
+        fs::write(root.path().join("second.adoc"), "second\n").expect("second source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let checks = std::cell::Cell::new(0_usize);
+
+        let result = session.discover_adoc_paths_with_control(
+            |_, _| false,
+            || {
+                checks.set(checks.get() + 1);
+                checks.get() > 2
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(ResourceError::Unverifiable(
+                "local filesystem scan was cancelled".to_owned()
+            ))
         );
     }
 

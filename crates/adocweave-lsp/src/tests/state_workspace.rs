@@ -533,12 +533,14 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
         "include::part.adoc[]\n\noverlay\n",
     );
 
-    let jobs = service.workspace_folders_changed(typed(json!({
+    assert!(service.workspace_folders_changed(typed(json!({
         "event": {
             "removed": [{"uri": removed_uri, "name": "removed"}],
             "added": [{"uri": added_uri, "name": "added"}]
         }
-    })));
+    }))));
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].request.revision.version, 3);
     assert!(jobs[0].request.source.contains("overlay"));
@@ -552,6 +554,89 @@ fn workspace_folder_changes_rebuild_roots_and_preserve_open_overlays() {
             .as_ref(),
         "include::part.adoc[]\n\noverlay\n"
     );
+    fs::remove_dir_all(base).expect("cleanup");
+}
+
+#[test]
+fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("adocweave-workspace-removal-{unique}"));
+    let retained = base.join("retained");
+    let removed = base.join("removed");
+    for root in [&retained, &removed] {
+        fs::create_dir_all(root).expect("workspace");
+        fs::write(root.join("root.adoc"), "disk\n").expect("document");
+    }
+    let retained_root = lsp::Url::from_directory_path(&retained).expect("retained root URI");
+    let removed_root = lsp::Url::from_directory_path(&removed).expect("removed root URI");
+    let retained_document =
+        lsp::Url::from_file_path(retained.join("root.adoc")).expect("retained document URI");
+    let removed_document =
+        lsp::Url::from_file_path(removed.join("root.adoc")).expect("removed document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "workspaceFolders": [
+                {"uri": retained_root, "name": "retained"},
+                {"uri": removed_root, "name": "removed"}
+            ],
+            "capabilities": {"workspace": {"workspaceFolders": true}}
+        })),
+    );
+    open(
+        &mut service,
+        retained_document.as_str(),
+        1,
+        "retained overlay\n",
+    );
+    open(
+        &mut service,
+        removed_document.as_str(),
+        1,
+        "removed overlay\n",
+    );
+
+    assert!(service.workspace_folders_changed(typed(json!({
+        "event": {
+            "removed": [{"uri": removed_root, "name": "removed"}],
+            "added": []
+        }
+    }))));
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
+
+    let retained_job = jobs
+        .iter()
+        .find(|job| job.uri == retained_document.as_str())
+        .expect("retained document reanalysis");
+    assert!(retained_job.workspace.is_some());
+    assert!(retained_job.workspace_problem.is_none());
+    let removed_job = jobs
+        .iter()
+        .find(|job| job.uri == removed_document.as_str())
+        .expect("removed document reanalysis");
+    assert!(removed_job.workspace.is_none());
+    assert_eq!(
+        removed_job
+            .workspace_problem
+            .as_ref()
+            .expect("removed document problem")
+            .code,
+        "workspace-input-error"
+    );
+    assert_eq!(
+        service
+            .workspace_resource(&retained_document)
+            .expect("retained workspace source")
+            .as_ref(),
+        "retained overlay\n"
+    );
+
     fs::remove_dir_all(base).expect("cleanup");
 }
 
@@ -628,9 +713,15 @@ fn project_configuration_is_shared_with_lsp_and_reloaded_by_generation() {
         "schema-version = 1\n[lint.rules.macro-boundary]\nenabled = false\n",
     )
     .expect("updated configuration");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": config_uri, "type": 2}]
-    })));
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": config_uri, "type": 2}]
+            })))
+            .is_empty()
+    );
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
     assert_eq!(jobs.len(), 1);
     for job in jobs {
         adopt(&mut service, job);
@@ -679,9 +770,15 @@ fn configuration_watch_does_not_restore_open_overlay_outside_resource_roots() {
         "schema-version = 1\n[resources]\nroots = [\"docs\"]\nmax-files = 8\nmax-total-bytes = 64\nmax-resource-bytes = 64\n",
     )
     .expect("narrowed configuration");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": config_uri, "type": 2}]
-    })));
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": config_uri, "type": 2}]
+            })))
+            .is_empty()
+    );
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
 
     assert_eq!(jobs.len(), 1);
     assert!(jobs[0].workspace.is_none());
@@ -879,16 +976,24 @@ fn invalidated_project_configuration_clears_old_feature_views() {
     let config_uri = lsp::Url::from_file_path(&config_path).expect("config URI");
     let mut service = LanguageService::default();
     initialize(&mut service, &["utf-16"]);
-    service.workspace_folders_changed(typed(json!({
+    assert!(service.workspace_folders_changed(typed(json!({
         "event": {"added": [{"uri": root_uri, "name": "root"}], "removed": []}
-    })));
+    }))));
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let _ = service.apply_workspace_scan(scan);
     open(&mut service, document_uri.as_str(), 1, source);
     assert!(service.documents.snapshot(document_uri.as_str()).is_some());
 
     fs::write(&config_path, "schema-version = 99\n").expect("invalid configuration");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": config_uri, "type": 2}]
-    })));
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": config_uri, "type": 2}]
+            })))
+            .is_empty()
+    );
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
 
     assert_eq!(jobs.len(), 1);
     assert!(service.documents.snapshot(document_uri.as_str()).is_none());
@@ -946,9 +1051,15 @@ fn stricter_resource_plan_invalidates_the_rejected_open_overlay() {
     )
     .expect("stricter configuration");
 
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": config_uri, "type": 2}]
-    })));
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": config_uri, "type": 2}]
+            })))
+            .is_empty()
+    );
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(scan);
 
     assert_eq!(jobs.len(), 1);
     assert!(jobs[0].workspace.is_none());
@@ -1271,7 +1382,7 @@ fn planning_a_workspace_scan_leaves_service_state_untouched() {
     }));
     service.initialize(&params);
 
-    let scan = service.plan_workspace_scan().expect("roots to scan");
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     assert!(
         service.workspace_analysis_count() == 0,
         "planning must not install what it read",
@@ -1312,7 +1423,7 @@ fn a_document_opened_during_the_scan_survives_applying_it() {
     }));
     service.initialize(&params);
 
-    let scan = service.plan_workspace_scan().expect("roots to scan");
+    let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
     // The client opens the file, with unsaved edits, before the walk lands.
     open(&mut service, opened.as_str(), 1, "= Edited in the editor\n");
     let jobs = service.apply_workspace_scan(scan);
