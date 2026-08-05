@@ -221,6 +221,11 @@ pub(crate) struct WorkspaceFileChanges {
     pub(crate) recovery_required: bool,
 }
 
+pub(crate) struct WorkspaceScanApplication {
+    pub(crate) jobs: Vec<AnalysisJob>,
+    pub(crate) installed: bool,
+}
+
 impl fmt::Debug for LanguageService {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -573,13 +578,6 @@ impl LanguageService {
         options
     }
 
-    pub fn workspace_files_changed(
-        &mut self,
-        params: lsp::DidChangeWatchedFilesParams,
-    ) -> Vec<AnalysisJob> {
-        self.workspace_files_changed_with_journal(params).jobs
-    }
-
     fn clear_workspace_watch_errors(&mut self) -> bool {
         let changed = !self.workspace_watch_errors.is_empty()
             || self.workspace_watch_errors_overflowed
@@ -771,13 +769,17 @@ impl LanguageService {
     ///
     /// The documents open at this moment are overlaid onto the read, not the
     /// ones open when it started, so a document opened during the walk is kept.
-    pub fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> Vec<AnalysisJob> {
+    pub(crate) fn apply_workspace_scan(&mut self, scan: WorkspaceScan) -> WorkspaceScanApplication {
         let open_sources = self.documents.open_sources();
         let parsed_open_sources = parse_open_sources(&open_sources);
         let outcome = self
             .workspace
             .apply_loaded_roots(scan.loaded, &parsed_open_sources);
-        self.finish_reload(outcome, open_sources)
+        let installed = outcome.is_ok();
+        WorkspaceScanApplication {
+            jobs: self.finish_reload(outcome, open_sources),
+            installed,
+        }
     }
 
     /// Records an internal scan worker failure without replacing the last
