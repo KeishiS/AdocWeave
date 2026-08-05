@@ -101,13 +101,14 @@ function validate(node, value, where = "") {
   if (rules.enum !== undefined && !rules.enum.includes(value)) {
     failures.push(`${where}: enum に含まれません`);
   }
-  if (rules.pattern !== undefined && !new RegExp(rules.pattern).test(value)) {
+  if (rules.pattern !== undefined && !new RegExp(rules.pattern, "u").test(value)) {
     failures.push(`${where}: pattern に一致しません`);
   }
-  if (rules.minLength !== undefined && value.length < rules.minLength) {
+  const stringLength = typeof value === "string" ? [...value].length : undefined;
+  if (rules.minLength !== undefined && stringLength < rules.minLength) {
     failures.push(`${where}: minLength を下回ります`);
   }
-  if (rules.maxLength !== undefined && value.length > rules.maxLength) {
+  if (rules.maxLength !== undefined && stringLength > rules.maxLength) {
     failures.push(`${where}: maxLength を超えます`);
   }
   if (rules.minimum !== undefined && value < rules.minimum) {
@@ -196,6 +197,12 @@ test("JSON Schemaは実装と同じ設定を受理し、同じ設定を拒否す
     );
   }
   assert.deepEqual(disagreements, []);
+});
+
+test("文字列長はRustと同じUnicode scalar value数で検査する", () => {
+  const rules = schema.$defs.workspaceScanPattern;
+  assert.equal(validate(rules, "😀".repeat(1024), "境界値").length, 0);
+  assert.notEqual(validate(rules, "😀".repeat(1025), "上限超過").length, 0);
 });
 
 test("JSON Schemaで表現できない制約には理由が書いてある", () => {
