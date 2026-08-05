@@ -1110,10 +1110,7 @@ dependencies = [
   "ci",
   "test-profile-release",
   "wasm-size",
-  "test-browser-release-package",
-  "test-textlint-plugin-release-package",
-  "test-zed-release-package",
-  "test-vscode-release-package",
+  "release-global-candidate",
   "release-installation-e2e-host",
   "dist-plan",
 ]

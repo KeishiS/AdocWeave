@@ -154,6 +154,22 @@ test("publisher cannot omit its named environment or cleanup", () => {
   );
 });
 
+test("publisherは公開前に全assetをattestする", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const attestStart = inputs.publish.indexOf("      - name: Public asset attestations\n");
+  const publicationStart = inputs.publish.indexOf("      - name: Complete release publication\n");
+  const cleanupStart = inputs.publish.indexOf("      - name: Incomplete draft removal\n");
+  assert.ok(attestStart >= 0 && publicationStart > attestStart && cleanupStart > publicationStart);
+  const publish = inputs.publish.slice(0, attestStart) +
+    inputs.publish.slice(publicationStart, cleanupStart) +
+    inputs.publish.slice(attestStart, publicationStart) +
+    inputs.publish.slice(cleanupStart);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, publish }),
+    /attested before publication/,
+  );
+});
+
 test("tag runs cannot be cancelled with superseded source runs", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(

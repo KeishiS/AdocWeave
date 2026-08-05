@@ -879,6 +879,17 @@ export function validateReleaseWorkflowPolicy({
       "textlint-plugin-candidate-npx-smoke",
     ],
   });
+  requireTask(tasks, "release-check", {
+    dependencies: [
+      "ci",
+      "test-profile-release",
+      "wasm-size",
+      "release-global-candidate",
+      "release-installation-e2e-host",
+      "dist-plan",
+    ],
+  });
+  requireTask(tasks, "release-gate", { alias: "release-check" });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],
   });
@@ -918,9 +929,15 @@ export function validateReleaseWorkflowPolicy({
     ["-F draft=false", "publication must be the final mutation"],
     ["gh api --method DELETE", "failed publication must remove its draft"],
   ]) requireCommand(publishRuns, value, message);
-  step(publishJob, (item) =>
+  const attestation = step(publishJob, (item) =>
     item.uses?.startsWith("actions/attest@") && item.with?.["subject-path"] === "artifacts/*",
   "the complete public asset set must be attested");
+  const publication = step(publishJob, (item) =>
+    typeof item.run === "string" && item.run.includes("-F draft=false"),
+  "release publication step is missing");
+  if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(publication)) {
+    fail("public assets must be attested before publication");
+  }
   step(publishJob, (item) => item.if === "failure()", "failed publication must clean up its draft");
   if (publishRuns.includes("/releases/tags/") ||
       /gh release\s+(upload|view|edit)/.test(publishRuns)) {

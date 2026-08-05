@@ -65,6 +65,9 @@ test("重複pathと不正な境界値を拒否する", () => {
   assert.throws(() => validateTextlintPluginPackageContract(count), /files.length/);
   const memory = clone(base); memory.wasm.maximumMemoryBytes += 1;
   assert.throws(() => validateTextlintPluginPackageContract(memory), /WebAssembly pages/);
+  const missingWindows = clone(base);
+  missingWindows.e2eMatrix = missingWindows.e2eMatrix.filter(({ runner }) => !runner.startsWith("windows-"));
+  assert.throws(() => validateTextlintPluginPackageContract(missingWindows), /must cover Windows/);
 });
 
 test("package名、対応版および単発実行設定の形式を限定する", () => {

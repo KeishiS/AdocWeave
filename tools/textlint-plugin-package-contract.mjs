@@ -69,6 +69,9 @@ export function validateTextlintPluginPackageContract(contract) {
   if (!Array.isArray(contract.e2eMatrix) || contract.e2eMatrix.length === 0) fail("e2eMatrix must be non-empty");
   const matrix = new Set();
   for (const [index, entry] of contract.e2eMatrix.entries()) { exactKeys(entry, ["runner", "node"], `e2eMatrix[${index}]`); string(entry.runner, `e2eMatrix[${index}].runner`); string(entry.node, `e2eMatrix[${index}].node`); const key = `${entry.runner}\0${entry.node}`; if (matrix.has(key)) fail("e2eMatrix has a duplicate entry"); matrix.add(key); }
+  for (const [family, pattern] of [["Linux", /^ubuntu-/], ["macOS", /^macos-/], ["Windows", /^windows-/]]) {
+    if (!contract.e2eMatrix.some(({ runner }) => pattern.test(runner))) fail(`e2eMatrix must cover ${family}`);
+  }
   exactKeys(contract.oneShot, ["rulePackage", "ruleVersion", "preset"], "oneShot");
   matches(contract.oneShot.rulePackage, /^(?:@[a-z0-9-]+\/)?[a-z0-9-]+$/, "oneShot.rulePackage");
   matches(contract.oneShot.ruleVersion, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, "oneShot.ruleVersion");
