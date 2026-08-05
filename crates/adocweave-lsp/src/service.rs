@@ -24,7 +24,7 @@ use crate::state::{
     Adoption, AnalysisJob, DocumentSnapshot, WorkspaceAnalysis as DocumentWorkspaceAnalysis,
     WorkspaceProblem,
 };
-use crate::workspace::WorkspaceResources;
+use crate::workspace::{WatchedFileKind, WorkspaceResources};
 use crate::{SERVER_NAME, VERSION};
 
 const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
@@ -466,7 +466,6 @@ impl LanguageService {
             document.text,
             options,
         );
-        attach_workspace(&mut job, workspace);
         let mut affected = affected;
         if let Ok(pruned) = self
             .workspace
@@ -474,6 +473,7 @@ impl LanguageService {
         {
             affected.extend(pruned);
         }
+        attach_workspace(&mut job, self.workspace.input(&document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -528,7 +528,6 @@ impl LanguageService {
         ) else {
             return Ok(Vec::new());
         };
-        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut affected = affected;
         affected.extend(
             self.workspace.begin_document_revision(
@@ -536,6 +535,7 @@ impl LanguageService {
                 job.request.revision.generation,
             )?,
         );
+        attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -698,27 +698,23 @@ impl LanguageService {
         let mut journal = Vec::new();
         let mut watch_errors_changed = false;
         for change in changes {
-            if self.documents.get(change.uri.as_str()).is_some() {
-                watch_errors_changed |= self.clear_workspace_watch_error(&change.uri);
-                continue;
-            }
-            let known_before = self.workspace.tracks_watched_resource(&change.uri);
-            let changed = if change.typ == lsp::FileChangeType::DELETED {
-                self.workspace.remove_disk(&change.uri)
+            let kind = if change.typ == lsp::FileChangeType::DELETED {
+                WatchedFileKind::Delete
             } else {
-                self.workspace.reload_file(change.uri.clone())
+                WatchedFileKind::Upsert
             };
-            match changed {
-                Ok(changed) => {
+            match self.workspace.apply_watched_file(change.uri.clone(), kind) {
+                Ok(update) => {
                     watch_errors_changed |= self.clear_workspace_watch_error(&change.uri);
-                    affected.extend(changed);
-                    if known_before || self.workspace.contains(&change.uri) {
+                    affected.extend(update.affected);
+                    if update.journal_relevant {
                         journal.push(change);
                     }
                 }
                 Err(error) => {
-                    watch_errors_changed |= self.record_workspace_watch_error(&change.uri, error);
-                    if known_before || change.uri.path().ends_with(".adoc") {
+                    watch_errors_changed |=
+                        self.record_workspace_watch_error(&change.uri, error.message);
+                    if error.journal_relevant {
                         journal.push(change);
                     }
                 }

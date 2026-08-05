@@ -19,6 +19,38 @@ use async_lsp::lsp_types::Url;
 
 const MAX_WATCHED_INCLUDE_RESOURCES: usize = 10_000;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AnalysisRootRoles {
+    /// Membership in the workspace-discovered root set. The initial scan and
+    /// later watcher discovery both maintain this role.
+    scan_root: bool,
+    open_overlay: bool,
+}
+
+impl AnalysisRootRoles {
+    const fn is_root(self) -> bool {
+        self.scan_root || self.open_overlay
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WatchedFileKind {
+    Upsert,
+    Delete,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct WatchedFileUpdate {
+    pub(crate) affected: BTreeSet<String>,
+    pub(crate) journal_relevant: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct WatchedFileError {
+    pub(crate) message: String,
+    pub(crate) journal_relevant: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkspaceInput {
     pub generation: Generation,
@@ -92,6 +124,7 @@ pub struct LoadedRoots {
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
+    analysis_root_roles: BTreeMap<ResourceId, AnalysisRootRoles>,
     roots: Vec<PathBuf>,
     directory_roots: Vec<PathBuf>,
     single_file_roots: BTreeSet<PathBuf>,
@@ -100,7 +133,14 @@ pub struct WorkspaceResources {
     filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
     project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
-    include_resources: BTreeSet<ResourceId>,
+    /// Include targets which must remain observable by the file watcher.
+    ///
+    /// Unlike `loaded_include_resources`, this includes admitted targets which are
+    /// currently missing or could not be read. Keeping the interest separate
+    /// from the disk layer lets a later create or repair notification recover
+    /// the dependent open document.
+    include_interests: BTreeSet<ResourceId>,
+    loaded_include_resources: BTreeSet<ResourceId>,
     include_dependencies: BTreeMap<ResourceId, BTreeSet<ResourceId>>,
     pending_include_dependencies: BTreeMap<ResourceId, (u64, BTreeSet<ResourceId>)>,
     retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
@@ -121,6 +161,18 @@ struct PreparedWorkspaceRead {
     text: Arc<str>,
     filesystem: Arc<Mutex<LocalFilesystemSession>>,
     rollback: FilesystemReadRollback,
+}
+
+enum AdmittedIncludeTarget {
+    Existing(Box<ExistingIncludeTarget>),
+    Missing,
+}
+
+struct ExistingIncludeTarget {
+    uri: Url,
+    path: PathBuf,
+    scope: ProjectScopeId,
+    plan: adocweave_config::ResolvedResourceLimitPlan,
 }
 
 impl PreparedWorkspaceRead {
@@ -413,6 +465,7 @@ impl WorkspaceResources {
             let mut inner = Workspace::new_at_generation(limits, seed);
             let mut filesystems = BTreeMap::new();
             let mut resource_projects = BTreeMap::new();
+            let mut analysis_root_roles = BTreeMap::new();
             let mut project_plans = BTreeMap::new();
             let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> =
                 BTreeMap::new();
@@ -494,10 +547,18 @@ impl WorkspaceResources {
                     inner
                         .register_root(id.clone())
                         .map_err(|error| error.to_string())?;
+                    analysis_root_roles.insert(
+                        id.clone(),
+                        AnalysisRootRoles {
+                            scan_root: true,
+                            open_overlay: false,
+                        },
+                    );
                 }
                 resource_projects.insert(id, scope);
             }
             self.inner = inner;
+            self.analysis_root_roles = analysis_root_roles;
             self.roots = paths.clone();
             self.directory_roots = directory_roots;
             self.single_file_roots = single_file_roots;
@@ -506,7 +567,8 @@ impl WorkspaceResources {
             self.filesystems = filesystems;
             self.project_plans = project_plans;
             self.resource_projects = resource_projects;
-            self.include_resources.clear();
+            self.include_interests.clear();
+            self.loaded_include_resources.clear();
             self.include_dependencies.clear();
             self.pending_include_dependencies.clear();
             self.retained_layers = retained_layers;
@@ -525,6 +587,7 @@ impl WorkspaceResources {
     fn fail_closed(&mut self, roots: Vec<PathBuf>, limits: WorkspaceLimits) {
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         self.inner = Workspace::new_at_generation(limits, seed);
+        self.analysis_root_roles.clear();
         self.roots = roots;
         self.directory_roots.clear();
         self.single_file_roots.clear();
@@ -533,7 +596,8 @@ impl WorkspaceResources {
         self.filesystems.clear();
         self.project_plans.clear();
         self.resource_projects.clear();
-        self.include_resources.clear();
+        self.include_interests.clear();
+        self.loaded_include_resources.clear();
         self.include_dependencies.clear();
         self.pending_include_dependencies.clear();
         self.retained_layers.clear();
@@ -559,60 +623,124 @@ impl WorkspaceResources {
         self.inner.snapshot().resources().count()
     }
 
-    pub(crate) fn contains(&self, uri: &Url) -> bool {
-        uri_id(uri)
-            .ok()
-            .is_some_and(|id| self.inner.get(&id).is_some())
-    }
-
-    pub(crate) fn tracks_watched_resource(&self, uri: &Url) -> bool {
-        uri_id(uri)
-            .ok()
-            .is_some_and(|id| self.inner.get(&id).is_some() || self.include_resources.contains(&id))
-    }
-
+    #[cfg(test)]
     pub fn reload_file(&mut self, uri: Url) -> Result<BTreeSet<String>, String> {
-        let path = uri
-            .to_file_path()
-            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
-        let id = uri_id(&uri)?;
-        let known_before = self.inner.get(&id).is_some();
-        let known_include = self.include_resources.contains(&id);
-        if !known_before
-            && !known_include
-            && path.extension().and_then(|value| value.to_str()) != Some("adoc")
-        {
-            return Ok(BTreeSet::new());
+        self.apply_watched_file(uri, WatchedFileKind::Upsert)
+            .map(|update| update.affected)
+            .map_err(|error| error.message)
+    }
+
+    pub(crate) fn apply_watched_file(
+        &mut self,
+        uri: Url,
+        kind: WatchedFileKind,
+    ) -> Result<WatchedFileUpdate, WatchedFileError> {
+        let path = uri.to_file_path().map_err(|()| WatchedFileError {
+            message: format!("workspace resource is not a file URI: {uri}"),
+            journal_relevant: false,
+        })?;
+        let id = uri_id(&uri).map_err(|message| WatchedFileError {
+            message,
+            journal_relevant: false,
+        })?;
+        let roles = self
+            .analysis_root_roles
+            .get(&id)
+            .copied()
+            .unwrap_or_default();
+        let known_include = self.include_interests.contains(&id);
+        let tracked = roles.is_root() || known_include;
+        let is_adoc = path.extension().and_then(|value| value.to_str()) == Some("adoc");
+        if kind == WatchedFileKind::Delete {
+            if !tracked && self.inner.get(&id).is_none() {
+                return Ok(WatchedFileUpdate::default());
+            }
+            let affected = self.remove_disk(&uri).map_err(|message| WatchedFileError {
+                message,
+                journal_relevant: true,
+            })?;
+            self.loaded_include_resources.remove(&id);
+            if let Some(roles) = self.analysis_root_roles.get_mut(&id) {
+                roles.scan_root = false;
+                if !roles.is_root() {
+                    self.analysis_root_roles.remove(&id);
+                    self.inner.unregister_root(&id);
+                }
+            }
+            return Ok(WatchedFileUpdate {
+                affected,
+                journal_relevant: true,
+            });
+        }
+        if !tracked && !is_adoc {
+            return Ok(WatchedFileUpdate::default());
         }
         if !self.path_is_analysis_root(&path) {
-            return Ok(BTreeSet::new());
+            return Ok(WatchedFileUpdate::default());
+        }
+        let journal_relevant = tracked || is_adoc;
+        let logical_path =
+            workspace_logical_path(&self.roots, self.filesystem_policy.as_ref(), &path).map_err(
+                |message| WatchedFileError {
+                    message,
+                    journal_relevant,
+                },
+            )?;
+        // Scan exclusions are discovery rules, not filesystem authority. For
+        // an unknown candidate they can be decided from the normalized URI
+        // path before any file or nested project configuration is read.
+        if !tracked && self.path_is_scan_excluded(&logical_path) {
+            return Ok(WatchedFileUpdate::default());
         }
         let admitted_path =
-            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path, true)?;
+            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path).map_err(
+                |message| WatchedFileError {
+                    message,
+                    journal_relevant,
+                },
+            )?;
         if !self.path_is_analysis_root(&admitted_path) {
-            return Ok(BTreeSet::new());
+            return Ok(WatchedFileUpdate::default());
         }
         let (scope, config) = scope_and_config_for_path_typed(
             &self.roots,
             self.filesystem_policy.as_ref(),
             &admitted_path,
         )
-        .map_err(|error| error.to_string())?;
-        if !known_before && !known_include && self.path_is_scan_excluded(&admitted_path) {
-            return Ok(BTreeSet::new());
+        .map_err(|error| WatchedFileError {
+            message: error.to_string(),
+            journal_relevant,
+        })?;
+        let discover_as_root =
+            is_adoc && !roles.scan_root && !self.path_is_scan_excluded(&admitted_path);
+        if !tracked && !discover_as_root {
+            return Ok(WatchedFileUpdate::default());
         }
         if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
-            return self.remove_outside_authority(&id, &admitted_path);
+            let affected =
+                self.remove_outside_authority(&id, &admitted_path)
+                    .map_err(|message| WatchedFileError {
+                        message,
+                        journal_relevant,
+                    })?;
+            return Ok(WatchedFileUpdate {
+                affected,
+                journal_relevant,
+            });
         }
         let plan = config.as_ref().map_or_else(
             adocweave_config::ResolvedResourceLimitPlan::default,
             |snapshot| snapshot.config.resources.limit_plan,
         );
-        let prepared = if known_include {
-            self.read_workspace_resource(&admitted_path, &scope, plan)?
+        let prepared = if known_include || roles.open_overlay {
+            self.read_workspace_resource(&admitted_path, &scope, plan)
         } else {
-            self.read_analysis_root(&admitted_path, &scope, plan)?
-        };
+            self.read_analysis_root(&admitted_path, &scope, plan)
+        }
+        .map_err(|message| WatchedFileError {
+            message,
+            journal_relevant,
+        })?;
         let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
             let previous_charge = self.retained_charge(&id);
@@ -630,7 +758,13 @@ impl WorkspaceResources {
                     Arc::clone(&prepared.text),
                 )
                 .map_err(|error| error.to_string())?;
-            if !known_before && !known_include && !inner.roots().contains(&id) {
+            if discover_as_root {
+                if !roles.is_root() {
+                    inner
+                        .register_root(id.clone())
+                        .map_err(|error| error.to_string())?;
+                }
+            } else if roles.is_root() && !inner.roots().contains(&id) {
                 inner
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
@@ -640,8 +774,14 @@ impl WorkspaceResources {
         let (retained_layers, inner, affected) = match result {
             Ok(committed) => committed,
             Err(error) => {
-                prepared.rollback()?;
-                return Err(error);
+                prepared.rollback().map_err(|rollback| WatchedFileError {
+                    message: format!("{error}; rollback failed: {rollback}"),
+                    journal_relevant,
+                })?;
+                return Err(WatchedFileError {
+                    message: error,
+                    journal_relevant,
+                });
             }
         };
         let previous_scope = self.resource_projects.get(&id).cloned();
@@ -651,23 +791,39 @@ impl WorkspaceResources {
             && let Err(error) =
                 self.release_filesystem_charge(previous_scope.as_ref(), &admitted_path)
         {
-            prepared
-                .rollback()
-                .map_err(|rollback| format!("{error}; rollback failed: {rollback}"))?;
-            return Err(error);
+            prepared.rollback().map_err(|rollback| WatchedFileError {
+                message: format!("{error}; rollback failed: {rollback}"),
+                journal_relevant,
+            })?;
+            return Err(WatchedFileError {
+                message: error,
+                journal_relevant,
+            });
         }
         let pending_dependents = self.pending_include_dependents(&id);
         self.inner = inner;
+        if discover_as_root {
+            self.analysis_root_roles
+                .entry(id.clone())
+                .or_default()
+                .scan_root = true;
+        }
         self.retained_layers = retained_layers;
         self.filesystems
             .insert(scope.clone(), Arc::clone(&prepared.filesystem));
         self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id, scope);
+        self.resource_projects.insert(id.clone(), scope);
+        if known_include {
+            self.loaded_include_resources.insert(id);
+        }
         self.next_disk_version = next_disk_version;
         self.gc_scopes();
         let mut affected = strings(affected);
         affected.extend(pending_dependents);
-        Ok(affected)
+        Ok(WatchedFileUpdate {
+            affected,
+            journal_relevant: true,
+        })
     }
 
     fn remove_outside_authority(
@@ -691,9 +847,11 @@ impl WorkspaceResources {
         retained_layers.insert(scope.clone(), budget);
         self.release_filesystem_charge(Some(&scope), path)?;
         self.inner = inner;
+        self.analysis_root_roles.remove(id);
         self.retained_layers = retained_layers;
         self.resource_projects.remove(id);
-        self.include_resources.remove(id);
+        self.include_interests.remove(id);
+        self.loaded_include_resources.remove(id);
         self.include_dependencies.remove(id);
         self.pending_include_dependencies.remove(id);
         for dependencies in self.include_dependencies.values_mut() {
@@ -908,7 +1066,12 @@ impl WorkspaceResources {
             let affected = inner
                 .upsert_overlay(id.clone(), Revision::new(version), Arc::clone(&text))
                 .map_err(|error| error.to_string())?;
-            if !inner.roots().contains(&id) {
+            let was_root = self
+                .analysis_root_roles
+                .get(&id)
+                .copied()
+                .is_some_and(AnalysisRootRoles::is_root);
+            if !was_root {
                 inner
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
@@ -937,6 +1100,10 @@ impl WorkspaceResources {
             return Err(error);
         }
         self.inner = inner;
+        self.analysis_root_roles
+            .entry(id.clone())
+            .or_default()
+            .open_overlay = true;
         self.retained_layers = retained_layers;
         if let Some(prepared) = &prepared_disk {
             self.filesystems
@@ -1008,10 +1175,28 @@ impl WorkspaceResources {
             retained_layers.insert(project, budget);
         }
         let mut inner = self.inner.clone();
-        let affected = inner
+        let mut affected = inner
             .close_overlay(&id)
             .map_err(|error| error.to_string())?;
+        let remove_root = self
+            .analysis_root_roles
+            .get(&id)
+            .copied()
+            .is_some_and(|mut roles| {
+                roles.open_overlay = false;
+                !roles.is_root()
+            });
+        if remove_root {
+            inner.unregister_root(&id);
+        }
+        affected.remove(&id);
         self.inner = inner;
+        if let Some(roles) = self.analysis_root_roles.get_mut(&id) {
+            roles.open_overlay = false;
+        }
+        if remove_root {
+            self.analysis_root_roles.remove(&id);
+        }
         self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
             self.resource_projects.remove(&id);
@@ -1058,38 +1243,58 @@ impl WorkspaceResources {
             &self.roots,
             self.filesystem_policy.as_ref(),
         )?;
-        let inserted =
-            self.try_insert_include_target(&root_scope, &allowed_roots, target.as_str())?;
-        if inserted || self.include_resources.contains(target) {
-            self.pending_include_dependencies
-                .entry(root_id)
-                .or_insert_with(|| (revision_generation, BTreeSet::new()))
-                .1
-                .insert(target.clone());
+        let Some(admitted) = self.admit_include_target(&root_scope, &allowed_roots, target)? else {
+            return Ok(false);
+        };
+        if !self.include_interests.contains(target)
+            && self.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+        {
+            return Err(format!(
+                "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
+            ));
         }
-        Ok(inserted)
+        self.include_interests.insert(target.clone());
+        self.pending_include_dependencies
+            .entry(root_id)
+            .or_insert_with(|| (revision_generation, BTreeSet::new()))
+            .1
+            .insert(target.clone());
+        let AdmittedIncludeTarget::Existing(existing) = admitted else {
+            return Ok(false);
+        };
+        let ExistingIncludeTarget {
+            uri,
+            path,
+            scope,
+            plan,
+        } = *existing;
+        if self.inner.get(target).is_some() {
+            return Ok(false);
+        }
+        self.insert_include_resource(uri, path, scope, plan)?;
+        Ok(true)
     }
 
-    fn try_insert_include_target(
-        &mut self,
+    fn admit_include_target(
+        &self,
         root_scope: &ProjectScopeId,
         allowed_roots: &[PathBuf],
-        target: &str,
-    ) -> Result<bool, String> {
-        let Ok(target_uri) = Url::parse(target) else {
-            return Ok(false);
+        target: &ResourceId,
+    ) -> Result<Option<AdmittedIncludeTarget>, String> {
+        let Ok(target_uri) = Url::parse(target.as_str()) else {
+            return Ok(None);
         };
         let Ok(target_path) = target_uri.to_file_path() else {
-            return Ok(false);
+            return Ok(None);
         };
-        let Ok(canonical) = workspace_logical_file(
+        let Ok(admitted) = workspace_logical_file_status(
             &self.roots,
             self.filesystem_policy.as_ref(),
             &target_path,
-            false,
         ) else {
-            return Ok(false);
+            return Ok(None);
         };
+        let canonical = admitted.path();
         let authority_roots = if allowed_roots.is_empty() {
             std::slice::from_ref(&root_scope.workspace_root)
         } else {
@@ -1099,30 +1304,35 @@ impl WorkspaceResources {
             .iter()
             .any(|root| canonical.starts_with(root))
         {
-            return Ok(false);
-        }
-        let target_id = uri_id(&target_uri)?;
-        if self.inner.get(&target_id).is_some() {
-            return Ok(false);
+            return Ok(None);
         }
         let (scope, config) = scope_and_config_for_path_typed(
             &self.roots,
             self.filesystem_policy.as_ref(),
-            &canonical,
+            canonical,
         )
         .map_err(|error| error.to_string())?;
         if root_scope.config_path.is_none() && scope != *root_scope {
-            return Ok(false);
+            return Ok(None);
         }
-        if !resource_path_is_allowed(config.as_ref(), &canonical) {
-            return Ok(false);
+        if !resource_path_is_allowed(config.as_ref(), canonical) {
+            return Ok(None);
         }
         let plan = config.as_ref().map_or_else(
             adocweave_config::ResolvedResourceLimitPlan::default,
             |snapshot| snapshot.config.resources.limit_plan,
         );
-        self.insert_include_resource(target_uri, canonical, scope, plan)?;
-        Ok(true)
+        Ok(Some(match admitted {
+            WorkspaceLogicalFile::Existing(path) => {
+                AdmittedIncludeTarget::Existing(Box::new(ExistingIncludeTarget {
+                    uri: target_uri,
+                    path,
+                    scope,
+                    plan,
+                }))
+            }
+            WorkspaceLogicalFile::Missing(_) => AdmittedIncludeTarget::Missing,
+        }))
     }
 
     fn insert_include_resource(
@@ -1133,13 +1343,6 @@ impl WorkspaceResources {
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<(), String> {
         let id = uri_id(&uri)?;
-        if !self.include_resources.contains(&id)
-            && self.include_resources.len() >= MAX_WATCHED_INCLUDE_RESOURCES
-        {
-            return Err(format!(
-                "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
-            ));
-        }
         let prepared = self.read_workspace_resource(&path, &scope, plan)?;
         let next_disk_version = self.next_disk_version.saturating_add(1);
         let result = (|| {
@@ -1169,7 +1372,7 @@ impl WorkspaceResources {
             .insert(scope.clone(), Arc::clone(&prepared.filesystem));
         self.project_plans.insert(scope.clone(), plan);
         self.resource_projects.insert(id.clone(), scope);
-        self.include_resources.insert(id);
+        self.loaded_include_resources.insert(id);
         self.next_disk_version = next_disk_version;
         Ok(())
     }
@@ -1269,7 +1472,7 @@ impl WorkspaceResources {
         let dependencies = analysis
             .dependencies()
             .into_iter()
-            .filter(|id| self.include_resources.contains(id))
+            .filter(|id| self.include_interests.contains(id))
             .collect();
         self.include_dependencies.insert(root.clone(), dependencies);
         self.pending_include_dependencies.remove(root);
@@ -1344,17 +1547,27 @@ impl WorkspaceResources {
             .cloned()
             .collect::<BTreeSet<_>>();
         let stale = self
-            .include_resources
+            .include_interests
             .difference(&retained)
             .cloned()
             .collect::<Vec<_>>();
         let mut affected = BTreeSet::new();
         for id in stale {
+            self.include_interests.remove(&id);
+            let was_loaded_include = self.loaded_include_resources.remove(&id);
+            if !was_loaded_include
+                || self
+                    .analysis_root_roles
+                    .get(&id)
+                    .copied()
+                    .is_some_and(AnalysisRootRoles::is_root)
+            {
+                continue;
+            }
             let Ok(uri) = Url::parse(id.as_str()) else {
                 continue;
             };
             if let Ok(removed) = self.remove_disk(&uri) {
-                self.include_resources.remove(&id);
                 affected.extend(removed);
             }
         }
@@ -1432,7 +1645,7 @@ impl WorkspaceResources {
         let admission_path = if self.roots.is_empty() {
             path.clone()
         } else {
-            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path, true)
+            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path)
                 .map_err(ScopeConfigError::Other)?
         };
         let (scope, config) = scope_and_config_for_path_typed(
@@ -1555,11 +1768,46 @@ fn configured_include_roots(
         .collect()
 }
 
-fn workspace_logical_file(
+enum WorkspaceLogicalFile {
+    Existing(PathBuf),
+    Missing(PathBuf),
+}
+
+impl WorkspaceLogicalFile {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Existing(path) | Self::Missing(path) => path,
+        }
+    }
+}
+
+fn workspace_logical_file_status(
     roots: &[PathBuf],
     filesystem_policy: Option<&LocalFilesystemPolicy>,
     path: &Path,
-    allow_missing: bool,
+) -> Result<WorkspaceLogicalFile, String> {
+    let logical = workspace_logical_path(roots, filesystem_policy, path)?;
+    let boundary = roots
+        .iter()
+        .filter(|root| logical.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .ok_or_else(|| "normalized workspace resource left its workspace boundary".to_owned())?;
+    let policy = filesystem_policy
+        .and_then(|filesystem| filesystem.root_policy(boundary))
+        .ok_or_else(|| "workspace root has no retained filesystem authority".to_owned())?;
+    match policy.inspect_candidate(&logical) {
+        Ok(canonical) => Ok(WorkspaceLogicalFile::Existing(canonical)),
+        Err(adocweave_host::LocalTargetError::Missing(_)) => {
+            Ok(WorkspaceLogicalFile::Missing(logical))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn workspace_logical_path(
+    roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
+    path: &Path,
 ) -> Result<PathBuf, String> {
     let boundary = roots
         .iter()
@@ -1582,10 +1830,16 @@ fn workspace_logical_file(
     let logical = policy
         .normalize_candidate(path)
         .map_err(|error| error.to_string())?;
-    match policy.inspect_candidate(&logical) {
-        Ok(canonical) => Ok(canonical),
-        Err(adocweave_host::LocalTargetError::Missing(_)) if allow_missing => Ok(logical),
-        Err(error) => Err(error.to_string()),
+    Ok(logical)
+}
+
+fn workspace_logical_file(
+    roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
+    path: &Path,
+) -> Result<PathBuf, String> {
+    match workspace_logical_file_status(roots, filesystem_policy, path)? {
+        WorkspaceLogicalFile::Existing(path) | WorkspaceLogicalFile::Missing(path) => Ok(path),
     }
 }
 
@@ -1884,6 +2138,246 @@ mod tests {
             resources.get(&included_uri).is_none(),
             "a terminal analysis result must release provisional includes"
         );
+    }
+
+    #[test]
+    fn closing_an_open_include_removes_only_its_open_root_role() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.adoc");
+        std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+        std::fs::write(&included, "included\n").expect("included source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let included_id = uri_id(&included_uri).expect("included ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert!(
+            resources
+                .load_missing_include(&source_uri, &included_id, 1)
+                .expect("load include")
+        );
+        resources
+            .upsert_open(included_uri.clone(), 1, "open include\n")
+            .expect("open include");
+        assert!(resources.inner.roots().contains(&included_id));
+
+        resources.close_open(&included_uri).expect("close include");
+
+        assert!(resources.get(&included_uri).is_some());
+        assert!(resources.include_interests.contains(&included_id));
+        assert!(!resources.inner.roots().contains(&included_id));
+    }
+
+    #[test]
+    fn closing_an_open_scan_root_preserves_its_scan_root_role() {
+        let root = TestDirectory::new();
+        let source = root.0.join("root.adoc");
+        std::fs::write(&source, "disk source\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let source_id = uri_id(&source_uri).expect("source ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        resources
+            .upsert_open(source_uri.clone(), 1, "open source\n")
+            .expect("open scan root");
+        resources.close_open(&source_uri).expect("close scan root");
+
+        assert!(resources.inner.roots().contains(&source_id));
+        assert_eq!(
+            resources.analysis_root_roles.get(&source_id),
+            Some(&AnalysisRootRoles {
+                scan_root: true,
+                open_overlay: false,
+            })
+        );
+        assert_eq!(
+            resources
+                .get(&source_uri)
+                .expect("retained disk source")
+                .text()
+                .as_ref(),
+            "disk source\n"
+        );
+    }
+
+    #[test]
+    fn failed_initial_include_read_keeps_a_bounded_watch_interest() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.txt");
+        std::fs::write(&source, "include::generated/part.txt[]\n").expect("source");
+        std::fs::write(&included, [0xff]).expect("invalid include");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let included_id = uri_id(&included_uri).expect("included ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        resources
+            .load_missing_include(&source_uri, &included_id, 1)
+            .expect_err("invalid UTF-8 include");
+        assert!(resources.include_interests.contains(&included_id));
+        assert!(
+            resources
+                .pending_include_dependencies
+                .get(&uri_id(&source_uri).expect("source ID"))
+                .is_some_and(|(_, dependencies)| dependencies.contains(&included_id))
+        );
+
+        std::fs::write(&included, "repaired\n").expect("repair include");
+        let update = resources
+            .apply_watched_file(included_uri.clone(), WatchedFileKind::Upsert)
+            .expect("reload repaired include");
+        assert!(update.affected.contains(source_uri.as_str()));
+        assert_eq!(
+            resources
+                .get(&included_uri)
+                .expect("include")
+                .text()
+                .as_ref(),
+            "repaired\n"
+        );
+        assert!(!resources.inner.roots().contains(&included_id));
+    }
+
+    #[test]
+    fn created_excluded_adoc_include_recovers_without_a_scan_root_role() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.adoc");
+        std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let included_id = uri_id(&included_uri).expect("included ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert!(
+            !resources
+                .load_missing_include(&source_uri, &included_id, 1)
+                .expect("watch missing include")
+        );
+        std::fs::write(&included, "created\n").expect("create include");
+        let update = resources
+            .apply_watched_file(included_uri.clone(), WatchedFileKind::Upsert)
+            .expect("load created include");
+
+        assert!(update.affected.contains(source_uri.as_str()));
+        assert!(resources.get(&included_uri).is_some());
+        assert!(!resources.inner.roots().contains(&included_id));
+        assert_eq!(
+            resources.analysis_root_roles.get(&included_id),
+            None,
+            "include interest must not imply a scan root role"
+        );
+    }
+
+    #[test]
+    fn missing_include_interests_share_the_dependency_count_limit() {
+        let root = TestDirectory::new();
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        std::fs::write(&source, "root\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let target_uri = Url::from_file_path(root.0.join("missing.txt")).expect("target URI");
+        let target = uri_id(&target_uri).expect("target ID");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        resources.include_interests = (0..MAX_WATCHED_INCLUDE_RESOURCES)
+            .map(|index| {
+                ResourceId::new(format!("file:///retained/{index}.txt")).expect("interest ID")
+            })
+            .collect();
+        resources.include_dependencies.insert(
+            uri_id(&source_uri).expect("source ID"),
+            resources.include_interests.clone(),
+        );
+
+        let error = resources
+            .load_missing_include(&source_uri, &target, 1)
+            .expect_err("interest count limit");
+
+        assert!(error.contains("include dependency limit"));
+        assert_eq!(
+            resources.include_interests.len(),
+            MAX_WATCHED_INCLUDE_RESOURCES
+        );
+        assert!(!resources.include_interests.contains(&target));
+    }
+
+    #[test]
+    fn excluded_unknown_watch_candidate_is_ignored_before_nested_config_is_read() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        )
+        .expect("root configuration");
+        std::fs::write(
+            generated.join(adocweave_config::FILE_NAME),
+            "schema-version = 99\n",
+        )
+        .expect("invalid nested configuration");
+        let hidden = generated.join("hidden.adoc");
+        std::fs::write(&hidden, "hidden\n").expect("hidden source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let hidden_uri = Url::from_file_path(&hidden).expect("hidden URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        let update = resources
+            .apply_watched_file(hidden_uri.clone(), WatchedFileKind::Upsert)
+            .expect("ignore excluded candidate");
+
+        assert!(!update.journal_relevant);
+        assert!(resources.get(&hidden_uri).is_none());
     }
 
     #[test]
