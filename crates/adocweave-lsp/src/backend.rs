@@ -274,13 +274,14 @@ impl Backend {
                 else {
                     return ControlFlow::Continue(());
                 };
-                for job in transition.jobs {
+                let (jobs, next, recovery_timer) = transition.into_parts();
+                for job in jobs {
                     state.schedule_analysis(job);
                 }
-                if let Some(next) = transition.next {
+                if let Some(next) = next {
                     state.spawn_workspace_scan(next);
                 }
-                match transition.recovery_timer {
+                match recovery_timer {
                     WorkspaceRecoveryTimerUpdate::Keep => {}
                     WorkspaceRecoveryTimerUpdate::Cancel => {
                         state.cancel_workspace_scan_recovery();
@@ -292,16 +293,14 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .event::<WorkspaceScanRecovery>(|state, recovery| {
-                if state.workspace_scans.debouncing_generation() != Some(recovery.generation) {
+                let generation = recovery.generation();
+                if state.workspace_scans.debouncing_generation() != Some(generation) {
                     return ControlFlow::Continue(());
                 }
-                if !state
-                    .workspace_scan_recovery_timer
-                    .complete(recovery.generation)
-                {
+                if !state.workspace_scan_recovery_timer.complete(generation) {
                     return ControlFlow::Continue(());
                 }
-                if let Some(start) = state.workspace_scans.request_recovery(recovery.generation) {
+                if let Some(start) = state.workspace_scans.request_recovery(generation) {
                     state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
@@ -366,10 +365,7 @@ impl Backend {
     }
 
     fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
-        let WorkspaceScanStart {
-            sequence,
-            cancellation,
-        } = start;
+        let (sequence, cancellation) = start.into_parts();
         let service = self.service.clone();
         let client = self.client.clone();
         tokio::spawn(async move {
@@ -379,7 +375,7 @@ impl Backend {
             })
             .await
             .map_err(|error| format!("workspace scan worker failed: {error}"));
-            let _ = client.emit(WorkspaceScanned { sequence, scan });
+            let _ = client.emit(WorkspaceScanned::new(sequence, scan));
         });
     }
 
@@ -393,7 +389,7 @@ impl Backend {
                     WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
                 ))
                 .await;
-                let _ = client.emit(WorkspaceScanRecovery { generation });
+                let _ = client.emit(WorkspaceScanRecovery::new(generation));
             }),
         );
     }

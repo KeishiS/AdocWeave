@@ -13,7 +13,12 @@ const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
 const MAX_WATCH_JOURNAL_URI_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
-pub(super) enum WorkspaceScanRecoveryTimer {
+pub(super) struct WorkspaceScanRecoveryTimer {
+    state: WorkspaceScanRecoveryTimerState,
+}
+
+#[derive(Default)]
+enum WorkspaceScanRecoveryTimerState {
     #[default]
     Idle,
     Debouncing {
@@ -22,7 +27,7 @@ pub(super) enum WorkspaceScanRecoveryTimer {
     },
 }
 
-pub(super) struct AbortOnDrop {
+struct AbortOnDrop {
     handle: tokio::task::JoinHandle<()>,
     abort: bool,
 }
@@ -51,17 +56,20 @@ impl Drop for AbortOnDrop {
 impl WorkspaceScanRecoveryTimer {
     pub(super) fn replace(&mut self, generation: u64, handle: tokio::task::JoinHandle<()>) {
         self.cancel();
-        *self = Self::Debouncing {
+        self.state = WorkspaceScanRecoveryTimerState::Debouncing {
             generation,
             task: AbortOnDrop::new(handle),
         };
     }
 
     pub(super) fn complete(&mut self, generation: u64) -> bool {
-        if !matches!(self, Self::Debouncing { generation: current, .. } if *current == generation) {
+        if !matches!(&self.state, WorkspaceScanRecoveryTimerState::Debouncing { generation: current, .. } if *current == generation)
+        {
             return false;
         }
-        let Self::Debouncing { task, .. } = std::mem::take(self) else {
+        let WorkspaceScanRecoveryTimerState::Debouncing { task, .. } =
+            std::mem::take(&mut self.state)
+        else {
             unreachable!("matching debounce state was checked above");
         };
         task.completed();
@@ -69,14 +77,14 @@ impl WorkspaceScanRecoveryTimer {
     }
 
     pub(super) fn cancel(&mut self) {
-        *self = Self::Idle;
+        self.state = WorkspaceScanRecoveryTimerState::Idle;
     }
 
     #[cfg(test)]
     fn generation(&self) -> Option<u64> {
-        match self {
-            Self::Idle => None,
-            Self::Debouncing { generation, .. } => Some(*generation),
+        match &self.state {
+            WorkspaceScanRecoveryTimerState::Idle => None,
+            WorkspaceScanRecoveryTimerState::Debouncing { generation, .. } => Some(*generation),
         }
     }
 }
@@ -96,8 +104,14 @@ struct ActiveWorkspaceScan {
 }
 
 pub(super) struct WorkspaceScanStart {
-    pub(super) sequence: u64,
-    pub(super) cancellation: Arc<CancellationToken>,
+    sequence: u64,
+    cancellation: Arc<CancellationToken>,
+}
+
+impl WorkspaceScanStart {
+    pub(super) fn into_parts(self) -> (u64, Arc<CancellationToken>) {
+        (self.sequence, self.cancellation)
+    }
 }
 
 struct WorkspaceScanCompletion {
@@ -503,18 +517,46 @@ impl WorkspaceScanCoordinator {
 /// this event so the main loop can start one coalesced replacement without
 /// allowing scan workers to overlap.
 pub(super) struct WorkspaceScanned {
-    pub(super) sequence: u64,
-    pub(super) scan: Result<crate::service::WorkspaceScan, String>,
+    sequence: u64,
+    scan: Result<crate::service::WorkspaceScan, String>,
+}
+
+impl WorkspaceScanned {
+    pub(super) fn new(sequence: u64, scan: Result<crate::service::WorkspaceScan, String>) -> Self {
+        Self { sequence, scan }
+    }
 }
 
 pub(super) struct WorkspaceScanRecovery {
-    pub(super) generation: u64,
+    generation: u64,
+}
+
+impl WorkspaceScanRecovery {
+    pub(super) fn new(generation: u64) -> Self {
+        Self { generation }
+    }
+
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
 }
 
 pub(super) struct WorkspaceScanTransition {
-    pub(super) jobs: Vec<AnalysisJob>,
-    pub(super) next: Option<WorkspaceScanStart>,
-    pub(super) recovery_timer: WorkspaceRecoveryTimerUpdate,
+    jobs: Vec<AnalysisJob>,
+    next: Option<WorkspaceScanStart>,
+    recovery_timer: WorkspaceRecoveryTimerUpdate,
+}
+
+impl WorkspaceScanTransition {
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        Vec<AnalysisJob>,
+        Option<WorkspaceScanStart>,
+        WorkspaceRecoveryTimerUpdate,
+    ) {
+        (self.jobs, self.next, self.recovery_timer)
+    }
 }
 
 pub(super) enum WorkspaceRecoveryTimerUpdate {
