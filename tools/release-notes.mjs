@@ -5,11 +5,13 @@ import {
   PUBLIC_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
 } from "./release-policy.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT), "utf8"));
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
 const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
+const textlintContract = loadTextlintPluginPackageContract();
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
@@ -17,7 +19,7 @@ const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
 }
-export const PREVIOUS_RELEASE_VERSION = "0.29.0";
+export const PREVIOUS_RELEASE_VERSION = "0.30.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -43,11 +45,11 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "textlint用TxtASTの生成を専用の``adocweave-textlint`` crateへ集約し、JavaScript側は原文と位置の付加だけを行う構成へ変更しました。",
-  "block title付き文書、AsciiDoc形式の表、description list、comment、改行および対象外inlineの前後を、重複や意図しない文章連結なしで扱います。",
-  "footnote本文、画像の代替文およびUI macroの表示文字列を校正対象へ追加しました。quote以外のcontainerを``BlockQuote``として扱いません。",
-  "UTF-16位置の生成に必要な記憶量を入力長に比例する小さな配列へ抑え、node数を構築中に制限します。出力サイズの確認ではJSON byte列を一時的に作りません。自動修正を行わない保証は維持します。",
-  "``npx --package``を使い、プロジェクトへ依存を追加せずGitHub ReleaseのProcessorを一度だけ実行する手順を追加しました。",
+  "textlint用パッケージの識別情報、対応環境、収録ファイル、WebAssemblyの制約、容量上限および受入検査の組合せを、一つの機械可読な契約へ集約しました。",
+  "公開用``package.json``と収録ディレクトリを契約とrelease versionから生成し、開発用``package.json``を公開パッケージの情報源から分離しました。",
+  "生成処理と実装を共有しないarchive検証器を追加しました。tarballのfile種別とpath、許可file集合、実際の展開量、WebAssemblyの公開関数、memory上限および機械固有pathを検査します。",
+  "固定したconsumer依存とinstall後のfile treeを専用fixtureで検査し、別々の構築環境から同じbyte列のtarballが得られることを確認します。",
+  "公開前のcandidateと公開後のGitHub Release assetを``npx``で実行する検査を追加し、単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離しました。",
 ];
 
 /// Public contracts this release states are unchanged since the previous stable tag.
@@ -82,17 +84,18 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "破壊的変更：``adocweave``の``text-projection`` featureと``adocweave::output::text``を削除しました。",
+  "破壊的変更：ありません。",
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
-  "textlint Processorの設定、対応拡張子、自動修正を行わない保証および利用量の上限は変更していません。TxtASTへ含める文章と構造は改善しています。",
+  "パーサAPI、HTMLコンパイラ、Language ServerおよびBrowser APIの動作は変更していません。",
+  "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "CLI、Language ServerおよびBrowser packageだけを使う場合、移行作業は不要です。parser、HTML変換、Language ServerおよびBrowser向けWASMの動作は変更していません。",
-  "削除した``adocweave::output::text``を直接使っていたRust codeは、``adocweave-textlint::plan``と``TxtAstPlan``へ移行してください。校正固有の変換を必要としない場合は、コアの``Analysis``をそのまま使います。",
-  `textlint用Processorは、\`\`textlint@15.8.0\`\`とGitHub Releaseの\`\`adocweave-textlint-plugin-asciidoc-${RELEASE_NOTES_VERSION}.tgz\`\`を開発用依存へ追加し、\`\`@adocweave/asciidoc\`\` pluginを設定します。v0.29.0から設定変更は不要です。`,
+  "CLI、パーサ、HTMLコンパイラ、Language Server、Browser packageおよびtextlint Processorの利用方法に変更はなく、移行作業は不要です。",
+  `textlint用Processorを更新する場合は、GitHub Releaseにある${RELEASE_NOTES_VERSION}のtarballへ依存を更新します。package名は\`\`${textlintContract.identity.packageName}\`\`、textlintのplugin名は\`\`${textlintContract.identity.pluginName}\`\`です。`,
+  "プロジェクトへ依存を追加せず試す場合は、利用手順に記載した``npx --package``の実行方法を使用できます。",
   "``cargo make docs-prose-lint``は再設計後のProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
   `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
@@ -106,7 +109,7 @@ const knownConstraints = [
   "ZedがLanguage Serverの導入中に異常終了すると、安全のため導入ロックを自動削除しません。すべてのZedプロセスを終了してから、エラーに表示されたロックのpathを削除して再試行してください。",
   "公式Playgroundはこのreleaseに含みません。`adocweave preview`は利用者の端末で実行するローカル機能です。",
   "packageはcrates.io、npmまたはOS package registryへ公開しません。Nix packageはこのrepositoryのflakeから直接buildします。",
-  "textlint用ProcessorはNode.js 20.18.0以上25未満とtextlint 15.8.0を対象とします。includeは展開せず、入力した一つの物理ファイルだけを検査します。",
+  `textlint用Processorの対応範囲はNode.js \`\`${textlintContract.compatibility.nodeEngine}\`\`、textlint \`\`${textlintContract.compatibility.textlintVersion}\`\`です。includeは展開せず、入力した一つの物理ファイルだけを検査します。`,
   "AdocWeaveはBibTeXの保存・解析やCSL相当の書誌の組版を行いません。citation keyの解決と引用表示の組み立ては利用側アプリの責務です。",
   "解決結果を渡さない引用の表示は`unresolved_references`の設定に従い、`hidden`では出力しません。ただし文書内の`[bibliography]`項目を指すkeyは、設定にかかわらずその項目へのlinkとして出力します。",
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
