@@ -134,7 +134,10 @@ pub mod output {
         };
     }
     pub mod formatter {
-        pub use crate::formatter::{FormatConfig, FormatOutput, NewlineStyle, format_analysis};
+        pub use crate::formatter::{
+            FormatConfig, FormatError, FormatOutput, NewlineStyle, format_analysis,
+            format_analysis_cancellable,
+        };
     }
     pub mod html {
         pub use crate::html::{

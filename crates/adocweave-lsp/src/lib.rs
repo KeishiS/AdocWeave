@@ -1,6 +1,7 @@
 //! Typed LSP adapter, isolated from the deterministic parsing core.
 
 mod backend;
+mod cancellation;
 mod diagnostics;
 mod document_symbols;
 mod editing;

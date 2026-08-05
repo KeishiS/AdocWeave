@@ -7,24 +7,34 @@ use adocweave::output::formatter::{self, FormatConfig};
 use adocweave::resolution::ReferenceKey;
 use async_lsp::lsp_types as lsp;
 
+use crate::cancellation::{QueryCancellation, QueryResult};
 use crate::position::{PositionEncoding, range_contains_offset, range_to_lsp, request_offset};
 
 pub(crate) fn formatting(
     analysis: &Analysis,
     config: &FormatConfig,
     encoding: PositionEncoding,
-) -> Result<Vec<lsp::TextEdit>, String> {
-    formatter::format_analysis(analysis, config)
-        .map_err(|error| error.to_string())?
-        .edits
-        .iter()
-        .map(|edit| {
-            Ok(lsp::TextEdit::new(
-                range_to_lsp(edit.range, analysis.source_document(), encoding)?,
-                edit.replacement.clone(),
-            ))
-        })
-        .collect()
+    cancellation: &QueryCancellation,
+) -> QueryResult<Vec<lsp::TextEdit>> {
+    cancellation.check_now()?;
+    let formatted = match formatter::format_analysis_cancellable(analysis, config, cancellation) {
+        Ok(formatted) => formatted,
+        Err(formatter::FormatError::Cancelled) => {
+            cancellation.check_now()?;
+            unreachable!("formatter reports cancellation only when the query is cancelled")
+        }
+        Err(formatter::FormatError::Position(error)) => return Err(error.to_string().into()),
+    };
+    cancellation.check_now()?;
+    let mut edits = Vec::with_capacity(formatted.edits.len());
+    for edit in &formatted.edits {
+        cancellation.checkpoint()?;
+        edits.push(lsp::TextEdit::new(
+            range_to_lsp(edit.range, analysis.source_document(), encoding)?,
+            edit.replacement.clone(),
+        ));
+    }
+    Ok(edits)
 }
 
 /// The anchor definition a rename started at this position would change.
@@ -115,7 +125,9 @@ mod tests {
         for (encoding, expected_start) in
             [(PositionEncoding::Utf8, 10), (PositionEncoding::Utf16, 8)]
         {
-            let edits = formatting(&analysis, &FormatConfig::default(), encoding).expect("edits");
+            let cancellation = crate::cancellation::test_cancellation();
+            let edits = formatting(&analysis, &FormatConfig::default(), encoding, &cancellation)
+                .expect("edits");
             assert_eq!(edits.len(), 1);
             assert_eq!(edits[0].range.start.character, expected_start);
         }
