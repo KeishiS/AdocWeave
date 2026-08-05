@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "paths": {
+      "@textlint/types": [
+        "tools/textlint-plugin-e2e/node_modules/@textlint/types/lib/src/index.d.ts"
+      ]
+    },
+    "strict": true,
+    "target": "ES2022"
+  },
+  "files": [
+    "../../packages/textlint-plugin-asciidoc/types.test-d.mts"
+  ]
+}

@@ -41,6 +41,14 @@ test("圧縮size budgetは境界を含み、1 byte超過を拒否する", async 
   await assert.rejects(verifyTextlintPluginPackage(archive, { maximumUnpackedBytes: unpacked - 1 }), /unpacked size/);
 }));
 
+test("展開処理そのものを上限付きにする", () => {
+  const bytes = gzipSync(Buffer.alloc(4096));
+  assert.throws(
+    () => readTarMembers(bytes, { maximumTarBytes: 4095 }),
+    /cannot decompress archive within 4095 bytes/,
+  );
+});
+
 test("WebAssemblyの機械固有pathを拒否する", async () => {
   const mutant = entries().map((entry) => entry.name.endsWith(".wasm")
     ? { ...entry, data: Buffer.concat([minimalWasm(), Buffer.from("/workspace/secret/source.rs")]) }

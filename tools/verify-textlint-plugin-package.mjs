@@ -23,8 +23,13 @@ function canonicalArchivePath(name) {
   return name;
 }
 
-export function readTarMembers(tgzBytes) {
-  const tar = gunzipSync(tgzBytes);
+export function readTarMembers(tgzBytes, { maximumTarBytes = 64 * 1024 * 1024 } = {}) {
+  let tar;
+  try {
+    tar = gunzipSync(tgzBytes, { maxOutputLength: maximumTarBytes });
+  } catch (error) {
+    fail(`cannot decompress archive within ${maximumTarBytes} bytes: ${error.message}`);
+  }
   if (tar.length % 512 !== 0) fail("tar length is not block-aligned");
   const members = [];
   const collisionKeys = new Set();
@@ -67,7 +72,9 @@ export async function verifyTextlintPluginPackage(archivePath, { maximumPackedBy
   const packed = await readFile(archive);
   const packedLimit = maximumPackedBytes ?? contract.archive.maximumPackedBytes;
   if (packed.length > packedLimit) fail(`packed size exceeds ${packedLimit} bytes`);
-  const members = readTarMembers(packed);
+  const maximumTarBytes = maximumUnpackedBytes ?? contract.archive.maximumUnpackedBytes;
+  const tarOverhead = contract.archive.fileCount * (512 + 511) + 1024;
+  const members = readTarMembers(packed, { maximumTarBytes: maximumTarBytes + tarOverhead });
   const expected = contract.files.map(({ path }) => `package/${path}`).sort();
   const actual = members.map(({ name }) => name).sort();
   if (members.length !== contract.archive.fileCount || JSON.stringify(actual) !== JSON.stringify(expected)) fail("file set does not match the contract");

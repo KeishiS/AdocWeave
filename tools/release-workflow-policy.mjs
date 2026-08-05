@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -835,10 +835,6 @@ export function loadWorkflowPolicyInputs() {
   const workflows = Object.fromEntries(readdirSync(directory)
     .filter((name) => name.endsWith(".yml"))
     .map((name) => [name, read(`.github/workflows/${name}`)]));
-  const textlintContractUrl = new URL(
-    "../release/textlint-plugin-package-contract.json",
-    import.meta.url,
-  );
   return {
     workflows,
     release: workflows["release.yml"],
@@ -851,9 +847,7 @@ export function loadWorkflowPolicyInputs() {
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
     browserStartup: read("tools/browser-startup.mjs"),
-    textlintPackageContract: existsSync(textlintContractUrl)
-      ? JSON.parse(readFileSync(textlintContractUrl, "utf8"))
-      : undefined,
+    textlintPackageContract: loadTextlintPluginPackageContract(),
   };
 }
 

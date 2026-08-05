@@ -642,7 +642,7 @@ args = [
   "tools/textlint",
 ]
 
-[tasks.textlint-public-plugin-dependencies]
+[tasks.textlint-plugin-e2e-dependencies]
 private = true
 command = "npm"
 args = [
@@ -651,19 +651,22 @@ args = [
   "ci",
   "--ignore-scripts",
   "--prefix",
-  "packages/textlint-plugin-asciidoc",
+  "tools/textlint-plugin-e2e",
 ]
+
+[tasks.textlint-public-plugin-dependencies]
+private = true
+alias = "textlint-plugin-e2e-dependencies"
 
 [tasks.textlint-plugin-public-js-unit]
 description = "Test the reusable Processor JavaScript and public TypeScript declarations without generated artifacts"
 dependencies = [
-  "textlint-public-plugin-dependencies",
+  "textlint-plugin-e2e-dependencies",
 ]
 script_runner = "@shell"
 script = '''
 node --test packages/textlint-plugin-asciidoc/*.test.mjs
-tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext \
-  packages/textlint-plugin-asciidoc/types.test-d.mts
+tsc --project tools/textlint-plugin-e2e/tsconfig.json
 '''
 
 [tasks.textlint-public-plugin-test]

@@ -67,3 +67,12 @@ test("schemaは全objectで追加fieldを拒否する", async () => {
     for (const choice of definition.oneOf ?? []) assert.equal(choice.additionalProperties, false);
   }
 });
+
+test("WebAssembly構築上限をpackage contractから読み込む", async () => {
+  const script = await readFile(
+    new URL("../../tools/build-textlint-wasm-node.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(script, /loadTextlintPluginPackageContract\(\)\.wasm\.maximumMemoryBytes/);
+  assert.doesNotMatch(script, /maximum_memory_bytes=268435456/);
+});
