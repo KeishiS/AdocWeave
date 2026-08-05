@@ -321,9 +321,13 @@ impl WorkspaceResources {
             let mut candidates = match discovery.as_ref() {
                 Some(session) => session
                     .discover_adoc_paths_with(|root, relative| {
-                        scan_settings
-                            .get(root)
-                            .is_some_and(|settings| settings.excludes(relative))
+                        let directory = root.join(relative);
+                        let is_nested_workspace_root =
+                            directory != root && directory_roots.binary_search(&directory).is_ok();
+                        is_nested_workspace_root
+                            || scan_settings
+                                .get(root)
+                                .is_some_and(|settings| settings.excludes(relative))
                     })
                     .map_err(|error| error.to_string())?,
                 None => Vec::new(),
@@ -1558,6 +1562,34 @@ mod tests {
         resources.load_roots(&roots).expect("load workspaces");
 
         assert_eq!(resources.inner.roots(), &expected);
+    }
+
+    #[test]
+    fn nested_directory_root_applies_its_own_scan_patterns() {
+        let outer = TestDirectory::new();
+        let inner = outer.0.join("nested");
+        let excluded = inner.join("generated");
+        std::fs::create_dir_all(&excluded).expect("excluded directory");
+        std::fs::write(
+            inner.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+        )
+        .expect("inner project configuration");
+        std::fs::write(excluded.join("hidden.adoc"), "hidden\n").expect("excluded source");
+        let roots = [
+            Url::from_directory_path(&outer.0).expect("outer root URI"),
+            Url::from_directory_path(&inner).expect("inner root URI"),
+        ];
+        let hidden =
+            uri_id(&Url::from_file_path(excluded.join("hidden.adoc")).expect("hidden source URI"))
+                .expect("hidden source ID");
+        let mut resources = WorkspaceResources::default();
+
+        resources
+            .load_roots(&roots)
+            .expect("load nested workspaces");
+
+        assert!(!resources.inner.roots().contains(&hidden));
     }
 
     #[test]
