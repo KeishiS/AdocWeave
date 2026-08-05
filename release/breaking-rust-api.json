@@ -1,22 +1,14 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.32.0",
+  "releaseVersion": "0.33.0",
   "changes": [
     {
-      "crate": "adocweave",
-      "lint": "enum_variant_added",
-      "item": "variant InlineProblemKind:MonospaceBoundary",
-      "summary": "enum variant added on exhaustive enum",
-      "description": "公開enumの``InlineProblemKind``へ、制約付き等幅表記の境界違反を表す``MonospaceBoundary``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
-      "migration": "``InlineProblemKind``を網羅的に``match``している場合は、``InlineProblemKind::MonospaceBoundary``を処理する分岐を追加してください。等幅表記の境界違反として表示するか、ほかの回復可能なインライン問題と同じ方法で処理できます。"
-    },
-    {
-      "crate": "adocweave",
-      "lint": "enum_variant_added",
-      "item": "variant SyntaxIssueClass:MonospaceBoundary",
-      "summary": "enum variant added on exhaustive enum",
-      "description": "公開enumの``SyntaxIssueClass``へ、制約付き等幅表記の境界違反を表す``MonospaceBoundary``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
-      "migration": "``SyntaxIssueClass``を網羅的に``match``している場合は、``SyntaxIssueClass::MonospaceBoundary``を処理する分岐を追加してください。診断codeは``monospace-boundary``です。"
+      "crate": "adocweave-wasm",
+      "lint": "constructible_struct_adds_field",
+      "item": "field WasmRenderInputs.generated_bibliography",
+      "summary": "externally-constructible struct adds field",
+      "description": "公開構造体の``WasmRenderInputs``へ、構造化した参考文献を受け取る``generated_bibliography``を追加しました。Rustから構造体リテラルで生成しているコードは、そのままではコンパイルできません。",
+      "migration": "``WasmRenderInputs``の構造体リテラルへ``generated_bibliography: None``を追加してください。参考文献を生成する場合は``Some(WasmGeneratedBibliography { ... })``を指定します。"
     }
   ]
 }
