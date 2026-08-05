@@ -72,6 +72,11 @@ function registry() {
         literal: "name = \"dependency\"\nversion = \"0.10.0\"",
         count: 1,
       },
+      {
+        path: "fixtures/unrelated-version.txt",
+        literal: "dependency-version=1.3.0",
+        count: 1,
+      },
     ],
   };
 }
@@ -94,6 +99,10 @@ function fixture() {
   writeFileSync(
     join(directory, "fixtures/old-version.json"),
     '{\n  "oldVersion": "0.10.0"\n}\n',
+  );
+  writeFileSync(
+    join(directory, "fixtures/unrelated-version.txt"),
+    "dependency-version=1.3.0\n",
   );
   return {
     directory,

@@ -359,6 +359,16 @@
       "path": "editors/zed/Cargo.lock",
       "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
       "count": 1
+    },
+    {
+      "path": "tools/release-workflow-policy.test.mjs",
+      "literal": "distVersion: \"0.31\u002e0\"",
+      "count": 1
+    },
+    {
+      "path": "tools/release-workflow-policy.test.mjs",
+      "literal": "cargo-dist/releases/download/v0.31\u002e0/cargo-dist-x86_64-pc-windows-msvc.zip",
+      "count": 1
     }
   ]
 }

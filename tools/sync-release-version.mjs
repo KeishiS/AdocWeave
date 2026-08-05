@@ -313,7 +313,7 @@ function sourceFiles(root) {
   return result;
 }
 
-function expectedVersionOccurrences(registry) {
+function expectedVersionOccurrences(registry, version) {
   const expected = new Map();
   const add = (path, count) =>
     expected.set(path, (expected.get(path) ?? 0) + count);
@@ -329,11 +329,17 @@ function expectedVersionOccurrences(registry) {
       add(output.path, output.versionOccurrences);
     }
   }
+  for (const preserved of registry.preserved) {
+    add(
+      preserved.path,
+      occurrences(preserved.literal, version) * preserved.count,
+    );
+  }
   return expected;
 }
 
 function validateInventory(root, registry, version) {
-  const expected = expectedVersionOccurrences(registry);
+  const expected = expectedVersionOccurrences(registry, version);
   const actual = new Map();
   for (const [path, source] of sourceFiles(root)) {
     const count = occurrences(source, version);

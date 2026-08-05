@@ -60,6 +60,8 @@ impl ProjectScopeId {
 pub const MAX_PROJECT_FILE_BYTES: u64 = 1024 * 1024;
 /// Configuration schema version accepted by this package.
 pub const SCHEMA_VERSION: u32 = 1;
+const MAX_WORKSPACE_SCAN_EXCLUDES: usize = 256;
+const MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS: usize = 1024;
 
 /// Stable category for configuration failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -430,6 +432,138 @@ pub struct ResourceSettings {
     pub limit_plan: ResolvedResourceLimitPlan,
 }
 
+/// Language Server workspace discovery settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkspaceSettings {
+    /// Initial directory scan settings.
+    pub scan: WorkspaceScanSettings,
+}
+
+/// Validated directory patterns pruned from an initial workspace scan.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkspaceScanSettings {
+    exclude: Vec<WorkspaceScanPattern>,
+}
+
+impl WorkspaceScanSettings {
+    /// Returns the authored portable patterns in configuration order.
+    pub fn exclude_patterns(&self) -> impl Iterator<Item = &str> {
+        self.exclude.iter().map(|pattern| pattern.source.as_str())
+    }
+
+    /// Reports whether a workspace-root-relative directory must be pruned.
+    pub fn excludes(&self, relative_directory: &Path) -> bool {
+        self.exclude
+            .iter()
+            .any(|pattern| pattern.matches(relative_directory))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WorkspaceScanPattern {
+    source: String,
+    segments: Vec<WorkspaceScanPatternSegment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WorkspaceScanPatternSegment {
+    Recursive,
+    Component(String),
+}
+
+impl WorkspaceScanPattern {
+    fn parse(source: String, field: String) -> Result<Self, ConfigError> {
+        if source.is_empty()
+            || source.chars().count() > MAX_WORKSPACE_SCAN_PATTERN_CHARACTERS
+            || source.starts_with('/')
+            || source.starts_with('\\')
+            || source
+                .as_bytes()
+                .get(..2)
+                .is_some_and(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':')
+            || source.contains('\\')
+            || source.chars().any(char::is_control)
+        {
+            return Err(invalid_workspace_scan_pattern().at(field));
+        }
+        let mut segments = Vec::new();
+        for segment in source.split('/') {
+            if segment.is_empty()
+                || matches!(segment, "." | "..")
+                || segment.contains(['[', ']', '{', '}'])
+                || (segment.contains("**") && segment != "**")
+            {
+                return Err(invalid_workspace_scan_pattern().at(field));
+            }
+            segments.push(if segment == "**" {
+                WorkspaceScanPatternSegment::Recursive
+            } else {
+                WorkspaceScanPatternSegment::Component(segment.to_owned())
+            });
+        }
+        Ok(Self { source, segments })
+    }
+
+    fn matches(&self, relative_directory: &Path) -> bool {
+        let Some(components) = relative_directory
+            .components()
+            .map(|component| component.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let mut matched = vec![false; components.len() + 1];
+        matched[0] = true;
+        for segment in &self.segments {
+            match segment {
+                WorkspaceScanPatternSegment::Recursive => {
+                    for index in 1..matched.len() {
+                        matched[index] = matched[index] || matched[index - 1];
+                    }
+                }
+                WorkspaceScanPatternSegment::Component(pattern) => {
+                    let mut next = vec![false; matched.len()];
+                    for (index, component) in components.iter().enumerate() {
+                        next[index + 1] =
+                            matched[index] && component_pattern_matches(pattern, component);
+                    }
+                    matched = next;
+                }
+            }
+        }
+        matched.last().copied().unwrap_or(false)
+    }
+}
+
+fn invalid_workspace_scan_pattern() -> ConfigError {
+    ConfigError::new(
+        ConfigErrorCode::InvalidPath,
+        "workspace scan exclude must be a portable relative directory pattern",
+    )
+}
+
+fn component_pattern_matches(pattern: &str, component: &str) -> bool {
+    let pattern = pattern.chars().collect::<Vec<_>>();
+    let component = component.chars().collect::<Vec<_>>();
+    let mut previous = vec![false; component.len() + 1];
+    previous[0] = true;
+    for token in pattern {
+        let mut current = vec![false; component.len() + 1];
+        if token == '*' {
+            current[0] = previous[0];
+            for index in 1..current.len() {
+                current[index] = previous[index] || current[index - 1];
+            }
+        } else {
+            for (index, value) in component.iter().enumerate() {
+                current[index + 1] = previous[index] && (token == '?' || token == *value);
+            }
+        }
+        previous = current;
+    }
+    previous.last().copied().unwrap_or(false)
+}
+
 /// Local target validation settings.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LocalTargetSettings {
@@ -461,6 +595,8 @@ pub struct ResolvedProjectConfig {
     pub preprocess: PreprocessOptions,
     /// Local resource settings.
     pub resources: ResourceSettings,
+    /// Language Server workspace discovery settings.
+    pub workspace: WorkspaceSettings,
     /// Local target validation settings.
     pub local_targets: LocalTargetSettings,
     /// Formatter settings.
@@ -484,6 +620,7 @@ impl Default for ResolvedProjectConfig {
             analysis: AnalysisOptions::default(),
             preprocess,
             resources: ResourceSettings::default(),
+            workspace: WorkspaceSettings::default(),
             local_targets: LocalTargetSettings::default(),
             format: FormatConfig::default(),
             format_newline_explicit: false,
@@ -516,6 +653,8 @@ struct ProjectConfigWire {
     lint: LintWire,
     #[serde(default)]
     resources: ResourcesWire,
+    #[serde(default)]
+    workspace: WorkspaceWire,
     #[serde(default)]
     local_targets: LocalTargetsWire,
     #[serde(default)]
@@ -553,6 +692,7 @@ impl ProjectConfigWire {
             .max_attribute_expansion_bytes;
         self.lint.apply(&mut resolved.analysis.diagnostics.lint)?;
         resolved.resources = self.resources.resolve(directory)?;
+        resolved.workspace = self.workspace.resolve()?;
         resolved.preprocess.enable_includes = resolved.resources.include;
         resolved.preprocess.max_total_bytes = u32::try_from(
             resolved
@@ -571,6 +711,49 @@ impl ProjectConfigWire {
         resolved.format = self.format.resolve()?;
         resolved.html = self.html.resolve(directory)?;
         Ok(resolved)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct WorkspaceWire {
+    #[serde(default)]
+    scan: WorkspaceScanWire,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct WorkspaceScanWire {
+    #[serde(default)]
+    exclude: Vec<String>,
+}
+
+impl WorkspaceWire {
+    fn resolve(self) -> Result<WorkspaceSettings, ConfigError> {
+        if self.scan.exclude.len() > MAX_WORKSPACE_SCAN_EXCLUDES {
+            return Err(ConfigError::new(
+                ConfigErrorCode::InvalidLimit,
+                "workspace scan exclude pattern count exceeds the built-in limit",
+            )
+            .at("workspace.scan.exclude"));
+        }
+        let mut sources = std::collections::BTreeSet::new();
+        let exclude = self
+            .scan
+            .exclude
+            .into_iter()
+            .enumerate()
+            .map(|(index, source)| {
+                let field = format!("workspace.scan.exclude.{index}");
+                if !sources.insert(source.clone()) {
+                    return Err(invalid_workspace_scan_pattern().at(field));
+                }
+                WorkspaceScanPattern::parse(source, field)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(WorkspaceSettings {
+            scan: WorkspaceScanSettings { exclude },
+        })
     }
 }
 
@@ -982,6 +1165,9 @@ max-files = 20
 max-total-bytes = 4096
 max-resource-bytes = 2048
 
+[workspace.scan]
+exclude = ["target", "**/.git", "generated-*"]
+
 [local-targets]
 enabled = true
 project-root = "docs"
@@ -1031,6 +1217,14 @@ stylesheet-urls = ["https://example.test/manual.css"]
         assert!(!trailing.enabled);
         assert_eq!(trailing.severity, Severity::Hint);
         assert_eq!(config.resources.roots, [PathBuf::from("/workspace/docs")]);
+        assert_eq!(
+            config.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
+            ["target", "**/.git", "generated-*"]
+        );
+        assert!(config.workspace.scan.excludes(Path::new("target")));
+        assert!(config.workspace.scan.excludes(Path::new("nested/.git")));
+        assert!(config.workspace.scan.excludes(Path::new("generated-html")));
+        assert!(!config.workspace.scan.excludes(Path::new("src/target")));
         assert_eq!(
             config.resources.limit_plan,
             ResolvedResourceLimitPlan {
@@ -1125,6 +1319,75 @@ stylesheet-urls = ["https://example.test/manual.css"]
         ] {
             assert!(ResolvedProjectConfig::parse(source, Path::new("/workspace")).is_err());
         }
+    }
+
+    #[test]
+    fn workspace_scan_patterns_have_portable_component_semantics() {
+        let config = ResolvedProjectConfig::parse(
+            r#"
+schema-version = 1
+[workspace.scan]
+exclude = ["**/.venv", "build/?emp", "vendor/**"]
+"#,
+            Path::new("/workspace"),
+        )
+        .expect("valid scan patterns");
+
+        for path in [
+            ".venv",
+            "docs/.venv",
+            "build/temp",
+            "build/xemp",
+            "vendor",
+            "vendor/generated/cache",
+        ] {
+            assert!(config.workspace.scan.excludes(Path::new(path)), "{path}");
+        }
+        for path in ["VENDOR", "build/nested/temp", "docs/.venv-file"] {
+            assert!(!config.workspace.scan.excludes(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn workspace_scan_patterns_reject_non_portable_or_ambiguous_inputs() {
+        for pattern in [
+            "",
+            "/target",
+            r"C:/target",
+            r"target\\cache",
+            "../target",
+            "a/../b",
+            "a//b",
+            "./target",
+            "cache/**x",
+            "cache/[ab]",
+            "cache/{a,b}",
+        ] {
+            let source = format!(
+                "schema-version = 1\n[workspace.scan]\nexclude = [{}]\n",
+                toml::Value::String(pattern.to_owned())
+            );
+            let error = ResolvedProjectConfig::parse(&source, Path::new("/workspace"))
+                .expect_err("invalid scan pattern");
+            assert_eq!(error.code, ConfigErrorCode::InvalidPath, "{pattern:?}");
+        }
+        let duplicate = ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\"target\", \"target\"]\n",
+            Path::new("/workspace"),
+        )
+        .expect_err("duplicate pattern");
+        assert_eq!(duplicate.code, ConfigErrorCode::InvalidPath);
+
+        let too_many = (0..=MAX_WORKSPACE_SCAN_EXCLUDES)
+            .map(|index| format!("\"directory-{index}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let error = ResolvedProjectConfig::parse(
+            &format!("schema-version = 1\n[workspace.scan]\nexclude = [{too_many}]\n"),
+            Path::new("/workspace"),
+        )
+        .expect_err("too many patterns");
+        assert_eq!(error.code, ConfigErrorCode::InvalidLimit);
     }
 
     #[test]

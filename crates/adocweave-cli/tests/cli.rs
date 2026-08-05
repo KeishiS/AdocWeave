@@ -113,6 +113,31 @@ fn configured_resource_limit_rejects_root_before_processing() {
 }
 
 #[test]
+fn workspace_scan_excludes_do_not_filter_explicit_cli_inputs() {
+    let root = tempfile::tempdir().expect("root");
+    let excluded = root.path().join("generated");
+    std::fs::create_dir(&excluded).expect("excluded directory");
+    std::fs::write(
+        root.path().join(".adocweave.toml"),
+        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+    )
+    .expect("configuration");
+    std::fs::write(excluded.join("document.adoc"), "= Title\n\ntext\n").expect("document");
+
+    let output = adocweave()
+        .current_dir(root.path())
+        .args(["check", "generated/document.adoc"])
+        .output()
+        .expect("command");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn each_kind_of_failure_reports_its_own_exit_status() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("clean.adoc"), "= Title\n\ntext\n").expect("clean document");

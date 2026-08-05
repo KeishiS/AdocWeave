@@ -165,6 +165,26 @@
         }
       }
     },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "exclude": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/workspaceScanPattern"
+              },
+              "maxItems": 256,
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    },
     "local-targets": {
       "type": "object",
       "additionalProperties": false,
@@ -244,6 +264,13 @@
       "minLength": 1,
       "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$",
       "description": "プロジェクトディレクトリの内側を指す相対パス。絶対パスと、親ディレクトリへ移動する`..`は指定できません。"
+    },
+    "workspaceScanPattern": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+)(?:/(?:\\*\\*|(?:[^/\\[\\]{}\\\\*\\x00-\\x1F\\x7F-\\x9F]|\\*(?!\\*))+))*$",
+      "description": "ワークスペースルートを基準とする相対ディレクトリのパターン。区切りは`/`だけを使い、`*`と`?`は1階層、単独の`**`は複数階層に一致します。"
     }
   }
 }

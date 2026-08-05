@@ -33,7 +33,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.30.0");
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.30.1");
   assert.match(notes, /一つの機械可読な契約へ集約/);
   assert.match(notes, /公開用``package\.json``と収録ディレクトリを契約とrelease versionから生成/);
   assert.match(notes, /生成処理と実装を共有しないarchive検証器/);
@@ -41,6 +41,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /別々の構築環境から同じbyte列のtarball/);
   assert.match(notes, /公開前のcandidateと公開後のGitHub Release assetを``npx``で実行/);
   assert.match(notes, /単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離/);
+  assert.match(notes, /``workspace\.scan\.exclude``で除外/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -51,7 +52,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
   assert.match(notes, /破壊的変更：ありません/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /CLI、パーサ、HTMLコンパイラ、Language Server、Browser packageおよびtextlint Processorの利用方法に変更はなく/);
+  assert.match(notes, /Language Serverの除外設定は任意/);
+  assert.match(notes, /\[workspace\.scan\]/);
   assert.match(notes, new RegExp(textlintContract.identity.packageName.replace("/", "\\/")));
   assert.match(notes, new RegExp(textlintContract.identity.pluginName.replace("/", "\\/")));
   assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -61,7 +63,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
   assert.match(notes, /``parseText``は専用の``adocweave-textlint-wasm``だけに含み/);
   assert.match(notes, /Browser packageには含めません/);
-  assert.match(notes, /パーサAPI、HTMLコンパイラ、Language ServerおよびBrowser APIの動作は変更していません/);
+  assert.match(notes, /パーサAPI、HTMLコンパイラ、CLIの入力選択およびBrowser APIの動作は変更していません/);
   assert.match(notes, /textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
   assert.match(notes, /``schemaVersion``は4のままです/);
@@ -83,6 +85,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /解決結果を渡さない引用の表示は`unresolved_references`の設定に従い/);
   assert.match(notes, /複数ファイルの解析にはディレクトリのworkspace folderが必要/);
   assert.match(notes, /要求へ応答するthreadの外で行います/);
+  assert.match(notes, /初期走査だけに適用/);
   assert.match(
     notes,
     new RegExp(`WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}`),

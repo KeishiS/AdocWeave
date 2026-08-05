@@ -4,7 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
+use adocweave::SourceId;
+use adocweave::preprocess::{
+    PreprocessErrorKind, PreprocessOptions, ProjectionLimits, ResourceDocument, ResourceSnapshot,
+    SafeMode, preprocess,
+};
 use adocweave_host::{
     FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
@@ -284,6 +288,24 @@ impl WorkspaceResources {
         paths.dedup();
         let preserve_previous = std::cell::Cell::new(false);
         let load_result = (|| {
+            let scan_settings = directory_roots
+                .iter()
+                .map(|root| {
+                    let snapshot =
+                        adocweave_config::discover_and_load(root, root).map_err(|error| {
+                            preserve_previous
+                                .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
+                            error.to_string()
+                        })?;
+                    Ok((
+                        root.clone(),
+                        snapshot.map_or_else(
+                            adocweave_config::WorkspaceScanSettings::default,
+                            |snapshot| snapshot.config.workspace.scan,
+                        ),
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()?;
             let discovery = (!directory_roots.is_empty())
                 .then(|| {
                     LocalFilesystemPolicy::new(
@@ -298,7 +320,11 @@ impl WorkspaceResources {
                 .map_err(|error| error.to_string())?;
             let mut candidates = match discovery.as_ref() {
                 Some(session) => session
-                    .discover_adoc_paths()
+                    .discover_adoc_paths_with(|root, relative| {
+                        scan_settings
+                            .get(root)
+                            .is_some_and(|settings| settings.excludes(relative))
+                    })
                     .map_err(|error| error.to_string())?,
                 None => Vec::new(),
             };
@@ -311,6 +337,7 @@ impl WorkspaceResources {
             let mut project_plans = BTreeMap::new();
             let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> =
                 BTreeMap::new();
+            let mut analysis_root_paths = Vec::new();
             let mut next_disk_version = self.next_disk_version;
             for path in candidates {
                 let config = match config_for_path_typed(&paths, &path) {
@@ -388,6 +415,9 @@ impl WorkspaceResources {
                     inner
                         .register_root(id.clone())
                         .map_err(|error| error.to_string())?;
+                    if directory_roots.iter().any(|root| path.starts_with(root)) {
+                        analysis_root_paths.push(path.clone());
+                    }
                 }
                 resource_projects.insert(id, scope);
             }
@@ -400,6 +430,12 @@ impl WorkspaceResources {
             self.resource_projects = resource_projects;
             self.retained_layers = retained_layers;
             self.next_disk_version = next_disk_version;
+            for path in analysis_root_paths {
+                let uri = Url::from_file_path(&path).map_err(|()| {
+                    format!("cannot convert workspace path to URI: {}", path.display())
+                })?;
+                self.preload_include_closure(&uri)?;
+            }
             Ok(())
         })();
         if let Err(error) = load_result {
@@ -843,6 +879,167 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
+    fn preload_include_closure(&mut self, root: &Url) -> Result<(), String> {
+        let root_id = uri_id(root)?;
+        let root_scope = self
+            .resource_projects
+            .get(&root_id)
+            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
+            .clone();
+        let config_snapshot = self.config_for_uri(root)?;
+        let project_config = config_snapshot.as_ref().map_or_else(
+            adocweave_config::ResolvedProjectConfig::default,
+            |snapshot| snapshot.config.clone(),
+        );
+        let mut options = project_config.preprocess.clone();
+        if config_snapshot.is_none() {
+            options.enable_includes = true;
+        }
+        if !options.enable_includes {
+            return Ok(());
+        }
+        options.base_uri = parent_uri(root);
+        options.safe_mode = SafeMode::Server;
+        options.allowed_schemes = BTreeSet::from(["file".to_owned()]);
+        options.source_id = Some(SourceId::new(root.to_string()));
+        let allowed_roots = configured_include_roots(&project_config, &self.roots)?;
+        let mut attempted = BTreeSet::new();
+        loop {
+            let root_text = self
+                .inner
+                .get(&root_id)
+                .ok_or_else(|| format!("workspace resource is missing: {root}"))?
+                .text()
+                .clone();
+            let snapshot = self.preprocess_snapshot(&root_id, &root_scope, &allowed_roots);
+            let error = match preprocess(&root_text, &snapshot, &options) {
+                Ok(_) => return Ok(()),
+                Err(error) if error.kind == PreprocessErrorKind::MissingResource => error,
+                Err(_) => return Ok(()),
+            };
+            let Some(target) = error.target else {
+                return Ok(());
+            };
+            if !attempted.insert(target.clone()) {
+                return Ok(());
+            }
+            let Ok(target_uri) = Url::parse(&target) else {
+                return Ok(());
+            };
+            let Ok(target_path) = target_uri.to_file_path() else {
+                return Ok(());
+            };
+            let Ok(canonical) = target_path.canonicalize() else {
+                return Ok(());
+            };
+            let authority_roots = if allowed_roots.is_empty() {
+                std::slice::from_ref(&root_scope.workspace_root)
+            } else {
+                allowed_roots.as_slice()
+            };
+            if !authority_roots
+                .iter()
+                .any(|root| canonical.starts_with(root))
+            {
+                return Ok(());
+            }
+            let target_id = uri_id(&target_uri)?;
+            if self.inner.get(&target_id).is_some() {
+                return Ok(());
+            }
+            let (scope, config) = scope_and_config_for_path_typed(&self.roots, &canonical)
+                .map_err(|error| error.to_string())?;
+            if root_scope.config_path.is_none() && scope != root_scope {
+                return Ok(());
+            }
+            if !resource_path_is_allowed(config.as_ref(), &canonical) {
+                return Ok(());
+            }
+            let plan = config.as_ref().map_or_else(
+                adocweave_config::ResolvedResourceLimitPlan::default,
+                |snapshot| snapshot.config.resources.limit_plan,
+            );
+            self.insert_include_resource(target_uri, canonical, scope, plan)?;
+        }
+    }
+
+    fn preprocess_snapshot(
+        &self,
+        root_id: &ResourceId,
+        root_scope: &ProjectScopeId,
+        allowed_roots: &[PathBuf],
+    ) -> ResourceSnapshot {
+        self.inner
+            .snapshot()
+            .resources()
+            .filter(|(id, _)| *id != root_id)
+            .filter(|(id, _)| {
+                let same_scope = self.resource_projects.get(*id).is_some_and(|scope| {
+                    scope.workspace_root == root_scope.workspace_root
+                        && (root_scope.config_path.is_some() || scope == root_scope)
+                });
+                same_scope
+                    && (allowed_roots.is_empty()
+                        || Url::parse(id.as_str())
+                            .ok()
+                            .and_then(|uri| uri.to_file_path().ok())
+                            .is_some_and(|path| {
+                                allowed_roots.iter().any(|root| path.starts_with(root))
+                            }))
+            })
+            .map(|(id, resource)| {
+                (
+                    id.to_string(),
+                    ResourceDocument {
+                        source_id: SourceId::new(id.to_string()),
+                        source: Arc::clone(resource.text()),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn insert_include_resource(
+        &mut self,
+        uri: Url,
+        path: PathBuf,
+        scope: ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<(), String> {
+        let id = uri_id(&uri)?;
+        let prepared = self.read_workspace_file(&path, &scope, plan)?;
+        let next_disk_version = self.next_disk_version.saturating_add(1);
+        let result = (|| {
+            let charge = RetainedLayerCharge::new(Some(prepared.text.len() as u64), None);
+            let retained_layers =
+                self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
+            let mut inner = self.inner.clone();
+            inner
+                .upsert_disk(
+                    id.clone(),
+                    Revision::new(next_disk_version),
+                    Arc::clone(&prepared.text),
+                )
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((retained_layers, inner))
+        })();
+        let (retained_layers, inner) = match result {
+            Ok(committed) => committed,
+            Err(error) => {
+                prepared.rollback()?;
+                return Err(error);
+            }
+        };
+        self.inner = inner;
+        self.retained_layers = retained_layers;
+        self.filesystems
+            .insert(scope.clone(), Arc::clone(&prepared.filesystem));
+        self.project_plans.insert(scope.clone(), plan);
+        self.resource_projects.insert(id, scope);
+        self.next_disk_version = next_disk_version;
+        Ok(())
+    }
+
     pub fn input(&mut self, root: &Url) -> Result<WorkspaceInput, String> {
         let root_id = uri_id(root)?;
         if self.inner.get(&root_id).is_none() {
@@ -869,27 +1066,7 @@ impl WorkspaceResources {
         options.safe_mode = SafeMode::Server;
         options.allowed_schemes = allowed_schemes;
         let allowed_roots = if options.enable_includes {
-            project_config
-                .resources
-                .roots
-                .iter()
-                .map(|root| {
-                    let canonical = root
-                        .canonicalize()
-                        .map_err(|error| format!("cannot canonicalize configured root: {error}"))?;
-                    if !self
-                        .roots
-                        .iter()
-                        .any(|workspace_root| canonical.starts_with(workspace_root))
-                    {
-                        return Err(format!(
-                            "configured root is outside the workspace: {}",
-                            root.display()
-                        ));
-                    }
-                    Ok(canonical)
-                })
-                .collect::<Result<Vec<_>, _>>()?
+            configured_include_roots(&project_config, &self.roots)?
         } else {
             Vec::new()
         };
@@ -1063,6 +1240,32 @@ fn resource_path_is_allowed(
                 .iter()
                 .any(|root| path.starts_with(root))
     })
+}
+
+fn configured_include_roots(
+    config: &adocweave_config::ResolvedProjectConfig,
+    workspace_roots: &[PathBuf],
+) -> Result<Vec<PathBuf>, String> {
+    config
+        .resources
+        .roots
+        .iter()
+        .map(|root| {
+            let canonical = root
+                .canonicalize()
+                .map_err(|error| format!("cannot canonicalize configured root: {error}"))?;
+            if !workspace_roots
+                .iter()
+                .any(|workspace_root| canonical.starts_with(workspace_root))
+            {
+                return Err(format!(
+                    "configured root is outside the workspace: {}",
+                    root.display()
+                ));
+            }
+            Ok(canonical)
+        })
+        .collect()
 }
 
 /// Walks up to the nearest directory that exists.
@@ -1274,6 +1477,87 @@ mod tests {
                 .as_ref(),
             "first\n"
         );
+    }
+
+    #[test]
+    fn scan_exclusion_keeps_included_resource_out_of_the_analysis_root_set() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("nested/generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"**/generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.adoc");
+        std::fs::write(&source, "include::nested/generated/part.adoc[]\n").expect("source");
+        std::fs::write(&included, "included\n").expect("included source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let mut resources = WorkspaceResources::default();
+
+        resources.load_roots(&[root_uri]).expect("load workspace");
+
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
+        );
+        assert!(resources.get(&included_uri).is_some());
+        let input = resources.input(&source_uri).expect("workspace input");
+        let analysis = input
+            .analyze(
+                &adocweave::AnalysisOptions::default(),
+                &adocweave::CancellationToken::new(),
+            )
+            .expect("workspace analysis");
+        assert!(analysis.analysis.source().contains("included"));
+    }
+
+    #[test]
+    fn each_directory_root_uses_only_its_own_scan_patterns() {
+        let first = TestDirectory::new();
+        let second = TestDirectory::new();
+        for (root, excluded, retained) in [
+            (&first, "first-only", "second-only"),
+            (&second, "second-only", "first-only"),
+        ] {
+            std::fs::write(
+                root.0.join(adocweave_config::FILE_NAME),
+                format!("schema-version = 1\n[workspace.scan]\nexclude = [\"{excluded}\"]\n"),
+            )
+            .expect("project configuration");
+            std::fs::create_dir(root.0.join(excluded)).expect("excluded directory");
+            std::fs::create_dir(root.0.join(retained)).expect("retained directory");
+            std::fs::write(root.0.join(excluded).join("hidden.adoc"), "hidden\n")
+                .expect("excluded source");
+            std::fs::write(root.0.join(retained).join("kept.adoc"), "kept\n")
+                .expect("retained source");
+        }
+        let roots =
+            [&first, &second].map(|root| Url::from_directory_path(&root.0).expect("root URI"));
+        let expected = BTreeSet::from([
+            uri_id(
+                &Url::from_file_path(first.0.join("second-only/kept.adoc"))
+                    .expect("first retained URI"),
+            )
+            .expect("first retained ID"),
+            uri_id(
+                &Url::from_file_path(second.0.join("first-only/kept.adoc"))
+                    .expect("second retained URI"),
+            )
+            .expect("second retained ID"),
+        ]);
+        let mut resources = WorkspaceResources::default();
+
+        resources.load_roots(&roots).expect("load workspaces");
+
+        assert_eq!(resources.inner.roots(), &expected);
     }
 
     #[test]

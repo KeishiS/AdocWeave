@@ -19,7 +19,7 @@ const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
 }
-export const PREVIOUS_RELEASE_VERSION = "0.30.0";
+export const PREVIOUS_RELEASE_VERSION = "0.30.1";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -50,6 +50,7 @@ const highlights = [
   "生成処理と実装を共有しないarchive検証器を追加しました。tarballのfile種別とpath、許可file集合、実際の展開量、WebAssemblyの公開関数、memory上限および機械固有pathを検査します。",
   "固定したconsumer依存とinstall後のfile treeを専用fixtureで検査し、別々の構築環境から同じbyte列のtarballが得られることを確認します。",
   "公開前のcandidateと公開後のGitHub Release assetを``npx``で実行する検査を追加し、単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離しました。",
+  "Language Serverの初期走査から、生成物や開発環境のディレクトリを``workspace.scan.exclude``で除外できるようにしました。除外した文書も、明示的に開いた場合またはinclude先として必要な場合は読み込めます。",
 ];
 
 /// Public contracts this release states are unchanged since the previous stable tag.
@@ -86,14 +87,15 @@ const contractNotes = [
   manifestSchemaNote,
   "破壊的変更：ありません。",
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
-  "パーサAPI、HTMLコンパイラ、Language ServerおよびBrowser APIの動作は変更していません。",
+  "パーサAPI、HTMLコンパイラ、CLIの入力選択およびBrowser APIの動作は変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "CLI、パーサ、HTMLコンパイラ、Language Server、Browser packageおよびtextlint Processorの利用方法に変更はなく、移行作業は不要です。",
+  "CLI、パーサ、HTMLコンパイラ、Browser packageおよびtextlint Processorの利用方法に変更はなく、移行作業は不要です。Language Serverの除外設定は任意であり、指定しなければ従来どおり走査します。",
+  "初期走査の対象を狭める場合は、workspace folder直下の``.adocweave.toml``へ``[workspace.scan]``と``exclude``を追加します。patternはworkspace rootからの相対位置で、OSにかかわらず``/``を区切りに使います。",
   `textlint用Processorを更新する場合は、GitHub Releaseにある${RELEASE_NOTES_VERSION}のtarballへ依存を更新します。package名は\`\`${textlintContract.identity.packageName}\`\`、textlintのplugin名は\`\`${textlintContract.identity.pluginName}\`\`です。`,
   "プロジェクトへ依存を追加せず試す場合は、利用手順に記載した``npx --package``の実行方法を使用できます。",
   "``cargo make docs-prose-lint``は再設計後のProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
@@ -115,6 +117,7 @@ const knownConstraints = [
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
   "Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
+  "``workspace.scan.exclude``はLanguage Serverの初期走査だけに適用します。CLI入力、明示的に開いた文書、file watcherの通知およびinclude先を拒否する設定ではありません。",
 ];
 
 function markdownList(items) {

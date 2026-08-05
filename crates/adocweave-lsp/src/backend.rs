@@ -125,12 +125,19 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWatchedFiles>(|state, params| {
+                if params.changes.iter().any(|change| {
+                    change.uri.path_segments().and_then(Iterator::last)
+                        == Some(adocweave_config::FILE_NAME)
+                }) {
+                    state.invalidate_workspace_scan();
+                }
                 for job in state.service.workspace_files_changed(params) {
                     state.schedule_analysis(job);
                 }
                 ControlFlow::Continue(())
             })
             .notification::<notification::DidChangeWorkspaceFolders>(|state, params| {
+                state.invalidate_workspace_scan();
                 for job in state.service.workspace_folders_changed(params) {
                     state.schedule_analysis(job);
                 }
@@ -272,7 +279,7 @@ impl Backend {
     /// Only the newest scan is installed; an older one that finishes later is
     /// discarded rather than written over newer state.
     fn schedule_workspace_scan(&mut self) {
-        self.scan_sequence = self.scan_sequence.saturating_add(1);
+        self.invalidate_workspace_scan();
         let sequence = self.scan_sequence;
         let service = self.service.clone();
         let client = self.client.clone();
@@ -284,6 +291,10 @@ impl Backend {
             };
             let _ = client.emit(WorkspaceScanned { sequence, scan });
         });
+    }
+
+    fn invalidate_workspace_scan(&mut self) {
+        self.scan_sequence = self.scan_sequence.saturating_add(1);
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {

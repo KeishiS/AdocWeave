@@ -39,6 +39,14 @@
       "accepted": true
     },
     {
+      "name": "workspace走査の除外pattern",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": [".git", "**/.venv", "build-*", "tmp/?ache"] } }
+      },
+      "accepted": true
+    },
+    {
       "name": "resource rootが親ディレクトリへ移動する",
       "config": { "schema-version": 1, "resources": { "roots": ["../escape"] } },
       "accepted": false
@@ -76,6 +84,46 @@
     {
       "name": "未知の項目",
       "config": { "schema-version": 1, "unknown-section": { "value": 1 } },
+      "accepted": false
+    },
+    {
+      "name": "workspace走査の除外patternが絶対パス",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": ["/target"] } }
+      },
+      "accepted": false
+    },
+    {
+      "name": "workspace走査の除外patternが親ディレクトリへ移動する",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": ["cache/../target"] } }
+      },
+      "accepted": false
+    },
+    {
+      "name": "workspace走査の除外patternがOS依存の区切りを使う",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": ["cache\\target"] } }
+      },
+      "accepted": false
+    },
+    {
+      "name": "workspace走査の除外patternで再帰wildcardをsegment内に置く",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": ["cache/**target"] } }
+      },
+      "accepted": false
+    },
+    {
+      "name": "workspace走査の除外patternが重複する",
+      "config": {
+        "schema-version": 1,
+        "workspace": { "scan": { "exclude": ["target", "target"] } }
+      },
       "accepted": false
     },
     {

@@ -73,6 +73,11 @@ fn resolved_config_json(
             "maxTotalBytes": config.resources.limit_plan.filesystem_reads.max_total_bytes,
             "maxResourceBytes": config.resources.limit_plan.filesystem_reads.max_resource_bytes,
         },
+        "workspace": {
+            "scan": {
+                "exclude": config.workspace.scan.exclude_patterns().collect::<Vec<_>>(),
+            },
+        },
         "localTargets": {
             "enabled": config.local_targets.enabled,
             "projectRoot": config.local_targets.project_root.as_deref().map(path),
@@ -108,7 +113,29 @@ mod tests {
         assert!(value["source"].is_null());
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["resources"]["include"], false);
+        assert_eq!(value["workspace"]["scan"]["exclude"], serde_json::json!([]));
         assert_eq!(value["analysis"]["attributes"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn workspace_scan_patterns_are_visible_in_resolved_configuration() {
+        let config = adocweave_config::ResolvedProjectConfig::parse(
+            "schema-version = 1\n[workspace.scan]\nexclude = [\".git\", \"**/.venv\"]\n",
+            std::path::Path::new("/project"),
+        )
+        .expect("configuration");
+        let snapshot = adocweave_config::ConfigSnapshot {
+            path: PathBuf::from("/project/.adocweave.toml"),
+            content_sha256: [0; 32],
+            config,
+        };
+
+        let value: serde_json::Value =
+            serde_json::from_str(&run(Some(&snapshot)).output).expect("config JSON");
+        assert_eq!(
+            value["workspace"]["scan"]["exclude"],
+            serde_json::json!([".git", "**/.venv"])
+        );
     }
 
     #[test]
