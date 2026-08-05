@@ -43,28 +43,71 @@ pub(crate) struct Backend {
 }
 
 #[derive(Default)]
-struct WorkspaceScanRecoveryTimer(Option<tokio::task::JoinHandle<()>>);
+enum WorkspaceScanRecoveryTimer {
+    #[default]
+    Idle,
+    Debouncing {
+        generation: u64,
+        task: AbortOnDrop,
+    },
+}
 
-impl WorkspaceScanRecoveryTimer {
-    fn replace(&mut self, timer: tokio::task::JoinHandle<()>) {
-        self.cancel();
-        self.0 = Some(timer);
+struct AbortOnDrop {
+    handle: tokio::task::JoinHandle<()>,
+    abort: bool,
+}
+
+impl AbortOnDrop {
+    fn new(handle: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            handle,
+            abort: true,
+        }
     }
 
-    fn completed(&mut self) {
-        self.0.take();
+    fn completed(mut self) {
+        self.abort = false;
     }
+}
 
-    fn cancel(&mut self) {
-        if let Some(timer) = self.0.take() {
-            timer.abort();
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if self.abort {
+            self.handle.abort();
         }
     }
 }
 
-impl Drop for WorkspaceScanRecoveryTimer {
-    fn drop(&mut self) {
+impl WorkspaceScanRecoveryTimer {
+    fn replace(&mut self, generation: u64, handle: tokio::task::JoinHandle<()>) {
         self.cancel();
+        *self = Self::Debouncing {
+            generation,
+            task: AbortOnDrop::new(handle),
+        };
+    }
+
+    fn complete(&mut self, generation: u64) -> bool {
+        if !matches!(self, Self::Debouncing { generation: current, .. } if *current == generation) {
+            return false;
+        }
+        let Self::Debouncing { task, .. } = std::mem::take(self) else {
+            unreachable!("matching debounce state was checked above");
+        };
+        task.completed();
+        true
+    }
+
+    fn cancel(&mut self) {
+        *self = Self::Idle;
+    }
+
+    #[cfg(test)]
+    fn generation(&self) -> Option<u64> {
+        match self {
+            Self::Idle => None,
+            Self::Debouncing { generation, .. } => Some(*generation),
+        }
     }
 }
 
@@ -97,7 +140,14 @@ struct WorkspaceScanCompletion {
 enum WorkspaceRecoveryState {
     #[default]
     Idle,
-    Waiting {
+    /// A timer handle exists in `Backend` for this generation.
+    Debouncing {
+        generation: u64,
+        minimum_scan_sequence: u64,
+    },
+    /// The timer fired, but the active scan and its replay journal can satisfy
+    /// the recovery. No timer handle exists while completion is awaited.
+    AwaitingActiveCompletion {
         generation: u64,
         minimum_scan_sequence: u64,
     },
@@ -194,14 +244,18 @@ impl WorkspaceScanCoordinator {
     fn arm_recovery(&mut self, minimum_scan_sequence: u64) -> u64 {
         let minimum_scan_sequence = match self.recovery {
             WorkspaceRecoveryState::Idle => minimum_scan_sequence,
-            WorkspaceRecoveryState::Waiting {
+            WorkspaceRecoveryState::Debouncing {
+                minimum_scan_sequence: existing,
+                ..
+            }
+            | WorkspaceRecoveryState::AwaitingActiveCompletion {
                 minimum_scan_sequence: existing,
                 ..
             } => existing.max(minimum_scan_sequence),
         };
         self.recovery_generation = self.recovery_generation.saturating_add(1);
         let generation = self.recovery_generation;
-        self.recovery = WorkspaceRecoveryState::Waiting {
+        self.recovery = WorkspaceRecoveryState::Debouncing {
             generation,
             minimum_scan_sequence,
         };
@@ -213,17 +267,32 @@ impl WorkspaceScanCoordinator {
         self.recovery = WorkspaceRecoveryState::Idle;
     }
 
-    fn waiting_recovery_generation(&self) -> Option<u64> {
+    fn recovery_generation(&self) -> Option<u64> {
         match self.recovery {
             WorkspaceRecoveryState::Idle => None,
-            WorkspaceRecoveryState::Waiting { generation, .. } => Some(generation),
+            WorkspaceRecoveryState::Debouncing { generation, .. }
+            | WorkspaceRecoveryState::AwaitingActiveCompletion { generation, .. } => {
+                Some(generation)
+            }
+        }
+    }
+
+    fn debouncing_generation(&self) -> Option<u64> {
+        match self.recovery {
+            WorkspaceRecoveryState::Debouncing { generation, .. } => Some(generation),
+            WorkspaceRecoveryState::Idle
+            | WorkspaceRecoveryState::AwaitingActiveCompletion { .. } => None,
         }
     }
 
     fn recovery_minimum_scan_sequence(&self) -> Option<u64> {
         match self.recovery {
             WorkspaceRecoveryState::Idle => None,
-            WorkspaceRecoveryState::Waiting {
+            WorkspaceRecoveryState::Debouncing {
+                minimum_scan_sequence,
+                ..
+            }
+            | WorkspaceRecoveryState::AwaitingActiveCompletion {
                 minimum_scan_sequence,
                 ..
             } => Some(minimum_scan_sequence),
@@ -350,7 +419,7 @@ impl WorkspaceScanCoordinator {
             let minimum = self.sequence_after_active();
             return Some(self.arm_recovery(minimum));
         }
-        if self.waiting_recovery_generation().is_some() && !changes.is_empty() {
+        if self.recovery_generation().is_some() && !changes.is_empty() {
             self.rearm_recovery()
         } else {
             None
@@ -358,12 +427,15 @@ impl WorkspaceScanCoordinator {
     }
 
     fn request_recovery(&mut self, generation: u64) -> Option<WorkspaceScanStart> {
-        if self.waiting_recovery_generation() != Some(generation) {
-            return None;
-        }
-        let minimum = self
-            .recovery_minimum_scan_sequence()
-            .expect("a matching recovery generation has a minimum scan sequence");
+        let minimum = match self.recovery {
+            WorkspaceRecoveryState::Debouncing {
+                generation: current,
+                minimum_scan_sequence,
+            } if current == generation => minimum_scan_sequence,
+            WorkspaceRecoveryState::Idle
+            | WorkspaceRecoveryState::Debouncing { .. }
+            | WorkspaceRecoveryState::AwaitingActiveCompletion { .. } => return None,
+        };
         if let WorkspaceScanPhase::Running(active) = &self.phase
             && active.accept_result
             && active.sequence >= minimum
@@ -372,6 +444,10 @@ impl WorkspaceScanCoordinator {
             // recovery lineage. Keep both its replay journal and the recovery
             // reservation until completion proves that installation and replay
             // succeeded.
+            self.recovery = WorkspaceRecoveryState::AwaitingActiveCompletion {
+                generation,
+                minimum_scan_sequence: minimum,
+            };
             return None;
         }
         self.recovery = WorkspaceRecoveryState::Idle;
@@ -725,11 +801,15 @@ impl Backend {
                 ControlFlow::Continue(())
             })
             .event::<WorkspaceScanRecovery>(|state, recovery| {
-                if state.workspace_scans.waiting_recovery_generation() != Some(recovery.generation)
+                if state.workspace_scans.debouncing_generation() != Some(recovery.generation) {
+                    return ControlFlow::Continue(());
+                }
+                if !state
+                    .workspace_scan_recovery_timer
+                    .complete(recovery.generation)
                 {
                     return ControlFlow::Continue(());
                 }
-                state.workspace_scan_recovery_timer.completed();
                 if let Some(start) = state.workspace_scans.request_recovery(recovery.generation) {
                     state.spawn_workspace_scan(start);
                 }
@@ -815,14 +895,16 @@ impl Backend {
     fn schedule_workspace_scan_recovery(&mut self, generation: u64) {
         self.cancel_workspace_scan_recovery();
         let client = self.client.clone();
-        self.workspace_scan_recovery_timer
-            .replace(tokio::spawn(async move {
+        self.workspace_scan_recovery_timer.replace(
+            generation,
+            tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(
                     WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
                 ))
                 .await;
                 let _ = client.emit(WorkspaceScanRecovery { generation });
-            }));
+            }),
+        );
     }
 
     fn cancel_workspace_scan_recovery(&mut self) {
@@ -1244,7 +1326,7 @@ mod tests {
         assert!(coordinator.request_replacement().is_none());
         assert!(active.cancellation.is_cancelled());
         assert!(coordinator.watched_changes.changes.is_empty());
-        assert!(coordinator.waiting_recovery_generation().is_none());
+        assert!(coordinator.recovery_generation().is_none());
         assert!(coordinator.request_recovery(stale_recovery).is_none());
 
         let completion = coordinator
@@ -1262,14 +1344,21 @@ mod tests {
         let latest = coordinator.request_quiet_recovery();
 
         assert_ne!(first, second);
-        assert_eq!(coordinator.waiting_recovery_generation(), Some(latest));
+        assert!(matches!(
+            coordinator.recovery,
+            WorkspaceRecoveryState::Debouncing {
+                generation,
+                minimum_scan_sequence: 1,
+            } if generation == latest
+        ));
+        assert_eq!(coordinator.recovery_generation(), Some(latest));
         assert!(coordinator.request_recovery(first).is_none());
-        assert_eq!(coordinator.waiting_recovery_generation(), Some(latest));
+        assert_eq!(coordinator.debouncing_generation(), Some(latest));
 
         let scan = coordinator
             .request_recovery(latest)
             .expect("latest timer starts one scan");
-        assert!(coordinator.waiting_recovery_generation().is_none());
+        assert!(coordinator.recovery_generation().is_none());
         assert!(coordinator.request_recovery(second).is_none());
         assert!(!scan.cancellation.is_cancelled());
     }
@@ -1281,18 +1370,28 @@ mod tests {
         let (first_started_tx, first_started_rx) = tokio::sync::oneshot::channel();
         let (second_started_tx, second_started_rx) = tokio::sync::oneshot::channel();
         let mut timer = WorkspaceScanRecoveryTimer::default();
-        timer.replace(tokio::spawn(async move {
-            let _on_drop = NotifyOnDrop(first_tx);
-            let _ = first_started_tx.send(());
-            std::future::pending::<()>().await;
-        }));
+        timer.replace(
+            1,
+            tokio::spawn(async move {
+                let _on_drop = NotifyOnDrop(first_tx);
+                let _ = first_started_tx.send(());
+                std::future::pending::<()>().await;
+            }),
+        );
+        assert_eq!(timer.generation(), Some(1));
         first_started_rx.await.expect("first timer started");
-        timer.replace(tokio::spawn(async move {
-            let _on_drop = NotifyOnDrop(second_tx);
-            let _ = second_started_tx.send(());
-            std::future::pending::<()>().await;
-        }));
+        timer.replace(
+            2,
+            tokio::spawn(async move {
+                let _on_drop = NotifyOnDrop(second_tx);
+                let _ = second_started_tx.send(());
+                std::future::pending::<()>().await;
+            }),
+        );
+        assert_eq!(timer.generation(), Some(2));
         second_started_rx.await.expect("second timer started");
+        assert!(!timer.complete(1));
+        assert_eq!(timer.generation(), Some(2));
 
         first_rx
             .recv_timeout(Duration::from_secs(1))
@@ -1301,6 +1400,11 @@ mod tests {
         second_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("dropping the timer aborts the retained task");
+
+        let mut completed = WorkspaceScanRecoveryTimer::default();
+        completed.replace(3, tokio::spawn(async {}));
+        assert!(completed.complete(3));
+        assert_eq!(completed.generation(), None);
     }
 
     #[test]
@@ -1430,7 +1534,7 @@ mod tests {
             transition.recovery_timer,
             WorkspaceRecoveryTimerUpdate::Cancel
         ));
-        assert!(coordinator.waiting_recovery_generation().is_none());
+        assert!(coordinator.recovery_generation().is_none());
         assert!(coordinator.request_recovery(stale_recovery).is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -1453,11 +1557,26 @@ mod tests {
         assert!(coordinator.record_workspace_changes(&changes).is_none());
         let recovery = coordinator.request_quiet_recovery();
 
+        assert!(matches!(
+            coordinator.recovery,
+            WorkspaceRecoveryState::Debouncing {
+                generation,
+                minimum_scan_sequence,
+            } if generation == recovery && minimum_scan_sequence == active.sequence
+        ));
         assert!(coordinator.request_recovery(recovery).is_none());
         assert!(coordinator.accepts_active_result());
         assert_eq!(coordinator.watched_changes.changes.len(), 1);
         assert!(!coordinator.pending_replacement);
-        assert_eq!(coordinator.waiting_recovery_generation(), Some(recovery));
+        assert!(matches!(
+            coordinator.recovery,
+            WorkspaceRecoveryState::AwaitingActiveCompletion {
+                generation,
+                minimum_scan_sequence,
+            } if generation == recovery && minimum_scan_sequence == active.sequence
+        ));
+        assert!(coordinator.debouncing_generation().is_none());
+        assert!(coordinator.request_recovery(recovery).is_none());
 
         let transition = coordinator
             .complete(
@@ -1473,6 +1592,7 @@ mod tests {
             transition.recovery_timer,
             WorkspaceRecoveryTimerUpdate::Cancel
         ));
+        assert!(matches!(coordinator.recovery, WorkspaceRecoveryState::Idle));
         assert_eq!(
             service
                 .workspace_resource(&document_uri)
@@ -1481,6 +1601,39 @@ mod tests {
             "= Current\n"
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn watched_change_rearms_recovery_while_active_completion_is_awaited() {
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("active scan");
+        let first = coordinator.request_quiet_recovery();
+
+        assert!(coordinator.request_recovery(first).is_none());
+        assert!(matches!(
+            coordinator.recovery,
+            WorkspaceRecoveryState::AwaitingActiveCompletion {
+                generation,
+                minimum_scan_sequence,
+            } if generation == first && minimum_scan_sequence == active.sequence
+        ));
+
+        let uri = Url::parse("file:///workspace/changed.adoc").expect("URI");
+        let next = coordinator
+            .record_watched_changes(&[FileEvent::new(uri, FileChangeType::CHANGED)])
+            .expect("new timer generation");
+
+        assert_ne!(next, first);
+        assert!(matches!(
+            coordinator.recovery,
+            WorkspaceRecoveryState::Debouncing {
+                generation,
+                minimum_scan_sequence,
+            } if generation == next && minimum_scan_sequence == active.sequence
+        ));
+        assert_eq!(coordinator.debouncing_generation(), Some(next));
+        assert!(coordinator.request_recovery(first).is_none());
+        assert_eq!(coordinator.debouncing_generation(), Some(next));
     }
 
     #[test]
@@ -1568,7 +1721,7 @@ mod tests {
             recovered.recovery_timer,
             WorkspaceRecoveryTimerUpdate::Cancel
         ));
-        assert!(coordinator.waiting_recovery_generation().is_none());
+        assert!(coordinator.recovery_generation().is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1603,7 +1756,7 @@ mod tests {
             )
             .expect("replacement completion");
         assert!(completed.next.is_none());
-        assert!(coordinator.waiting_recovery_generation().is_none());
+        assert!(coordinator.recovery_generation().is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1679,7 +1832,7 @@ mod tests {
         let WorkspaceRecoveryTimerUpdate::Arm(recovery) = transition.recovery_timer else {
             panic!("replay must arm recovery");
         };
-        assert_eq!(coordinator.waiting_recovery_generation(), Some(recovery));
+        assert_eq!(coordinator.recovery_generation(), Some(recovery));
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1738,7 +1891,7 @@ mod tests {
             WorkspaceRecoveryTimerUpdate::Keep
         ));
         assert_eq!(
-            coordinator.waiting_recovery_generation(),
+            coordinator.recovery_generation(),
             Some(recovery),
             "the older scan cannot discharge recovery that requires its successor"
         );
