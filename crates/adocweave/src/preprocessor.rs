@@ -219,8 +219,6 @@ pub enum ProcessingOptionsError {
     AttributeExpansionDepth,
     /// Attribute expansion byte limits differ between stages.
     AttributeExpansionBytes,
-    /// A prepared document belongs to a different effective processing contract.
-    ContractMismatch,
 }
 
 impl ProcessingOptionsError {
@@ -230,7 +228,6 @@ impl ProcessingOptionsError {
             Self::ExternalAttributes => "external-attributes-mismatch",
             Self::AttributeExpansionDepth => "attribute-expansion-depth-mismatch",
             Self::AttributeExpansionBytes => "attribute-expansion-bytes-mismatch",
-            Self::ContractMismatch => "processing-contract-mismatch",
         }
     }
 }
@@ -246,9 +243,6 @@ impl fmt::Display for ProcessingOptionsError {
             }
             Self::AttributeExpansionBytes => {
                 "analysis and preprocessing attribute expansion byte limits do not match"
-            }
-            Self::ContractMismatch => {
-                "prepared document belongs to a different effective processing contract"
             }
         })
     }
@@ -444,6 +438,31 @@ pub struct PreprocessedAnalysis {
     pub analysis: Analysis,
 }
 
+/// Failure while analyzing an already prepared document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparedAnalysisError {
+    /// The document was prepared under a different effective contract.
+    ContractMismatch,
+    /// Core parsing or analysis failed.
+    Parse(ParseError),
+    /// Cooperative cancellation discarded the result.
+    Cancelled,
+}
+
+impl fmt::Display for PreparedAnalysisError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ContractMismatch => formatter.write_str(
+                "prepared document belongs to a different effective processing contract",
+            ),
+            Self::Parse(error) => error.fmt(formatter),
+            Self::Cancelled => formatter.write_str("analysis was cancelled"),
+        }
+    }
+}
+
+impl Error for PreparedAnalysisError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreprocessedAnalysisError {
     /// Combined processing settings are inconsistent.
@@ -543,11 +562,9 @@ impl EffectiveProcessingOptions {
         &self,
         prepared: PreparedPreprocessedDocument,
         inputs: PreprocessInputs<'_>,
-    ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+    ) -> Result<PreprocessedAnalysis, PreparedAnalysisError> {
         if !Arc::ptr_eq(&self.contract, &prepared.contract) {
-            return Err(PreprocessedAnalysisError::Options(
-                ProcessingOptionsError::ContractMismatch,
-            ));
+            return Err(PreparedAnalysisError::ContractMismatch);
         }
         let cancellation = inputs.cancellation();
         let analysis = Engine::new(self.analysis().clone())
@@ -560,9 +577,9 @@ impl EffectiveProcessingOptions {
             )
             .map_err(|error| {
                 if error == ParseError::Cancelled {
-                    PreprocessedAnalysisError::Cancelled
+                    PreparedAnalysisError::Cancelled
                 } else {
-                    PreprocessedAnalysisError::Parse(error)
+                    PreparedAnalysisError::Parse(error)
                 }
             })?;
         Ok(PreprocessedAnalysis {
@@ -594,12 +611,20 @@ fn preprocess_and_analyze_effective(
         }
         EffectivePreprocessStep::Cancelled => return Err(PreprocessedAnalysisError::Cancelled),
     };
-    options.analyze_preprocessed(
-        prepared,
-        PreprocessInputs {
-            cancellation: Some(cancellation),
-        },
-    )
+    options
+        .analyze_preprocessed(
+            prepared,
+            PreprocessInputs {
+                cancellation: Some(cancellation),
+            },
+        )
+        .map_err(|error| match error {
+            PreparedAnalysisError::ContractMismatch => {
+                unreachable!("the prepared document uses this effective contract")
+            }
+            PreparedAnalysisError::Parse(error) => PreprocessedAnalysisError::Parse(error),
+            PreparedAnalysisError::Cancelled => PreprocessedAnalysisError::Cancelled,
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2714,9 +2739,7 @@ mod tests {
 
         assert!(matches!(
             second.analyze_preprocessed(prepared, PreprocessInputs::default()),
-            Err(PreprocessedAnalysisError::Options(
-                ProcessingOptionsError::ContractMismatch
-            ))
+            Err(PreparedAnalysisError::ContractMismatch)
         ));
     }
 
