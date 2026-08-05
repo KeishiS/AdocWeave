@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
+
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 // Quality gates allowed to restore a dependency build. They only verify source
@@ -369,16 +371,7 @@ export function validateReleaseWorkflowPolicy({
     "textlint plugin installation must consume a verified global candidate",
   );
   const textlintMatrix = textlintInstallation?.strategy?.matrix?.include;
-  const expectedTextlintMatrix = textlintPackageContract?.e2eMatrix ?? [
-    { runner: "ubuntu-24.04", node: "20.18.0" },
-    { runner: "ubuntu-24.04", node: "21.7.3" },
-    { runner: "ubuntu-24.04", node: "22.18.0" },
-    { runner: "ubuntu-24.04", node: "23.11.1" },
-    { runner: "ubuntu-24.04", node: "release" },
-    { runner: "macos-15", node: "release" },
-    { runner: "windows-2025", node: "release" },
-  ];
-  if (JSON.stringify(textlintMatrix) !== JSON.stringify(expectedTextlintMatrix)) {
+  if (JSON.stringify(textlintMatrix) !== JSON.stringify(textlintPackageContract?.e2eMatrix)) {
     fail("textlint plugin installation E2E must cover the Node.js boundary and all supported operating systems");
   }
   const textlintRun = step(

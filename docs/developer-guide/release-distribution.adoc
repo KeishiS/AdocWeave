@@ -119,15 +119,15 @@ GitHub Releaseへ一度だけ追加します。公開APIはtextlintの``Processo
 ``node_modules``、source mapおよび機械固有pathを収録せず、実行時の追加downloadも行いません。
 
 入力は10 MiB、TxtAST planは50 MiB、planのnodeは1,000,000件、``sourceId``は4 KiBを上限とします。
-WebAssemblyのlinear memoryは256 MiBを上限とし、生成したbinaryのmemory sectionを検査します。
-tarballは8 MiB、展開後は16 MiB、収録fileは13件を上限とします。実CLIの受入検査はNode.jsのheapを
-128 MiBに制限して実行します。
+WebAssemblyのlinear memory、tarball、展開後の内容および収録file数の上限は、
+link:../../release/textlint-plugin-package-contract.json[`release/textlint-plugin-package-contract.json`]で管理し、
+生成した配布物をその契約に照らして検査します。実CLIの受入検査はNode.jsのheapを128 MiBに制限して実行します。
 
 自動修正は公開範囲に含めません。Processorはtextlint規則が返した診断から``fix``を除去します。
 ``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
 一つの物理ファイルだけを診断対象とします。
 
-包装時は許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
+包装時は契約で定めた許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
 再現性検査では、追跡しているsourceを二つの一時ディレクトリへ複製し、別々のCargo target、WebAssembly出力先、
 npm cacheおよびarchive出力先を使います。各archiveを独立した検証器へ渡した後、SHA-256とbyte列の一致を検査します。
 Linux、macOSおよびWindowsのcleanな一時projectへ公開tarballを導入し、

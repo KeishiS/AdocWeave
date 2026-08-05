@@ -5,6 +5,7 @@ import { basename, join, resolve } from "node:path";
 
 import { canonicalJson, validateDistributionManifest } from "./release-contract.mjs";
 import { cargoTreePackageKeys } from "./generate-third-party-notices.mjs";
+import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 export const RELEASE_METADATA_TOOL_VERSION = 1;
 const ROOT = new URL("../", import.meta.url);
@@ -146,11 +147,9 @@ function frontendPackage() {
 }
 
 function textlintPluginPackage() {
-  const entry = readJson("packages/textlint-plugin-asciidoc/package.json");
-  if (entry.private !== true || Object.keys(entry.dependencies ?? {}).length !== 0) {
-    fail("textlint plugin must remain private and have zero runtime npm dependencies");
-  }
-  return npmPackage(entry.name, entry.version, entry.license);
+  const contract = loadTextlintPluginPackageContract();
+  const release = readJson("release-manifest.json");
+  return npmPackage(contract.identity.packageName, release.packageVersion, "MIT OR Apache-2.0");
 }
 
 function npmPackage(name, version, license = "NOASSERTION") {
