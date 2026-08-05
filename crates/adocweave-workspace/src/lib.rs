@@ -18,10 +18,10 @@ use std::sync::{Arc, Mutex};
 use adocweave::output::diagnostics::Severity;
 use adocweave::preprocess::{
     AnalysisProjection, DirectiveKind, EffectivePreprocessStep, EffectiveProcessingOptions,
-    EffectiveSuspendedPreprocess, HostResourceErrorKind, PreprocessError, PreprocessErrorKind,
-    PreprocessInputs, PreprocessOptions, PreprocessedAnalysisError, ProjectionFailure,
-    ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult, ResourceRequest,
-    ResourceResponse, ResourceSnapshot,
+    EffectiveSuspendedPreprocess, HostResourceErrorKind, PreparedAnalysisError, PreprocessError,
+    PreprocessErrorKind, PreprocessInputs, PreprocessOptions, PreprocessedAnalysisError,
+    ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult,
+    ResourceRequest, ResourceResponse, ResourceSnapshot,
 };
 use adocweave::{AnalysisOptions, SourceId};
 use dependency_graph::DependencyGraph;
@@ -1152,7 +1152,7 @@ impl WorkspaceAnalysisRun {
                     },
                 ) {
                     Ok(preprocessed) => preprocessed,
-                    Err(error) => return processing_error_step(error),
+                    Err(error) => return prepared_analysis_error_step(error),
                 };
                 if adocweave::CancellationCheck::is_cancelled(cancellation) {
                     return WorkspaceAnalysisStep::Cancelled;
@@ -1708,18 +1708,19 @@ fn check_cancelled(cancellation: &impl Cancellation) -> Result<(), WorkspaceErro
     }
 }
 
-fn processing_error_step(error: PreprocessedAnalysisError) -> WorkspaceAnalysisStep {
+fn prepared_analysis_error_step(error: PreparedAnalysisError) -> WorkspaceAnalysisStep {
     match error {
-        PreprocessedAnalysisError::Cancelled => WorkspaceAnalysisStep::Cancelled,
-        PreprocessedAnalysisError::Options(error) => WorkspaceAnalysisStep::Failed(
-            WorkspaceError::new(WorkspaceErrorCode::InvalidOptions, error.to_string()),
-        ),
-        PreprocessedAnalysisError::Preprocess(error) => {
-            WorkspaceAnalysisStep::Failed(preprocess_workspace_error(error))
+        PreparedAnalysisError::ContractMismatch => {
+            WorkspaceAnalysisStep::Failed(WorkspaceError::new(
+                WorkspaceErrorCode::InvalidOptions,
+                "prepared document belongs to a different effective processing contract",
+            ))
         }
-        PreprocessedAnalysisError::Parse(error) => WorkspaceAnalysisStep::Failed(
-            WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string()),
-        ),
+        PreparedAnalysisError::Parse(error) => WorkspaceAnalysisStep::Failed(WorkspaceError::new(
+            WorkspaceErrorCode::Analysis,
+            error.to_string(),
+        )),
+        PreparedAnalysisError::Cancelled => WorkspaceAnalysisStep::Cancelled,
     }
 }
 
