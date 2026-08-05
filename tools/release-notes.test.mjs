@@ -7,6 +7,8 @@ import {
   PREVIOUS_RELEASE_VERSION,
   RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
+  breakingContractNotes,
+  breakingMigrationNotes,
   buildReleaseNotes,
   validateReleaseNotes,
 } from "./release-notes.mjs";
@@ -34,14 +36,18 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
   assert.equal(PREVIOUS_RELEASE_VERSION, "0.30.1");
-  assert.match(notes, /一つの機械可読な契約へ集約/);
-  assert.match(notes, /公開用``package\.json``と収録ディレクトリを契約とrelease versionから生成/);
-  assert.match(notes, /生成処理と実装を共有しないarchive検証器/);
-  assert.match(notes, /固定したconsumer依存とinstall後のfile tree/);
-  assert.match(notes, /別々の構築環境から同じbyte列のtarball/);
-  assert.match(notes, /公開前のcandidateと公開後のGitHub Release assetを``npx``で実行/);
-  assert.match(notes, /単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離/);
+  for (const issue of [442, 448, 449, 450, 453, 456, 457]) {
+    assert.match(notes, new RegExp(`#${issue}：`));
+  }
+  assert.doesNotMatch(notes, /一つの機械可読な契約へ集約/);
+  assert.doesNotMatch(notes, /公開用``package\.json``と収録ディレクトリを契約とrelease versionから生成/);
+  assert.doesNotMatch(notes, /生成処理と実装を共有しないarchive検証器/);
+  assert.doesNotMatch(notes, /固定したconsumer依存とinstall後のfile tree/);
+  assert.doesNotMatch(notes, /公開前のcandidateと公開後のGitHub Release assetを``npx``で実行/);
   assert.match(notes, /``workspace\.scan\.exclude``で除外/);
+  assert.match(notes, /入れ子になったworkspace folderの走査を分離/);
+  assert.match(notes, /最新のworkspace状態へ結果を収束/);
+  assert.match(notes, /文書変更前の古い応答を返さない/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -50,23 +56,25 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.23\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  assert.match(notes, /破壊的変更：ありません/);
+  assert.match(notes, /Rust APIの破壊的変更/);
+  assert.match(notes, /構造体リテラルまたは構造体のパターンで全フィールドを列挙/);
+  assert.match(notes, /workspace: WorkspaceSettings::default/);
+  assert.match(notes, /構造体のパターンには``workspace``を追加/);
+  assert.doesNotMatch(notes, /constructible_struct_adds_field/);
+  assert.doesNotMatch(notes, /externally-constructible struct adds field/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /Language Serverの除外設定は任意/);
+  assert.match(notes, /Language Serverのworkspace走査の除外設定は任意/);
   assert.match(notes, /\[workspace\.scan\]/);
-  assert.match(notes, new RegExp(textlintContract.identity.packageName.replace("/", "\\/")));
-  assert.match(notes, new RegExp(textlintContract.identity.pluginName.replace("/", "\\/")));
   assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));
-  assert.match(notes, /``npx --package``/);
-  assert.match(notes, /日本語規則、用語集および対象文書一覧は公開パッケージへ含めません/);
+  assert.doesNotMatch(notes, /``npx --package``/);
+  assert.doesNotMatch(notes, /再設計後のProcessor/);
   assert.match(notes, /WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず/);
   assert.match(notes, /``parseText``は専用の``adocweave-textlint-wasm``だけに含み/);
   assert.match(notes, /Browser packageには含めません/);
   assert.match(notes, /パーサAPI、HTMLコンパイラ、CLIの入力選択およびBrowser APIの動作は変更していません/);
   assert.match(notes, /textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません/);
   assert.match(notes, new RegExp(`\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`));
-  assert.match(notes, /``schemaVersion``は4のままです/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
   assert.match(notes, /gh attestation verify/);
@@ -94,6 +102,11 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, new RegExp(`統一package version：${RELEASE_NOTES_VERSION}`));
   assert.match(notes, new RegExp(`release manifest schema version：${manifest.schemaVersion}`));
   assert.match(notes, new RegExp(`対応Rust toolchain：${manifest.rustVersion}`));
+});
+
+test("破壊的変更が無いreleaseでは定型文を記録から生成する", () => {
+  assert.deepEqual(breakingContractNotes([]), ["Rust APIの破壊的変更：ありません。"]);
+  assert.deepEqual(breakingMigrationNotes([]), []);
 });
 
 test("Release Notesが述べるschema versionはmanifestの実際の値と一致する", () => {

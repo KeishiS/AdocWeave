@@ -77,6 +77,12 @@
     },
     {
       "type": "literal",
+      "path": "release/breaking-rust-api.json",
+      "template": "\"releaseVersion\": \"{version}\"",
+      "count": 1
+    },
+    {
+      "type": "literal",
       "path": "release/distribution-plan.json",
       "template": "adocweave-browser-{version}.tar.xz",
       "count": 1

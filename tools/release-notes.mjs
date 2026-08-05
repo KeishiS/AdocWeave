@@ -5,6 +5,7 @@ import {
   PUBLIC_PROTOCOL_SCHEMA_VERSION,
   RELEASE_NOTES_VERSION,
 } from "./release-policy.mjs";
+import { loadBreakingRustApi } from "./breaking-rust-api.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -12,12 +13,18 @@ const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", ROOT),
 const plan = JSON.parse(readFileSync(new URL("release/distribution-plan.json", ROOT), "utf8"));
 const protocol = JSON.parse(readFileSync(new URL("protocol/public-api.json", ROOT), "utf8"));
 const textlintContract = loadTextlintPluginPackageContract();
+const breakingRustApi = loadBreakingRustApi();
 export { RELEASE_NOTES_VERSION };
 export const RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION = PUBLIC_PROTOCOL_SCHEMA_VERSION;
 
 const releaseVersionParts = RELEASE_NOTES_VERSION.split(".").map(Number);
 if (releaseVersionParts.length !== 3 || releaseVersionParts.some((part) => !Number.isInteger(part))) {
   throw new Error(`Release NotesのversionがSemVerではありません：${RELEASE_NOTES_VERSION}`);
+}
+if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
+  throw new Error(
+    `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
+  );
 }
 export const PREVIOUS_RELEASE_VERSION = "0.30.1";
 
@@ -45,13 +52,23 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "textlint用パッケージの識別情報、対応環境、収録ファイル、WebAssemblyの制約、容量上限および受入検査の組合せを、一つの機械可読な契約へ集約しました。",
-  "公開用``package.json``と収録ディレクトリを契約とrelease versionから生成し、開発用``package.json``を公開パッケージの情報源から分離しました。",
-  "生成処理と実装を共有しないarchive検証器を追加しました。tarballのfile種別とpath、許可file集合、実際の展開量、WebAssemblyの公開関数、memory上限および機械固有pathを検査します。",
-  "固定したconsumer依存とinstall後のfile treeを専用fixtureで検査し、別々の構築環境から同じbyte列のtarballが得られることを確認します。",
-  "公開前のcandidateと公開後のGitHub Release assetを``npx``で実行する検査を追加し、単体検査、契約検査、consumer検査、再現性検査および文書校正のtaskを分離しました。",
-  "Language Serverの初期走査から、生成物や開発環境のディレクトリを``workspace.scan.exclude``で除外できるようにしました。除外した文書も、明示的に開いた場合またはinclude先として必要な場合は読み込めます。",
+  "#442：Language Serverの初期走査から、生成物や開発環境のディレクトリを``workspace.scan.exclude``で除外できるようにしました。除外した文書も、明示的に開いた場合またはinclude先として必要な場合は読み込めます。",
+  "#448：入れ子になったworkspace folderの走査を分離し、外側のworkspaceが内側の文書を重複して読み込まないようにしました。",
+  "#449：workspace走査を要求処理とは別に実行し、新しい走査が始まった場合は古い走査を取り消して、最新の結果だけを反映するようにしました。",
+  "#450：初期走査後に追加されたinclude先も同じworkspace境界内で解決し、読み込み後に文書を再解析するようにしました。",
+  "#453：複数のinclude先を同時に解決した場合も、最新のworkspace状態へ結果を収束させるようにしました。",
+  "#456：``workspace.scan.exclude``のpattern数、文字数および照合処理を制限し、大きな入力でも処理量が無制限に増えないようにしました。",
+  "#457：Language Serverの要求の取消をCPU workerへ伝え、応答を返す直前にも文書が変更されていないかを確認して、文書変更前の古い応答を返さないようにしました。",
 ];
+
+export function breakingContractNotes(changes) {
+  if (changes.length === 0) return ["Rust APIの破壊的変更：ありません。"];
+  return changes.map((change) => `Rust APIの破壊的変更：${change.description}`);
+}
+
+export function breakingMigrationNotes(changes) {
+  return changes.map((change) => change.migration);
+}
 
 /// Public contracts this release states are unchanged since the previous stable tag.
 ///
@@ -85,7 +102,7 @@ const contractNotes = [
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
   manifestSchemaNote,
-  "破壊的変更：ありません。",
+  ...breakingContractNotes(breakingRustApi.changes),
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
   "パーサAPI、HTMLコンパイラ、CLIの入力選択およびBrowser APIの動作は変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
@@ -94,13 +111,10 @@ const contractNotes = [
 ];
 
 const migrationNotes = [
-  "CLI、パーサ、HTMLコンパイラ、Browser packageおよびtextlint Processorの利用方法に変更はなく、移行作業は不要です。Language Serverの除外設定は任意であり、指定しなければ従来どおり走査します。",
+  "Language Serverのworkspace走査の除外設定は任意です。指定しなければ、従来どおりworkspace内を走査します。",
   "初期走査の対象を狭める場合は、workspace folder直下の``.adocweave.toml``へ``[workspace.scan]``と``exclude``を追加します。patternはworkspace rootからの相対位置で、OSにかかわらず``/``を区切りに使います。",
-  `textlint用Processorを更新する場合は、GitHub Releaseにある${RELEASE_NOTES_VERSION}のtarballへ依存を更新します。package名は\`\`${textlintContract.identity.packageName}\`\`、textlintのplugin名は\`\`${textlintContract.identity.pluginName}\`\`です。`,
-  "プロジェクトへ依存を追加せず試す場合は、利用手順に記載した``npx --package``の実行方法を使用できます。",
-  "``cargo make docs-prose-lint``は再設計後のProcessorを使用します。AdocWeave固有の日本語規則、用語集および対象文書一覧は公開パッケージへ含めません。",
-  `release manifestを機械的に読んでいる場合も追随は不要です。\`\`schemaVersion\`\`は${manifest.schemaVersion}のままです。`,
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
+  ...breakingMigrationNotes(breakingRustApi.changes),
 ];
 
 const knownConstraints = [
