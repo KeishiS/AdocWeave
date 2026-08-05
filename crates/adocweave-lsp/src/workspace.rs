@@ -958,44 +958,80 @@ impl WorkspaceResources {
             if !attempted.insert(target.clone()) {
                 return Ok(());
             }
-            let Ok(target_uri) = Url::parse(&target) else {
-                return Ok(());
-            };
-            let Ok(target_path) = target_uri.to_file_path() else {
-                return Ok(());
-            };
-            let Ok(canonical) = target_path.canonicalize() else {
-                return Ok(());
-            };
-            let authority_roots = if allowed_roots.is_empty() {
-                std::slice::from_ref(&root_scope.workspace_root)
-            } else {
-                allowed_roots.as_slice()
-            };
-            if !authority_roots
-                .iter()
-                .any(|root| canonical.starts_with(root))
-            {
+            if !self.try_insert_include_target(&root_scope, &allowed_roots, &target)? {
                 return Ok(());
             }
-            let target_id = uri_id(&target_uri)?;
-            if self.inner.get(&target_id).is_some() {
-                return Ok(());
-            }
-            let (scope, config) = scope_and_config_for_path_typed(&self.roots, &canonical)
-                .map_err(|error| error.to_string())?;
-            if root_scope.config_path.is_none() && scope != root_scope {
-                return Ok(());
-            }
-            if !resource_path_is_allowed(config.as_ref(), &canonical) {
-                return Ok(());
-            }
-            let plan = config.as_ref().map_or_else(
-                adocweave_config::ResolvedResourceLimitPlan::default,
-                |snapshot| snapshot.config.resources.limit_plan,
-            );
-            self.insert_include_resource(target_uri, canonical, scope, plan)?;
         }
+    }
+
+    /// Loads one missing include requested by a current workspace analysis.
+    ///
+    /// The target is still checked against the root's effective include
+    /// authority. Scan exclusions are intentionally absent from this path.
+    pub fn load_missing_include(
+        &mut self,
+        root: &Url,
+        target: &ResourceId,
+    ) -> Result<bool, String> {
+        let root_id = uri_id(root)?;
+        let root_scope = self
+            .resource_projects
+            .get(&root_id)
+            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
+            .clone();
+        let config_snapshot = self.config_for_uri(root)?;
+        let project_config = config_snapshot.as_ref().map_or_else(
+            adocweave_config::ResolvedProjectConfig::default,
+            |snapshot| snapshot.config.clone(),
+        );
+        let allowed_roots = configured_include_roots(&project_config, &self.roots)?;
+        self.try_insert_include_target(&root_scope, &allowed_roots, target.as_str())
+    }
+
+    fn try_insert_include_target(
+        &mut self,
+        root_scope: &ProjectScopeId,
+        allowed_roots: &[PathBuf],
+        target: &str,
+    ) -> Result<bool, String> {
+        let Ok(target_uri) = Url::parse(target) else {
+            return Ok(false);
+        };
+        let Ok(target_path) = target_uri.to_file_path() else {
+            return Ok(false);
+        };
+        let Ok(canonical) = target_path.canonicalize() else {
+            return Ok(false);
+        };
+        let authority_roots = if allowed_roots.is_empty() {
+            std::slice::from_ref(&root_scope.workspace_root)
+        } else {
+            allowed_roots
+        };
+        if !authority_roots
+            .iter()
+            .any(|root| canonical.starts_with(root))
+        {
+            return Ok(false);
+        }
+        let target_id = uri_id(&target_uri)?;
+        if self.inner.get(&target_id).is_some() {
+            return Ok(false);
+        }
+        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &canonical)
+            .map_err(|error| error.to_string())?;
+        if root_scope.config_path.is_none() && scope != *root_scope {
+            return Ok(false);
+        }
+        if !resource_path_is_allowed(config.as_ref(), &canonical) {
+            return Ok(false);
+        }
+        let plan = config.as_ref().map_or_else(
+            adocweave_config::ResolvedResourceLimitPlan::default,
+            |snapshot| snapshot.config.resources.limit_plan,
+        );
+        self.insert_include_resource(target_uri, canonical, scope, plan)?;
+        Ok(true)
     }
 
     fn preprocess_snapshot(

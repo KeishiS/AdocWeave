@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use adocweave::output::diagnostics::Severity;
 use adocweave::preprocess::{
-    AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessInputs,
-    PreprocessOptions, PreprocessedAnalysisError, ProjectionFailure, ProjectionLimits,
-    ResourceDocument, ResourceSnapshot,
+    AnalysisProjection, DirectiveKind, EffectiveProcessingOptions, PreprocessErrorKind,
+    PreprocessInputs, PreprocessOptions, PreprocessedAnalysisError, ProjectionFailure,
+    ProjectionLimits, ResourceDocument, ResourceSnapshot,
 };
 use adocweave::{AnalysisOptions, SourceId};
 use dependency_graph::DependencyGraph;
@@ -380,6 +380,7 @@ pub struct WorkspaceError {
     /// Source byte range when preprocessing supplied one.
     pub range: Option<adocweave::text::TextRange>,
     detail_code: Option<&'static str>,
+    requested_resource: Option<ResourceId>,
     message: String,
 }
 
@@ -390,6 +391,7 @@ impl WorkspaceError {
             source_id: None,
             range: None,
             detail_code: None,
+            requested_resource: None,
             message: message.into(),
         }
     }
@@ -412,6 +414,16 @@ impl WorkspaceError {
             Some(code) => code,
             None => self.code.as_str(),
         }
+    }
+
+    /// Returns the missing logical resource requested by preprocessing.
+    pub fn requested_resource(&self) -> Option<&ResourceId> {
+        self.requested_resource.as_ref()
+    }
+
+    fn with_requested_resource(mut self, target: Option<&str>) -> Self {
+        self.requested_resource = target.and_then(|target| ResourceId::new(target).ok());
+        self
     }
 }
 
@@ -954,6 +966,11 @@ impl WorkspaceSnapshot {
                 PreprocessedAnalysisError::Preprocess(error) => {
                     WorkspaceError::new(WorkspaceErrorCode::Preprocess, error.to_string())
                         .with_origin(error.source_id.as_ref(), error.range, error.kind.as_str())
+                        .with_requested_resource(
+                            (error.kind == PreprocessErrorKind::MissingResource)
+                                .then_some(error.target.as_deref())
+                                .flatten(),
+                        )
                 }
                 PreprocessedAnalysisError::Parse(error) => {
                     WorkspaceError::new(WorkspaceErrorCode::Analysis, error.to_string())
@@ -1550,6 +1567,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn missing_include_error_preserves_the_requested_resource_identity() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let missing = id("file:///book/generated/part.adoc");
+        workspace
+            .upsert_disk(
+                root.clone(),
+                Revision::new(1),
+                "include::generated/part.adoc[]\n",
+            )
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+
+        let error = workspace
+            .snapshot()
+            .analyze(
+                &root,
+                &AnalysisOptions::default(),
+                &options(),
+                ProjectionLimits::default(),
+                &NeverCancelled,
+            )
+            .expect_err("missing include");
+
+        assert_eq!(error.diagnostic_code(), "missing-resource");
+        assert_eq!(error.requested_resource(), Some(&missing));
     }
 
     #[test]

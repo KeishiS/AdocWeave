@@ -145,6 +145,12 @@ impl DocumentStore {
             .map(|document| document.cancellation.clone())
     }
 
+    pub fn job_is_current(&self, job: &AnalysisJob) -> bool {
+        self.documents.get(&job.uri).is_some_and(|document| {
+            document.request.revision == job.request.revision && !job.cancellation.is_cancelled()
+        })
+    }
+
     #[cfg(test)]
     pub fn begin_open(&mut self, uri: String, version: i32, text: String) -> AnalysisJob {
         self.begin_open_with_options(uri, version, text, AnalysisOptions::default())

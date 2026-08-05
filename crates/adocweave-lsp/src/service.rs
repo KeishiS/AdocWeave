@@ -753,6 +753,37 @@ impl LanguageService {
         )
     }
 
+    /// Loads one missing include requested by the current analysis and creates
+    /// a replacement job against the resulting workspace generation.
+    pub fn resolve_missing_include(
+        &mut self,
+        job: &AnalysisJob,
+        target: &adocweave_workspace::ResourceId,
+    ) -> Result<Option<AnalysisJob>, String> {
+        if !self.documents.job_is_current(job)
+            || job
+                .workspace
+                .as_ref()
+                .is_none_or(|input| !self.workspace.input_is_current(input))
+        {
+            return Ok(None);
+        }
+        let uri = job
+            .uri
+            .parse()
+            .map_err(|error| format!("analysis root URI is invalid: {error}"))?;
+        if !self.workspace.load_missing_include(&uri, target)? {
+            return Ok(None);
+        }
+        let workspace = self.workspace.input(&uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        let Some(mut retry) = self.documents.reconfigure(&job.uri, options) else {
+            return Ok(None);
+        };
+        attach_workspace(&mut retry, workspace);
+        Ok(Some(retry))
+    }
+
     pub fn adopt_workspace_problem(
         &mut self,
         job: &AnalysisJob,
