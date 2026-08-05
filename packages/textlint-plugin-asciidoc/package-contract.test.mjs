@@ -39,6 +39,24 @@ test("全階層の未知fieldを拒否する", () => {
   }
 });
 
+test("全階層の必須field欠落を拒否する", () => {
+  const base = loadTextlintPluginPackageContract();
+  for (const mutate of [
+    (value) => { delete value.schemaVersion; },
+    (value) => { delete value.identity.packageName; },
+    (value) => { delete value.compatibility.nodeEngine; },
+    (value) => { delete value.files[0].source; },
+    (value) => { delete value.files[3].generator; },
+    (value) => { delete value.wasm.maximumMemoryBytes; },
+    (value) => { delete value.archive.maximumPackedBytes; },
+    (value) => { delete value.e2eMatrix[0].runner; },
+    (value) => { delete value.oneShot.rulePackage; },
+  ]) {
+    const mutant = clone(base); mutate(mutant);
+    assert.throws(() => validateTextlintPluginPackageContract(mutant), /unknown or missing fields/);
+  }
+});
+
 test("重複pathと不正な境界値を拒否する", () => {
   const base = loadTextlintPluginPackageContract();
   const duplicate = clone(base); duplicate.files[1].path = duplicate.files[0].path;
