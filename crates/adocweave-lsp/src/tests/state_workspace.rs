@@ -254,9 +254,11 @@ fn initially_missing_non_adoc_include_recovers_when_created() {
     );
 
     fs::write(&include_path, "created marker\n").expect("create include");
-    let jobs = service.workspace_files_changed(typed(json!({
-        "changes": [{"uri": include_uri, "type": 1}]
-    })));
+    let jobs = service
+        .workspace_files_changed_with_journal(typed(json!({
+            "changes": [{"uri": include_uri, "type": 1}]
+        })))
+        .jobs;
     assert_eq!(jobs.len(), 1);
     for job in jobs {
         adopt(&mut service, job);
@@ -296,9 +298,10 @@ fn watched_disk_change_is_retained_below_an_open_overlay() {
     fs::write(&document_path, "disk after\n").expect("change disk source");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": document_uri, "type": 2}]
             })))
+            .jobs
             .is_empty(),
         "the unchanged overlay must not be reanalyzed"
     );
@@ -316,9 +319,10 @@ fn watched_disk_change_is_retained_below_an_open_overlay() {
     fs::remove_file(&document_path).expect("delete disk source");
     assert!(
         service
-            .workspace_files_changed(typed(json!({
+            .workspace_files_changed_with_journal(typed(json!({
                 "changes": [{"uri": document_uri, "type": 3}]
             })))
+            .jobs
             .is_empty()
     );
     let _ = service.close(&document_uri);
