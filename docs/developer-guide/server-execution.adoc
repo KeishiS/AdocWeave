@@ -91,6 +91,22 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 保持するresourceは``max_includes``だけでは制限されません。workspaceのresource件数と総byte数には
 ``RetainedResourceLimits``および``AnalysisSnapshotLimits``も適用します。
 
+``WorkspaceSnapshot::analyze_resumable``では、結果の採用を二段階で判定します。workspace層の
+``Workspace::finalize_draft``は、rootのrevisionと本文、開始時のsnapshotから参照した本文、再開時に取得した本文、
+および不在と確定したresourceを現在のworkspaceと照合します。参照していないresourceだけが更新された場合は、
+workspace generationが変わっていても確定できます。root以外の本文は``Arc<str>``の同一性で照合するため、
+同じ本文を共有したままrevisionまたはdisk・overlayの層が変わった場合も確定できます。
+
+Language Serverは、確定処理とは別に``WorkspaceAnalysisDraft::matches_canonical_context``を呼び、開始時の
+generationと``EffectiveProcessingOptions``のcontractが現在の規範状態と一致する場合だけ結果を採用します。
+設定値が同じでも、別に構築した``EffectiveProcessingOptions``は同じcontractではありません。設定変更時は
+古い継続とdraftを破棄します。この厳格な判定によって、workspace層で許可する無関係な更新と、Language Serverが
+一つだけ保持する規範的な解析結果を区別します。
+
+draftのinclude journalは、実行したincludeを順序どおり保持し、重複をまとめません。各eventは、開始時のsnapshotに
+存在したresource、停止後に取得したresource、または不在と確定したresourceを区別し、optional指定も保持します。
+resource取得の失敗と別requestに対する応答は``WorkspaceHostResourceErrorKind``で区別できます。
+
 WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
 ``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力のソースをそのまま解析し、
 暗黙のresource取得やinclude展開を行いません。
