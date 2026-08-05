@@ -148,6 +148,11 @@ impl Default for PreprocessOptions {
 }
 
 /// A validated, immutable configuration for preprocessing followed by analysis.
+///
+/// Cloning this value preserves its private processing-contract identity.
+/// Constructing another value with equal fields creates a distinct contract.
+/// Prepared documents can only be analyzed by the originating instance or one
+/// of its clones.
 #[derive(Clone, Debug)]
 pub struct EffectiveProcessingOptions {
     analysis: crate::core::AnalysisOptions,
@@ -202,7 +207,15 @@ impl EffectiveProcessingOptions {
         &self.preprocess
     }
 
-    /// Returns the same effective settings with one source identity.
+    /// Returns whether both values belong to the same private contract.
+    ///
+    /// Equal option fields are not sufficient: only an instance and its clones
+    /// share the contract identity.
+    pub fn same_contract(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.contract, &other.contract)
+    }
+
+    /// Returns equivalent settings with one source identity and a new contract.
     pub fn with_source_id(mut self, source_id: Option<SourceId>) -> Self {
         self.preprocess.source_id = source_id;
         self.contract = Arc::new(ProcessingContract);
@@ -413,7 +426,9 @@ pub struct PreprocessedDocument {
 /// A preprocessed document bound to the effective settings that produced it.
 ///
 /// The private contract prevents a host from preprocessing with one set of
-/// shared analysis settings and analyzing the result with another.
+/// shared analysis settings and analyzing the result with another. Only the
+/// originating [`EffectiveProcessingOptions`] instance and its clones can
+/// analyze this value; a separately constructed equal instance is rejected.
 #[derive(Debug)]
 pub struct PreparedPreprocessedDocument {
     document: PreprocessedDocument,
@@ -557,7 +572,10 @@ impl EffectiveProcessingOptions {
         )
     }
 
-    /// Analyzes a document prepared under this same effective contract.
+    /// Analyzes a document prepared by this instance or one of its clones.
+    ///
+    /// A separately constructed options value is rejected even when every
+    /// public option field is equal.
     pub fn analyze_preprocessed(
         &self,
         prepared: PreparedPreprocessedDocument,
@@ -2698,6 +2716,8 @@ mod tests {
             PreprocessOptions::default(),
         )
         .expect("effective options");
+        let analyzer = options.clone();
+        assert!(options.same_contract(&analyzer));
         let EffectivePreprocessStep::NeedResource(suspended) =
             options.preprocess_resumable("include::part.adoc[]\n", &lookup, &NeverCancel)
         else {
@@ -2712,7 +2732,7 @@ mod tests {
             panic!("preprocessing must complete");
         };
 
-        let result = options
+        let result = analyzer
             .analyze_preprocessed(prepared, PreprocessInputs::default())
             .expect("matching contract");
 
@@ -2731,6 +2751,9 @@ mod tests {
             PreprocessOptions::default(),
         )
         .expect("second contract");
+        assert_eq!(first, second);
+        assert!(!first.same_contract(&second));
+        assert!(!first.same_contract(&first.clone().with_source_id(None)));
         let EffectivePreprocessStep::Complete(prepared) =
             first.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
         else {
