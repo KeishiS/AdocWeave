@@ -143,7 +143,10 @@ async function writeManifest(cwd, packageName, textlintVersion) {
   const textlint = join(cwd, "node_modules", "textlint");
   await mkdir(join(textlint, "bin"), { recursive: true });
   await mkdir(join(plugin, "wasm"), { recursive: true });
-  await writeFile(join(plugin, "package.json"), JSON.stringify({ name: packageName }));
+  await writeFile(join(plugin, "package.json"), JSON.stringify({
+    name: packageName,
+    peerDependencies: { "@textlint/types": "15.8.0", textlint: "15.8.0" },
+  }));
   await writeFile(
     join(plugin, "wasm", "adocweave_textlint_wasm.cjs"),
     "module.exports = { parseText() {} };\n",

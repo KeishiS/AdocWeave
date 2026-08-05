@@ -6,20 +6,26 @@ const manifest = JSON.parse(
   readFileSync("packages/textlint-plugin-asciidoc/package.json", "utf8"),
 );
 const lock = JSON.parse(
-  readFileSync("packages/textlint-plugin-asciidoc/package-lock.json", "utf8"),
+  readFileSync("tools/textlint-plugin-e2e/package-lock.json", "utf8"),
 );
 const recorded = JSON.parse(
-  readFileSync("security/textlint-plugin-build-licenses.json", "utf8"),
+  readFileSync("security/textlint-plugin-e2e-build-licenses.json", "utf8"),
 );
 
 if (
   manifest.name !== "@adocweave/textlint-plugin-asciidoc" ||
   manifest.private !== true ||
-  lock.lockfileVersion !== 3 ||
-  lock.packages?.[""]?.name !== manifest.name ||
-  lock.packages?.[""]?.version !== manifest.version
+  lock.lockfileVersion !== 3
 ) {
-  throw new Error("textlint pluginのmanifestとlockfileが一致しません");
+  throw new Error("textlint pluginのmanifestまたはconsumer lockfileを解釈できません");
+}
+const consumer = lock.packages?.[""];
+if (consumer?.name !== "@adocweave/textlint-plugin-e2e" || consumer?.version !== "0.0.0" ||
+    JSON.stringify(consumer?.dependencies) !== JSON.stringify({
+      "@textlint/types": "15.8.0",
+      textlint: "15.8.0",
+    })) {
+  throw new Error("textlint pluginの固定consumer依存を解釈できません");
 }
 for (const field of ["dependencies", "optionalDependencies", "bundledDependencies"]) {
   const value = manifest[field];

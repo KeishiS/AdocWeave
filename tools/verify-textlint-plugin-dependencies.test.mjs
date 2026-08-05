@@ -9,11 +9,11 @@ const manifest = JSON.parse(readFileSync(
   "utf8",
 ));
 const lock = JSON.parse(readFileSync(
-  new URL("../packages/textlint-plugin-asciidoc/package-lock.json", import.meta.url),
+  new URL("textlint-plugin-e2e/package-lock.json", import.meta.url),
   "utf8",
 ));
 const catalog = JSON.parse(readFileSync(
-  new URL("../security/textlint-plugin-build-licenses.json", import.meta.url),
+  new URL("../security/textlint-plugin-e2e-build-licenses.json", import.meta.url),
   "utf8",
 ));
 const governance = readFileSync(new URL("dependency-governance.sh", import.meta.url), "utf8");
@@ -28,7 +28,7 @@ test("公開textlint pluginの実行時npm依存を0件に固定する", () => {
   });
 });
 
-test("公開textlint pluginの開発依存は安全な取得元とライセンス情報を持つ", () => {
+test("固定consumerの依存は安全な取得元とライセンス情報を持つ", () => {
   const entries = Object.entries(lock.packages).filter(([path]) => path);
   assert.notEqual(entries.length, 0);
   assert.deepEqual(
@@ -40,6 +40,6 @@ test("公開textlint pluginの開発依存は安全な取得元とライセン�
 });
 
 test("公開textlint pluginの依存を監査する", () => {
-  assert.match(governance, /^npm audit --include=dev --prefix packages\/textlint-plugin-asciidoc$/m);
+  assert.match(governance, /^npm audit --include=dev --prefix tools\/textlint-plugin-e2e$/m);
   assert.match(governance, /^node tools\/verify-textlint-plugin-dependencies\.mjs$/m);
 });

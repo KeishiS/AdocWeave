@@ -40,12 +40,12 @@
       "runtimeDependenciesAllowed": false
     },
     {
-      "id": "textlint-asciidoc-plugin",
+      "id": "textlint-plugin-consumer-e2e",
       "kind": "npm",
-      "manifest": "packages/textlint-plugin-asciidoc/package.json",
-      "lockfile": "packages/textlint-plugin-asciidoc/package-lock.json",
-      "distributed": true,
-      "runtimeDependenciesAllowed": false
+      "manifest": "tools/textlint-plugin-e2e/package.json",
+      "lockfile": "tools/textlint-plugin-e2e/package-lock.json",
+      "distributed": false,
+      "runtimeDependenciesAllowed": true
     },
     {
       "id": "ci-and-development-tools",

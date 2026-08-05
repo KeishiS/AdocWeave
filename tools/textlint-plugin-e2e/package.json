@@ -1,0 +1,10 @@
+{
+  "name": "@adocweave/textlint-plugin-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fixed consumer dependency tree for the textlint plugin release gate",
+  "dependencies": {
+    "@textlint/types": "15.8.0",
+    "textlint": "15.8.0"
+  }
+}
