@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+    LocalTargetTextRollback,
 };
 
 /// Maximum number of directory authorities retained by one policy.
@@ -97,7 +98,7 @@ pub struct LoadedFilesystemSource {
     provenance: FilesystemProvenance,
 }
 
-/// Opaque state used to undo one successfully charged filesystem reread.
+/// Opaque state used to undo one filesystem reread and its command snapshot.
 #[derive(Clone, Debug)]
 pub struct FilesystemReadRollback {
     session_id: u64,
@@ -107,6 +108,7 @@ pub struct FilesystemReadRollback {
     session_index: usize,
     candidate_was_inspected: bool,
     previous_charge: Option<FilesystemCharge>,
+    text_rollback: LocalTargetTextRollback,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -702,7 +704,8 @@ impl LocalFilesystemSession {
             .map(|(loaded, _)| loaded)
     }
 
-    /// Reopens a path and returns the state needed to undo its budget charge.
+    /// Reopens a path and returns the state needed to undo its budget charge
+    /// and cached command snapshot.
     ///
     /// Callers which update another state store after reading must retain the
     /// rollback value until that update commits.
@@ -717,22 +720,22 @@ impl LocalFilesystemSession {
         let charged = &self.charged;
         let limits = self.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded =
-            match self.sessions[index].reread_candidate_utf8_with_capacity(path, |canonical| {
+        let (loaded, text_rollback) = match self.sessions[index]
+            .reread_candidate_utf8_with_capacity(path, |canonical| {
                 shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
             }) {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    if !candidate_was_inspected {
-                        self.sessions[index].release_candidate(path);
-                    }
-                    return Err(map_shared_read_error(
-                        error,
-                        limits,
-                        file_limit_denied.get(),
-                    ));
+            Ok(loaded) => loaded,
+            Err(error) => {
+                if !candidate_was_inspected {
+                    self.sessions[index].release_candidate(path);
                 }
-            };
+                return Err(map_shared_read_error(
+                    error,
+                    limits,
+                    file_limit_denied.get(),
+                ));
+            }
+        };
         let canonical_path = loaded.canonical_path().to_owned();
         let previous_charge = self.charged.get(&canonical_path).copied();
         match self.finish_read(source_id, loaded) {
@@ -752,10 +755,12 @@ impl LocalFilesystemSession {
                         session_index: index,
                         candidate_was_inspected,
                         previous_charge,
+                        text_rollback,
                     },
                 ))
             }
             Err(error) => {
+                self.sessions[index].rollback_cached_text(text_rollback);
                 if !candidate_was_inspected {
                     self.sessions[index].release_candidate(path);
                 }
@@ -764,7 +769,8 @@ impl LocalFilesystemSession {
         }
     }
 
-    /// Restores the charge replaced by [`Self::reread_utf8_with_rollback`].
+    /// Restores the charge and cached command snapshot replaced by
+    /// [`Self::reread_utf8_with_rollback`].
     pub fn rollback_reread(
         &mut self,
         rollback: FilesystemReadRollback,
@@ -789,6 +795,7 @@ impl LocalFilesystemSession {
                 self.charged.remove(&rollback.canonical_path);
             }
         }
+        self.sessions[rollback.session_index].rollback_cached_text(rollback.text_rollback);
         if !rollback.candidate_was_inspected {
             self.sessions[rollback.session_index].release_candidate(&rollback.candidate_path);
         }
@@ -1781,6 +1788,61 @@ mod tests {
     }
 
     #[test]
+    fn reread_commit_replaces_the_command_text_snapshot() {
+        let root = TestDir::new("reread-cache-commit");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old").expect("initial source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial cached read");
+
+        fs::write(&path, "new text").expect("replacement source");
+        let reread = session
+            .reread_utf8(source_id(), &path)
+            .expect("committed reread");
+        assert_eq!(reread.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+
+        fs::write(&path, "disk changed again").expect("later disk source");
+        let cached = session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("committed command snapshot");
+        assert_eq!(cached.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+    }
+
+    #[test]
+    fn reread_rollback_restores_the_previous_command_text_snapshot() {
+        let root = TestDir::new("reread-cache-rollback");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old").expect("initial source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial cached read");
+
+        fs::write(&path, "new text").expect("replacement source");
+        let (prepared, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("prepared reread");
+        assert_eq!(prepared.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+
+        session.rollback_reread(rollback).expect("rollback reread");
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("restored snapshot")
+                .source(),
+            "old"
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+    }
+
+    #[test]
     fn reread_rollback_rejects_another_session_and_reuse() {
         let root = TestDir::new("reread-rollback-session");
         let path = root.path().join("source.adoc");
@@ -1859,6 +1921,13 @@ mod tests {
             .rollback_reread(second_rollback)
             .expect("latest rollback");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("latest rollback restores the preceding cache generation")
+                .source(),
+            "bb"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1913,6 +1982,9 @@ mod tests {
         .expect("policy");
         let mut session = policy.session().expect("session");
         session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial canonical cache");
         assert_eq!(session.sessions[0].inspected_paths(), 1);
 
         fs::write(&path, "new").expect("replacement");
@@ -1924,6 +1996,13 @@ mod tests {
 
         assert_eq!(session.sessions[0].inspected_paths(), 1);
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("alias rollback preserves the canonical cache")
+                .source(),
+            "old"
+        );
     }
 
     #[test]

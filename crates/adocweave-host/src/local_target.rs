@@ -50,6 +50,9 @@ thread_local! {
     static FORCED_FD_PATH_ERROR: std::cell::Cell<Option<std::io::ErrorKind>> = const {
         std::cell::Cell::new(None)
     };
+    static FORCED_EXPLICIT_RETRY_OPEN_ERROR: std::cell::Cell<Option<rustix::io::Errno>> = const {
+        std::cell::Cell::new(None)
+    };
 }
 
 #[cfg(target_os = "linux")]
@@ -167,8 +170,14 @@ impl LocalTargetPolicy {
             use rustix::fs::{Mode, OFlags, open};
 
             let mut after_open = Some(after_open);
-            let mut prior_verification_failure = None;
+            let mut prior_race_failure = None;
             for _ in 0..CONFINED_OPEN_ATTEMPTS {
+                #[cfg(test)]
+                if prior_race_failure.is_some()
+                    && let Some(error) = FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(std::cell::Cell::get)
+                {
+                    return Err(classify_errno(path, error));
+                }
                 let file = match open(
                     path,
                     OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
@@ -176,8 +185,16 @@ impl LocalTargetPolicy {
                 ) {
                     Ok(file) => fs::File::from(file),
                     Err(error) => {
-                        return Err(prior_verification_failure
-                            .unwrap_or_else(|| classify_errno(path, error)));
+                        let error = classify_errno(path, error);
+                        // A missing retry target confirms the same namespace
+                        // race that made the preceding verification fail. All
+                        // other errors describe the current attempt and keep
+                        // their more specific public classification.
+                        return Err(if matches!(error, LocalTargetError::Missing(_)) {
+                            prior_race_failure.unwrap_or(error)
+                        } else {
+                            error
+                        });
                     }
                 };
                 let metadata = file
@@ -196,14 +213,22 @@ impl LocalTargetPolicy {
                 let parent = selected
                     .parent()
                     .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
-                let Ok(policy) = Self::new(parent) else {
-                    prior_verification_failure = Some(explicit_target_changed_error());
-                    continue;
+                let policy = match Self::new(parent) {
+                    Ok(policy) => policy,
+                    Err(LocalTargetError::Missing(_)) => {
+                        prior_race_failure = Some(explicit_target_changed_error());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
                 };
                 let candidate = policy.root.join(file_name);
-                let Ok(verified) = policy.open_confined(&candidate) else {
-                    prior_verification_failure = Some(explicit_target_changed_error());
-                    continue;
+                let verified = match policy.open_confined(&candidate) {
+                    Ok(verified) => verified,
+                    Err(LocalTargetError::Missing(_)) => {
+                        prior_race_failure = Some(explicit_target_changed_error());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
                 };
                 let verified_metadata = verified
                     .file
@@ -212,13 +237,13 @@ impl LocalTargetPolicy {
                 if metadata.dev() != verified_metadata.dev()
                     || metadata.ino() != verified_metadata.ino()
                 {
-                    prior_verification_failure = Some(explicit_target_changed_error());
+                    prior_race_failure = Some(explicit_target_changed_error());
                     continue;
                 }
                 let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
                 return Ok((policy, loaded));
             }
-            Err(prior_verification_failure.unwrap_or_else(explicit_target_changed_error))
+            Err(prior_race_failure.unwrap_or_else(explicit_target_changed_error))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -978,6 +1003,12 @@ pub struct LocalTargetSession {
     text: BTreeMap<PathBuf, Result<String, LocalTargetError>>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LocalTargetTextRollback {
+    canonical_path: PathBuf,
+    previous: Option<Result<String, LocalTargetError>>,
+}
+
 /// UTF-8 local target returned by a bounded validation session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedLocalTarget {
@@ -1218,8 +1249,31 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
-    ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)
+    ) -> Result<(LoadedLocalTarget, LocalTargetTextRollback), LocalTargetError> {
+        let loaded =
+            self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)?;
+        let canonical_path = loaded.canonical_path.clone();
+        let previous = self
+            .text
+            .insert(canonical_path.clone(), Ok(loaded.source.clone()));
+        Ok((
+            loaded,
+            LocalTargetTextRollback {
+                canonical_path,
+                previous,
+            },
+        ))
+    }
+
+    pub(crate) fn rollback_cached_text(&mut self, rollback: LocalTargetTextRollback) {
+        match rollback.previous {
+            Some(previous) => {
+                self.text.insert(rollback.canonical_path, previous);
+            }
+            None => {
+                self.text.remove(&rollback.canonical_path);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1338,7 +1392,12 @@ impl LocalTargetSession {
     pub(crate) fn release_candidate(&mut self, candidate: &Path) {
         if let Some(result) = self.inspections.remove(candidate) {
             self.requests = self.requests.saturating_sub(1);
-            if let Ok(canonical) = result {
+            if let Ok(canonical) = result
+                && !self
+                    .inspections
+                    .values()
+                    .any(|result| result.as_ref() == Ok(&canonical))
+            {
                 self.text.remove(&canonical);
             }
         }
@@ -1879,6 +1938,85 @@ mod tests {
 
         assert!(matches!(error, LocalTargetError::Unverifiable(_)));
         assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_retry_preserves_permission_and_fd_limit_errors() {
+        for error in [rustix::io::Errno::ACCESS, rustix::io::Errno::MFILE] {
+            let root = TestDir::new();
+            let selected = root.0.join("docs/guide.adoc");
+            FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(|forced| forced.set(Some(error)));
+            let result = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+                fs::remove_file(&selected).expect("unlink selected file");
+            });
+            FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(|forced| forced.set(None));
+
+            match error {
+                rustix::io::Errno::ACCESS => {
+                    assert_eq!(result, Err(LocalTargetError::PermissionDenied(selected)));
+                }
+                rustix::io::Errno::MFILE => {
+                    assert!(matches!(
+                        result,
+                        Err(LocalTargetError::Unverifiable(reason))
+                            if reason.contains(&selected.to_string_lossy().into_owned())
+                                && !reason.contains("authority was established")
+                    ));
+                }
+                _ => unreachable!("test covers two explicit errors"),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_retry_does_not_replace_not_file_with_a_saved_race() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::create_dir(&selected).expect("replace selected file with directory");
+        })
+        .expect_err("the retry must preserve the current file type error");
+
+        assert_eq!(error, LocalTargetError::NotFile(selected));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_preserves_self_new_not_directory() {
+        let root = TestDir::new();
+        let parent = root.0.join("explicit-parent");
+        fs::create_dir(&parent).expect("explicit parent");
+        let selected = parent.join("guide.adoc");
+        fs::write(&selected, "= Guide").expect("selected file");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::remove_dir(&parent).expect("remove selected parent");
+            fs::write(&parent, "not a directory").expect("replace parent with file");
+        })
+        .expect_err("policy construction must preserve not-directory");
+
+        assert_eq!(error, LocalTargetError::NotDirectory(parent));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_preserves_open_confined_not_file() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::create_dir(&suffix).expect("create suffix directory");
+        })
+        .expect_err("confined verification must preserve not-file");
+
+        assert_eq!(error, LocalTargetError::NotFile(suffix));
     }
 
     #[test]
@@ -2577,7 +2715,7 @@ mod tests {
         assert_eq!(session.read_files(), 1);
 
         let capacity = session.default_read_capacity();
-        let reread = session
+        let (reread, _) = session
             .reread_candidate_utf8_with_capacity(&target, |_| capacity)
             .expect("explicit reread");
         assert_eq!(reread.source(), "= Second");
