@@ -433,9 +433,22 @@ description = "Build the deterministic npm-compatible textlint plugin archive"
 command = "bash"
 args = ["tools/package-textlint-plugin-release.sh"]
 
+[tasks.textlint-plugin-package-contract-unit]
+description = "Test the package contract, generated stage, and independent archive verifier"
+command = "node"
+args = [
+  "--test",
+  "packages/textlint-plugin-asciidoc/package-contract.test.mjs",
+  "packages/textlint-plugin-asciidoc/package-stage.test.mjs",
+  "packages/textlint-plugin-asciidoc/package-archive.test.mjs",
+]
+
 [tasks.textlint-plugin-package-contract]
 description = "Verify the staged textlint plugin archive against its independent public contract"
-dependencies = ["package-textlint-plugin-release"]
+dependencies = [
+  "textlint-plugin-package-contract-unit",
+  "package-textlint-plugin-release",
+]
 script_runner = "@shell"
 script = '''
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
@@ -677,7 +690,12 @@ dependencies = [
 ]
 script_runner = "@shell"
 script = '''
-node --test packages/textlint-plugin-asciidoc/*.test.mjs
+node --test \
+  packages/textlint-plugin-asciidoc/adapter.test.mjs \
+  packages/textlint-plugin-asciidoc/bridge.test.mjs \
+  packages/textlint-plugin-asciidoc/package.test.mjs \
+  packages/textlint-plugin-asciidoc/position.test.mjs \
+  packages/textlint-plugin-asciidoc/processor.test.mjs
 tsc --project tools/textlint-plugin-e2e/tsconfig.json
 '''
 

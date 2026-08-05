@@ -847,6 +847,20 @@ export function validateReleaseWorkflowPolicy({
       "textlint-repository-prose-lint",
     ],
   });
+  requireTask(tasks, "textlint-plugin-package-contract-unit", {
+    args: [
+      "--test",
+      "packages/textlint-plugin-asciidoc/package-contract.test.mjs",
+      "packages/textlint-plugin-asciidoc/package-stage.test.mjs",
+      "packages/textlint-plugin-asciidoc/package-archive.test.mjs",
+    ],
+  });
+  requireTask(tasks, "textlint-plugin-package-contract", {
+    dependencies: [
+      "textlint-plugin-package-contract-unit",
+      "package-textlint-plugin-release",
+    ],
+  });
   requireTask(tasks, "textlint-plugin-release-consumer-e2e", {
     dependencies: ["textlint-plugin-package-contract"],
   });
