@@ -763,6 +763,17 @@ export function validateReleaseWorkflowPolicy({
     fail("the reusable quality aggregate must report failures reliably");
   }
   requireTimeout(contractJobs.aggregate, 5, "reusable quality aggregate must have a timeout");
+  const qualityAggregate = step(contractJobs.aggregate, (item) =>
+    item.name === "Required quality result aggregation",
+  "reusable quality result aggregation step is missing");
+  if (qualityAggregate.env?.SEMVER_RESULT !== "${{ needs.semver.result }}") {
+    fail("reusable quality aggregate must receive the semver result");
+  }
+  requireCommand(
+    qualityAggregate.run,
+    'test "$SEMVER_RESULT" = success',
+    "reusable quality aggregate must require semver success",
+  );
   if (contractJobs.verify !== undefined) {
     fail("reusable quality must reserve the quality / verify context for the final candidate gate");
   }
@@ -882,6 +893,7 @@ export function validateReleaseWorkflowPolicy({
   requireTask(tasks, "release-check", {
     dependencies: [
       "ci",
+      "semver-check",
       "test-profile-release",
       "wasm-size",
       "release-global-candidate",
