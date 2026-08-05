@@ -593,24 +593,50 @@ where
     T: Send + 'static,
     F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
 {
+    run_cpu_request_with_completion(limit, document_cancellation, None, operation).await
+}
+
+async fn run_cpu_request_with_completion<T, F>(
+    limit: Arc<Semaphore>,
+    document_cancellation: Option<Arc<CancellationToken>>,
+    worker_completed: Option<std::sync::mpsc::Sender<()>>,
+    operation: F,
+) -> Result<T, ResponseError>
+where
+    T: Send + 'static,
+    F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+{
     let request_cancellation = Arc::new(CancellationToken::new());
     let cancel_on_drop = CancelWorkerOnDrop(request_cancellation.clone());
     let permit = limit
         .acquire_owned()
         .await
         .map_err(|error| internal_error(error.to_string()))?;
-    let cancellation = QueryCancellation::new(request_cancellation, document_cancellation);
+    let cancellation = Arc::new(QueryCancellation::new(
+        request_cancellation,
+        document_cancellation,
+    ));
     cancellation.check_now().map_err(query_response_error)?;
+    let worker_cancellation = cancellation.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        cancellation.check_now()?;
-        let result = operation(&cancellation)?;
-        cancellation.check_now()?;
-        Ok::<_, QueryError>(result)
+        let result = (|| {
+            worker_cancellation.check_now()?;
+            let result = operation(&worker_cancellation);
+            worker_cancellation.check_now()?;
+            result
+        })();
+        if let Some(worker_completed) = worker_completed {
+            let _ = worker_completed.send(());
+        }
+        result
     })
-    .await
-    .map_err(|error| internal_error(format!("request worker failed: {error}")))?;
+    .await;
+    let cancellation_result = cancellation.check_now();
     drop(cancel_on_drop);
+    cancellation_result.map_err(query_response_error)?;
+    let result =
+        result.map_err(|error| internal_error(format!("request worker failed: {error}")))?;
     result.map_err(query_response_error)
 }
 
@@ -744,6 +770,37 @@ mod tests {
             .expect_err("content modified");
 
         assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn document_change_after_worker_completion_overrides_success_and_internal_error() {
+        async fn assert_content_modified<T, F>(operation: F)
+        where
+            T: std::fmt::Debug + Send + 'static,
+            F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+        {
+            let document_cancellation = Arc::new(CancellationToken::new());
+            let (completed_tx, completed_rx) = std::sync::mpsc::channel();
+            let mut request = Box::pin(run_cpu_request_with_completion(
+                Arc::new(Semaphore::new(1)),
+                Some(document_cancellation.clone()),
+                Some(completed_tx),
+                operation,
+            ));
+
+            assert!(futures::poll!(&mut request).is_pending());
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker completed its final cancellation check");
+            document_cancellation.cancel();
+
+            let error = request.await.expect_err("content modified");
+            assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+        }
+
+        assert_content_modified(|_| Ok("completed result")).await;
+        assert_content_modified(|_| Err::<(), _>(QueryError::Internal("query failed".to_owned())))
+            .await;
     }
 
     #[test]
