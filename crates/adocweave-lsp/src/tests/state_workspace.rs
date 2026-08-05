@@ -208,6 +208,125 @@ fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
 }
 
 #[test]
+fn initially_missing_non_adoc_include_recovers_when_created() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-created-text-include-{unique}"));
+    let generated = root.join("generated");
+    fs::create_dir_all(&generated).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 1\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = generated.join("part.txt");
+    let source = "include::generated/part.txt[]\n";
+    fs::write(&document_path, source).expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(&mut service, document_uri.as_str(), 1, source);
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("missing diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String("missing-resource".to_owned())))
+    );
+
+    fs::write(&include_path, "created marker\n").expect("create include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 1}]
+    })));
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.workspace_analysis())
+        .expect("recovered workspace analysis");
+    assert!(analysis.analysis.source().contains("created marker"));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn watched_disk_change_is_retained_below_an_open_overlay() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-open-disk-watch-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, "disk before\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "open overlay\n");
+
+    fs::write(&document_path, "disk after\n").expect("change disk source");
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": document_uri, "type": 2}]
+            })))
+            .is_empty(),
+        "the unchanged overlay must not be reanalyzed"
+    );
+    let (_, jobs) = service.close(&document_uri);
+    assert!(jobs.is_empty());
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("retained disk source")
+            .as_ref(),
+        "disk after\n"
+    );
+
+    open(&mut service, document_uri.as_str(), 1, "second overlay\n");
+    fs::remove_file(&document_path).expect("delete disk source");
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": document_uri, "type": 3}]
+            })))
+            .is_empty()
+    );
+    let _ = service.close(&document_uri);
+    assert!(service.workspace_resource(&document_uri).is_none());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
