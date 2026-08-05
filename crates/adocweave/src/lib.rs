@@ -162,18 +162,21 @@ pub mod output {
 /// Deterministic preprocessing over caller-provided resource snapshots.
 pub mod preprocess {
     pub use crate::preprocessor::{
-        AnalysisProjection, Directive, DirectiveKind, EffectiveProcessingOptions, ExpandedOffset,
-        ExpandedRange, IncludeRequest, OriginRange, Originated, PreprocessError,
-        PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessNotice,
-        PreprocessNoticeKind, PreprocessOptions, PreprocessedAnalysis, PreprocessedAnalysisError,
+        AnalysisProjection, Directive, DirectiveKind, EffectivePreprocessStep,
+        EffectiveProcessingOptions, EffectiveSuspendedPreprocess, ExpandedOffset, ExpandedRange,
+        HostResourceError, HostResourceErrorKind, IncludeRequest, OriginRange, Originated,
+        PreparedAnalysisError, PreparedPreprocessedDocument, PreprocessError, PreprocessErrorKind,
+        PreprocessFailure, PreprocessInputs, PreprocessNotice, PreprocessNoticeKind,
+        PreprocessOptions, PreprocessStep, PreprocessedAnalysis, PreprocessedAnalysisError,
         PreprocessedDocument, ProcessingOptionsError, ProjectedAttributeBinding,
         ProjectedAttributeReference, ProjectedDiagnostic, ProjectedDocumentAttribute,
         ProjectedDocumentAttributeValueLine, ProjectedDocumentSymbol, ProjectedFix,
         ProjectedLocalTarget, ProjectedReference, ProjectedResource, ProjectionError,
-        ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceSnapshot, SafeMode,
-        SourceMapSegment, SourceMapping, SourceOrigin, discover_includes, preprocess,
-        preprocess_and_analyze, preprocess_and_analyze_with, preprocess_with,
-        resolve_include_target,
+        ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
+        ResourceLookupResult, ResourceRequest, ResourceResponse, ResourceSnapshot, SafeMode,
+        SourceMapSegment, SourceMapping, SourceOrigin, SuspendedPreprocess, discover_includes,
+        preprocess, preprocess_and_analyze, preprocess_and_analyze_with, preprocess_resumable,
+        preprocess_with, resolve_include_target,
     };
 }
 
