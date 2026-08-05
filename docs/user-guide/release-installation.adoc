@@ -195,6 +195,9 @@ npx --yes \
 取得したパッケージはnpmのキャッシュへ保存されます。継続して利用する場合は、依存とバージョンを
 ``package.json``と``package-lock.json``へ記録してください。
 
+公開工程では、Releaseの実URLから同じ単発実行を行い、取得したarchiveが公開checksumの対象と一致することを
+公開後に検査します。
+
 ``.textlintrc.json``では、AsciiDoc Processorと利用する規則を別々に指定します。次の例では、規則のパッケージも
 利用側で開発用依存へ追加します。
 

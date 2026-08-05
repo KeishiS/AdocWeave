@@ -393,10 +393,15 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ steps.node-version.outputs.value }}
-      - name: textlint plugin installation and read-only CLI verification
+      - name: Fixed textlint consumer installation and read-only CLI verification
         shell: bash
         run: >-
-          node tools/textlint-plugin-release-smoke.mjs
+          node tools/textlint-plugin-consumer-e2e.mjs
+          "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
+      - name: Candidate one-shot npx verification
+        shell: bash
+        run: >-
+          node tools/textlint-plugin-npx-smoke.mjs
           "artifacts/adocweave-textlint-plugin-asciidoc-$(jq -r .packageVersion release-manifest.json).tgz"
 
   merge-gate:
@@ -497,3 +502,16 @@ jobs:
       attestations: write
       contents: write
       id-token: write
+
+  textlint-plugin-post-release-smoke:
+    if: startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success'
+    needs: [publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Published textlint asset, checksum, and one-shot npx observation
+        run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -192,6 +192,7 @@ export function validateReleaseWorkflowPolicy({
   windowsDistBootstrap,
   windowsDistInstaller,
   browserStartup,
+  textlintPackageContract,
 }) {
   validateBrowserStartupPolicy(browserStartup);
   const releaseDoc = parseWorkflow("release.yml", release);
@@ -368,7 +369,7 @@ export function validateReleaseWorkflowPolicy({
     "textlint plugin installation must consume a verified global candidate",
   );
   const textlintMatrix = textlintInstallation?.strategy?.matrix?.include;
-  if (JSON.stringify(textlintMatrix) !== JSON.stringify([
+  const expectedTextlintMatrix = textlintPackageContract?.e2eMatrix ?? [
     { runner: "ubuntu-24.04", node: "20.18.0" },
     { runner: "ubuntu-24.04", node: "21.7.3" },
     { runner: "ubuntu-24.04", node: "22.18.0" },
@@ -376,20 +377,52 @@ export function validateReleaseWorkflowPolicy({
     { runner: "ubuntu-24.04", node: "release" },
     { runner: "macos-15", node: "release" },
     { runner: "windows-2025", node: "release" },
-  ])) {
+  ];
+  if (JSON.stringify(textlintMatrix) !== JSON.stringify(expectedTextlintMatrix)) {
     fail("textlint plugin installation E2E must cover the Node.js boundary and all supported operating systems");
   }
   const textlintRun = step(
     textlintInstallation,
-    (item) => item.name === "textlint plugin installation and read-only CLI verification",
+    (item) => item.name === "Fixed textlint consumer installation and read-only CLI verification",
     "textlint plugin installation E2E step is missing",
   ).run;
   requireCommand(
     textlintRun,
-    "node tools/textlint-plugin-release-smoke.mjs",
-    "textlint plugin E2E must exercise the packed release artifact",
+    "node tools/textlint-plugin-consumer-e2e.mjs",
+    "textlint plugin E2E must exercise the packed release artifact through the fixed consumer",
+  );
+  const textlintNpxRun = step(
+    textlintInstallation,
+    (item) => item.name === "Candidate one-shot npx verification",
+    "textlint plugin candidate npx step is missing",
+  ).run;
+  requireCommand(
+    textlintNpxRun,
+    "node tools/textlint-plugin-npx-smoke.mjs",
+    "textlint plugin candidate must exercise the local tarball through one-shot npx",
   );
   requireManifestNodeVersion(textlintInstallation);
+
+  const postReleaseTextlint = releaseJobs["textlint-plugin-post-release-smoke"];
+  if (postReleaseTextlint?.if !==
+      "startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success'") {
+    fail("textlint post-release smoke must run only after successful tag publication");
+  }
+  requireNeeds(
+    postReleaseTextlint,
+    ["publish"],
+    "textlint post-release smoke must be downstream from publication",
+  );
+  const postReleaseRun = step(
+    postReleaseTextlint,
+    (item) => item.name === "Published textlint asset, checksum, and one-shot npx observation",
+    "published textlint observation step is missing",
+  ).run;
+  requireExactCommand(
+    postReleaseRun,
+    "nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke",
+    "post-release smoke must use the task that reads the real GitHub Release URL",
+  );
 
   const mergeGate = releaseJobs["merge-gate"];
   if (mergeGate?.name !== "quality / verify" ||
@@ -717,11 +750,31 @@ export function validateReleaseWorkflowPolicy({
       "textlint-plugin-check",
     ],
   });
+  requireTask(tasks, "textlint-plugin-check", {
+    dependencies: [
+      "textlint-plugin-public-js-unit",
+      "textlint-plugin-wasm-contract",
+      "textlint-plugin-browser-isolation",
+      "textlint-repository-prose-lint",
+    ],
+  });
+  requireTask(tasks, "textlint-plugin-release-consumer-e2e", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
+  requireTask(tasks, "textlint-plugin-candidate-npx-smoke", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
+  requireTask(tasks, "textlint-plugin-reproducibility", {});
   requireTask(tasks, "browser-runtime-check", {
     dependencies: ["test-browser-smoke", "test-browser-bundler"],
   });
   requireTask(tasks, "release-global-candidate", {
-    dependencies: ["release-global-artifacts", "browser-runtime-check"],
+    dependencies: [
+      "release-global-artifacts",
+      "browser-runtime-check",
+      "textlint-plugin-release-consumer-e2e",
+      "textlint-plugin-candidate-npx-smoke",
+    ],
   });
   requireTask(tasks, "quality", {
     dependencies: ["quality-fast", "quality-rust", "quality-adapters"],
@@ -777,6 +830,7 @@ export function validateReleaseWorkflowPolicy({
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "installation must have a timeout");
   requireTimeout(textlintInstallation, 15, "textlint plugin installation must have a timeout");
+  requireTimeout(postReleaseTextlint, 15, "textlint post-release smoke must have a timeout");
   requireTimeout(releaseJobs["reuse-candidate"], 15, "tag reuse must have a timeout");
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
   requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");
@@ -788,6 +842,10 @@ export function loadWorkflowPolicyInputs() {
   const workflows = Object.fromEntries(readdirSync(directory)
     .filter((name) => name.endsWith(".yml"))
     .map((name) => [name, read(`.github/workflows/${name}`)]));
+  const textlintContractUrl = new URL(
+    "../release/textlint-plugin-package-contract.json",
+    import.meta.url,
+  );
   return {
     workflows,
     release: workflows["release.yml"],
@@ -800,6 +858,9 @@ export function loadWorkflowPolicyInputs() {
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
     browserStartup: read("tools/browser-startup.mjs"),
+    textlintPackageContract: existsSync(textlintContractUrl)
+      ? JSON.parse(readFileSync(textlintContractUrl, "utf8"))
+      : undefined,
   };
 }
 

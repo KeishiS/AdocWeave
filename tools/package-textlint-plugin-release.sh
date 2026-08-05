@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly root="$(git rev-parse --show-toplevel)"
+readonly root="${ADOCWEAVE_SOURCE_ROOT:-$(git rev-parse --show-toplevel)}"
 cd "$root"
 
 readonly version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
 readonly package_source="packages/textlint-plugin-asciidoc"
 readonly archive_name="adocweave-textlint-plugin-asciidoc-$version.tgz"
-readonly output_directory="target/distrib"
+readonly output_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_OUTPUT_DIRECTORY:-target/distrib}"
 readonly archive="$output_directory/$archive_name"
+readonly cargo_target_directory="${ADOCWEAVE_TEXTLINT_PLUGIN_CARGO_TARGET_DIRECTORY:-target/textlint-plugin-wasm-build}"
+readonly npm_cache="${ADOCWEAVE_TEXTLINT_PLUGIN_NPM_CACHE:-target/npm-cache}"
 readonly scratch="$(mktemp -d "${TMPDIR:-/tmp}/adocweave-textlint-plugin.XXXXXX")"
 readonly stage="$scratch/package"
-readonly wasm_output="$scratch/wasm-bindgen"
+readonly wasm_output="${ADOCWEAVE_TEXTLINT_PLUGIN_WASM_OUTPUT_DIRECTORY:-$scratch/wasm-bindgen}"
 trap 'rm -rf "$scratch"' EXIT
 
 node --input-type=module -e '
@@ -31,7 +33,7 @@ node --input-type=module -e '
   }
 ' "$version"
 
-tools/build-textlint-wasm-node.sh "$wasm_output" target/textlint-plugin-wasm-build
+tools/build-textlint-wasm-node.sh "$wasm_output" "$cargo_target_directory"
 
 mkdir -p "$stage/wasm" "$output_directory"
 for name in adapter.mjs bridge.mjs index.d.mts index.mjs package.json position.mjs processor.mjs README.adoc; do
@@ -42,7 +44,7 @@ cp "$wasm_output/adocweave_textlint_wasm.js" "$stage/wasm/adocweave_textlint_was
 cp "$wasm_output/adocweave_textlint_wasm_bg.wasm" "$stage/wasm/"
 node tools/generate-third-party-notices.mjs --textlint-plugin "$stage/THIRD_PARTY_NOTICES.adoc"
 
-pack_result="$(npm --cache target/npm-cache pack --ignore-scripts --json --pack-destination "$scratch" "$stage")"
+pack_result="$(npm --cache "$npm_cache" pack --ignore-scripts --json --pack-destination "$scratch" "$stage")"
 packed_name="$(node --input-type=module -e '
   const result = JSON.parse(process.argv[1]);
   if (!Array.isArray(result) || result.length !== 1) throw new Error("npm pack produced an unexpected result");

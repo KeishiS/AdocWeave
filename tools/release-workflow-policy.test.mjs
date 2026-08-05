@@ -247,8 +247,8 @@ test("every global candidate must run the browser archive runtime gate", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       makefile: inputs.makefile.replace(
-        'dependencies = ["release-global-artifacts", "browser-runtime-check"]',
-        'dependencies = ["release-global-artifacts"]',
+        '  "textlint-plugin-candidate-npx-smoke",\n]',
+        ']',
       ),
     }),
     /release-global-candidate dependencies must exactly match/,
@@ -300,9 +300,14 @@ test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検
       /Node\.js boundary/,
     ],
     [
-      "node tools/textlint-plugin-release-smoke.mjs",
+      "node tools/textlint-plugin-consumer-e2e.mjs",
       "node --version # textlint smoke omitted",
       /packed release artifact/,
+    ],
+    [
+      "node tools/textlint-plugin-npx-smoke.mjs",
+      "node --version # npx smoke omitted",
+      /one-shot npx/,
     ],
   ]) {
     assert.throws(
@@ -313,6 +318,68 @@ test("textlint plugin candidateは配布tarballを全対応OSとNode境界で検
       pattern,
     );
   }
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        "[tasks.textlint-plugin-candidate-npx-smoke]\n" +
+          "description = \"Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache\"\n" +
+          "dependencies = [\"textlint-plugin-package-contract\"]",
+        "[tasks.textlint-plugin-candidate-npx-smoke]\n" +
+          "description = \"Exercise one-shot textlint against the unpublished candidate archive with an empty npm cache\"\n" +
+          "dependencies = []",
+      ),
+    }),
+    /textlint-plugin-candidate-npx-smoke dependencies must exactly match/,
+  );
+});
+
+test("textlint matrixはpackage contractと完全に一致する", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const e2eMatrix = [
+    { runner: "ubuntu-24.04", node: "20.18.0" },
+    { runner: "ubuntu-24.04", node: "21.7.3" },
+    { runner: "ubuntu-24.04", node: "22.18.0" },
+    { runner: "ubuntu-24.04", node: "23.11.1" },
+    { runner: "ubuntu-24.04", node: "release" },
+    { runner: "macos-15", node: "release" },
+    { runner: "windows-2025", node: "release" },
+  ];
+  validateReleaseWorkflowPolicy({
+    ...inputs,
+    textlintPackageContract: { e2eMatrix },
+  });
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      textlintPackageContract: { e2eMatrix: e2eMatrix.slice(0, -1) },
+    }),
+    /all supported operating systems/,
+  );
+});
+
+test("公開後smokeはpublicationの後だけに実行し公開前gateへ入れない", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "needs: [publish]\n    runs-on: ubuntu-24.04",
+        "needs: [release-plan]\n    runs-on: ubuntu-24.04",
+      ),
+    }),
+    /downstream from publication/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: inputs.release.replace(
+        "      - textlint-plugin-installation-e2e\n",
+        "      - textlint-plugin-installation-e2e\n      - textlint-plugin-post-release-smoke\n",
+      ),
+    }),
+    /final pull request gate must wait/,
+  );
 });
 
 test("candidate preflight cannot continue after a job or step failure", () => {

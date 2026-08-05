@@ -127,12 +127,19 @@ tarballは8 MiB、展開後は16 MiB、収録fileは13件を上限とします�
 ``textlint --fix``を実行しても入力のbyte列が変化しないことを受入検査で確認します。includeは展開せず、
 一つの物理ファイルだけを診断対象とします。
 
-包装時は許可file一覧、archive内の絶対path、親directory参照、symlink、sizeおよび同じsourceから2回構築した
-byte列の一致を検査します。Linux、macOSおよびWindowsのcleanな一時projectへ公開tarballを導入し、
+包装時は許可file一覧、archive内の絶対path、親directory参照、symlinkおよびsizeを検査します。
+再現性検査では、追跡しているsourceを二つの一時ディレクトリへ複製し、別々のCargo target、WebAssembly出力先、
+npm cacheおよびarchive出力先を使います。各archiveを独立した検証器へ渡した後、SHA-256とbyte列の一致を検査します。
+Linux、macOSおよびWindowsのcleanな一時projectへ公開tarballを導入し、
 ``.adoc``、``.asciidoc``、``.asc``、標準入力、LF、CRLF、日本語、結合文字および絵文字について、診断位置と
 ``--fix``による非変更を検査します。対応するNode.jsとtextlintの範囲は、この3環境で検証した範囲だけを
 package metadataと利用手順へ記載します。この判断の背景は
 xref:adr/0017-github-release-textlint-package.adoc[ADR 0017]を参照してください。
+
+公開前のcandidateでは、固定したconsumer fixtureによる導入検査に加え、ローカルの``.tgz``を``npx --package``と
+同じ経路で実行します。公開後はGitHub Releaseの実URLからarchiveと``sha256.sum``を取得し、checksum、独立した
+archive検証および実URLを指定した単発実行を確認します。公開後の検査は公開処理の後にだけ実行し、公開前gateには
+含めません。失敗しても既に公開したReleaseを自動で差し戻せないため、結果を公開後の異常として調査します。
 
 == 配布メタデータ
 
@@ -194,6 +201,9 @@ macOS deployment target、VSIX metadataおよび一時ディレクトリ削除�
 ----
 cargo make native-artifact-smoke
 cargo make installation-e2e
+cargo make textlint-plugin-reproducibility
+cargo make textlint-plugin-release-consumer-e2e
+cargo make textlint-plugin-candidate-npx-smoke
 ----
 
 このfixtureは、MSVCでのlink、Windowsの実際のfile lock、macOS SDKでのlink、Mach-Oの実行、
