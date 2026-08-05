@@ -2,12 +2,18 @@
 //
 // The check exists because compiling and passing tests says nothing about
 // whether a release removed or changed an item that a consumer depends on.
-// cargo-semver-checks derives the allowed change set from the two versions, so
-// a patch release fails on any breaking difference while a 0.y minor release
-// accepts one that the Release Notes record.
+// The release step selects the comparison policy. Patch releases reject every
+// breaking difference; minor and major releases accept only differences that
+// exactly match the machine-readable record used to build the Release Notes.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import process from "node:process";
+
+import {
+  breakingFailureKey,
+  loadBreakingRustApi,
+  validateBreakingRustApi,
+} from "./breaking-rust-api.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
@@ -86,6 +92,15 @@ export function releaseStep(baseline, candidate) {
   return "patch";
 }
 
+/// Selects the cargo-semver-checks policy used to enumerate differences.
+///
+/// A minor comparison permits additive minor changes but still reports major
+/// differences. We intentionally use it for a major release as well because a
+/// release gate must enumerate those differences before accepting them.
+export function comparisonReleaseType(step) {
+  return step === "patch" ? "patch" : "minor";
+}
+
 const format = ({ major, minor, patch }) => `${major}.${minor}.${patch}`;
 
 /// Picks the newest stable tag below the candidate version.
@@ -137,12 +152,105 @@ export function checkedCrates(output) {
   return [...output.matchAll(/^\s*Checking (\S+) v/gm)].map((match) => match[1]);
 }
 
-/// Reads back the breaking differences cargo-semver-checks reported.
+/// Parses every cargo-semver-checks failure block without discarding unknown data.
+export function reportedFailureBlocks(output) {
+  const blocks = [];
+  let block = null;
+  const finishBlock = () => {
+    if (!block) return;
+    if (!block.failedIn) {
+      fail(`cargo-semver-checksのfailure ${block.lint}にFailed inがありません`);
+    }
+    if (block.items.length === 0) {
+      fail(`cargo-semver-checksのfailure ${block.lint}に解析できる対象がありません`);
+    }
+    blocks.push(block);
+  };
+  for (const line of output.split("\n")) {
+    const heading = /^--- failure ([\w-]+): (.+?) ---$/.exec(line);
+    if (heading) {
+      finishBlock();
+      block = { lint: heading[1], summary: heading[2], failedIn: false, items: [] };
+      continue;
+    }
+    if (/^--- failure\b/.test(line)) {
+      fail(`cargo-semver-checksのfailure見出しを解析できません：${line}`);
+    }
+    if (!block) continue;
+    if (/^\s*Failed in:\s*$/.test(line)) {
+      if (block.failedIn) fail(`cargo-semver-checksのfailure ${block.lint}にFailed inが重複しています`);
+      block.failedIn = true;
+      continue;
+    }
+    if (!block.failedIn) continue;
+    if (line.trim() === "") continue;
+    const item = /^\s{2,}(.+?)\s+in\s+(.+):\d+(?::\d+)?\s*$/.exec(line);
+    if (!item) {
+      fail(`cargo-semver-checksのfailure ${block.lint}に解析できない対象があります：${line}`);
+    }
+    const crate = /[\\/]crates[\\/]([\w-]+)[\\/]/.exec(item[2])?.[1];
+    if (!crate) fail(`cargo-semver-checksのfailure ${block.lint}のcrateをpathから特定できません：${line}`);
+    block.items.push({ crate, item: item[1] });
+  }
+  finishBlock();
+  return blocks;
+}
+
+/// Reads back every concrete breaking difference in validated failure blocks.
 export function reportedFailures(output) {
-  return [...output.matchAll(/^--- failure ([\w-]+): (.+?) ---$/gm)].map((match) => ({
-    lint: match[1],
-    summary: match[2],
-  }));
+  return reportedFailureBlocks(output).flatMap(({ lint, summary, items }) =>
+    items.map(({ crate, item }) => ({ crate, lint, summary, item })),
+  );
+}
+
+/// Reads back which crate comparisons reached cargo-semver-checks' terminal line.
+export function finishedCrates(output) {
+  return [...output.matchAll(/^\s*Finished \[[^\]]+\]\s+(\S+)\s*$/gm)].map((match) => match[1]);
+}
+
+/// Distinguishes reported API differences from an abnormal tool termination.
+export function verifySemverResult({
+  candidate,
+  step,
+  status,
+  failures,
+  signal,
+  record,
+  expectedCrates,
+  completedCrates,
+}) {
+  validateBreakingRustApi(record);
+  if (record.releaseVersion !== format(candidate)) {
+    fail(
+      `破壊的変更記録のreleaseVersionが候補と一致しません：` +
+        `${record.releaseVersion} != ${format(candidate)}`,
+    );
+  }
+  if (signal !== null) {
+    fail(`cargo-semver-checksがsignal ${signal}で異常終了しました`);
+  }
+  const expectedStatus = failures.length > 0 ? 1 : 0;
+  if (status !== expectedStatus) {
+    fail(
+      `cargo-semver-checksの終了ステータスが不正です：` +
+        `${String(status)}（期待値 ${expectedStatus}）`,
+    );
+  }
+  const incomplete = expectedCrates.filter((name) => !completedCrates.includes(name));
+  if (incomplete.length > 0) {
+    fail(`cargo-semver-checksが次のcrateの比較を完了せず、異常終了しました：${incomplete.join("、")}`);
+  }
+  if (failures.length === 0) {
+    requireRecordedBreakingChanges(candidate, failures, record);
+    return;
+  }
+  if (step === "patch") {
+    fail(
+      `patch releaseに破壊的変更が ${failures.length} 件あります。` +
+        "破壊的変更はminor版へ載せてください。",
+    );
+  }
+  requireRecordedBreakingChanges(candidate, failures, record);
 }
 
 /// Runs a command and returns both streams.
@@ -154,7 +262,10 @@ function run(command, args) {
   const result = spawnSync(command, args, { cwd: ROOT, encoding: "utf8" });
   if (result.error) throw result.error;
   return {
-    status: result.status ?? 1,
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
   };
 }
@@ -180,10 +291,12 @@ function main() {
     );
   }
   const packages = expectedCrates.flatMap((name) => ["--package", name]);
-  const { status, output } = run("cargo", [
+  const { status, signal, stdout, output } = run("cargo", [
     "semver-checks",
     "--baseline-rev",
     baseline.tag,
+    "--release-type",
+    comparisonReleaseType(step),
     ...packages,
   ]);
   process.stdout.write(output);
@@ -197,20 +310,17 @@ function main() {
     );
   }
 
-  const failures = reportedFailures(output);
-  if (status !== 0) {
-    if (step === "patch") {
-      fail(
-        `patch releaseに破壊的変更が ${failures.length} 件あります。` +
-          "破壊的変更はminor版へ載せてください。",
-      );
-    }
-    fail(`公開Rust APIの検査が失敗しました（${failures.length} 件）`);
-  }
-
-  if (failures.length > 0 && step !== "patch") {
-    requireRecordedBreakingChanges(candidate, failures);
-  }
+  const failures = reportedFailures(stdout);
+  verifySemverResult({
+    candidate,
+    step,
+    status,
+    signal,
+    failures,
+    record: loadBreakingRustApi(),
+    expectedCrates,
+    completedCrates: finishedCrates(output),
+  });
   process.stdout.write(
     `公開Rust APIを検査しました：${checked.length} crate、破壊的変更 ${failures.length} 件\n`,
   );
@@ -221,17 +331,28 @@ function main() {
 /// A breaking change that only the tool knows about leaves consumers to
 /// discover it at compile time, so an accepted difference must arrive with a
 /// migration step written for a reader.
-function requireRecordedBreakingChanges(candidate, failures) {
-  const notes = read("tools/release-notes.mjs");
-  if (!notes.includes("破壊的変更：")) {
+export function requireRecordedBreakingChanges(candidate, failures, record) {
+  const detected = new Map(failures.map((failure) => [breakingFailureKey(failure), failure]));
+  if (detected.size !== failures.length) fail("cargo-semver-checksが同じ破壊的変更を重複して報告しました");
+  const recorded = new Map(record.changes.map((change) => [breakingFailureKey(change), change]));
+  const missing = [...detected.keys()].filter((key) => !recorded.has(key));
+  const extra = [...recorded.keys()].filter((key) => !detected.has(key));
+  if (missing.length > 0 || extra.length > 0) {
     fail(
-      `公開Rust APIに破壊的変更が ${failures.length} 件ありますが、` +
-        "Release Notesに「破壊的変更：」の記載がありません。",
+      "公開Rust APIの破壊的変更記録が検出結果と一致しません。" +
+        `未記録 ${missing.length} 件、余分 ${extra.length} 件`,
     );
   }
-  process.stdout.write(
-    `v${format(candidate)}の破壊的変更 ${failures.length} 件はRelease Notesに記載があります\n`,
-  );
+  for (const [key, failure] of detected) {
+    if (recorded.get(key).summary !== failure.summary) {
+      fail(`破壊的変更のsummaryが検出結果と一致しません：${failure.lint}`);
+    }
+  }
+  if (failures.length > 0) {
+    process.stdout.write(
+      `v${format(candidate)}の破壊的変更 ${failures.length} 件はRelease Notesに記載があります\n`,
+    );
+  }
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {

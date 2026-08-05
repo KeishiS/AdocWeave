@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "0.31.0",
+  "changes": [
+    {
+      "crate": "adocweave-config",
+      "lint": "constructible_struct_adds_field",
+      "item": "field ResolvedProjectConfig.workspace",
+      "summary": "externally-constructible struct adds field",
+      "description": "``ResolvedProjectConfig``に公開フィールドの``workspace``を追加しました。構造体リテラルまたは構造体のパターンで全フィールドを列挙している利用側コードは、そのままではコンパイルできません。",
+      "migration": "構造体リテラルには``workspace: WorkspaceSettings::default(),``を追加してください。例えば、``let config = ResolvedProjectConfig { workspace: WorkspaceSettings::default(), ..ResolvedProjectConfig::default() };``のように指定します。構造体のパターンには``workspace``を追加して値を受け取るか、残りのフィールドを無視する``..``を追加してください。"
+    }
+  ]
+}
