@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_target::{
-    FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
+    FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession, LocalTargetTextRollback,
 };
 
 /// Maximum number of directory authorities retained by one policy.
@@ -97,7 +98,7 @@ pub struct LoadedFilesystemSource {
     provenance: FilesystemProvenance,
 }
 
-/// Opaque state used to undo one successfully charged filesystem reread.
+/// Opaque state used to undo one filesystem reread and its command snapshot.
 #[derive(Clone, Debug)]
 pub struct FilesystemReadRollback {
     session_id: u64,
@@ -105,8 +106,16 @@ pub struct FilesystemReadRollback {
     canonical_path: PathBuf,
     candidate_path: PathBuf,
     session_index: usize,
-    candidate_was_inspected: bool,
+    candidate_rollback: LocalTargetCandidateRollback,
+    accounting: FilesystemAccountingRollback,
+    text_rollback: LocalTargetTextRollback,
+}
+
+#[derive(Clone, Debug)]
+struct FilesystemAccountingRollback {
+    previous_candidate: Option<PathBuf>,
     previous_charge: Option<FilesystemCharge>,
+    displaced_charge: Option<(PathBuf, FilesystemCharge)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -147,6 +156,7 @@ pub struct LocalFilesystemSession {
     limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, FilesystemCharge>,
+    candidates: BTreeMap<PathBuf, PathBuf>,
 }
 
 static NEXT_FILESYSTEM_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -365,6 +375,7 @@ impl LocalFilesystemAccess {
             limits: self.limits,
             budget: ResourceBudget::default(),
             charged: BTreeMap::new(),
+            candidates: BTreeMap::new(),
         })
     }
 }
@@ -680,16 +691,35 @@ impl LocalFilesystemSession {
         target: &str,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let index = self.root_index(base)?;
+        let candidate = self.sessions[index]
+            .candidate(base, target)
+            .map_err(ResourceError::from)?;
         let budget = self.budget;
         let charged = &self.charged;
+        let candidates = &self.candidates;
         let limits = self.limits;
         let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
-            .read_utf8_with_capacity(base, target, |canonical| {
-                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
-            })
+            .read_candidate_utf8_with_capacity(
+                &candidate,
+                false,
+                true,
+                || {},
+                |canonical| {
+                    shared_read_capacity(
+                        budget,
+                        charged,
+                        candidates,
+                        limits,
+                        &candidate,
+                        canonical,
+                        &file_limit_denied,
+                    )
+                },
+            )
             .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
-        self.finish_read(source_id, loaded)
+        self.finish_read(source_id, &candidate, loaded)
+            .map(|(loaded, _)| loaded)
     }
 
     /// Reopens an absolute path while retaining this session's shared budget.
@@ -702,7 +732,8 @@ impl LocalFilesystemSession {
             .map(|(loaded, _)| loaded)
     }
 
-    /// Reopens a path and returns the state needed to undo its budget charge.
+    /// Reopens a path and returns the state needed to undo its budget charge
+    /// and cached command snapshot.
     ///
     /// Callers which update another state store after reading must retain the
     /// rollback value until that update commits.
@@ -712,31 +743,37 @@ impl LocalFilesystemSession {
         path: &Path,
     ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
         let index = self.root_index(path)?;
-        let candidate_was_inspected = self.sessions[index].has_inspected_candidate(path);
+        let candidate_rollback = self.sessions[index].candidate_rollback(path);
         let budget = self.budget;
         let charged = &self.charged;
+        let candidates = &self.candidates;
         let limits = self.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded =
-            match self.sessions[index].reread_candidate_utf8_with_capacity(path, |canonical| {
-                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
+        let (loaded, text_rollback) = match self.sessions[index]
+            .reread_candidate_utf8_with_capacity(path, |canonical| {
+                shared_read_capacity(
+                    budget,
+                    charged,
+                    candidates,
+                    limits,
+                    path,
+                    canonical,
+                    &file_limit_denied,
+                )
             }) {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    if !candidate_was_inspected {
-                        self.sessions[index].release_candidate(path);
-                    }
-                    return Err(map_shared_read_error(
-                        error,
-                        limits,
-                        file_limit_denied.get(),
-                    ));
-                }
-            };
+            Ok(loaded) => loaded,
+            Err(error) => {
+                self.sessions[index].rollback_candidate(candidate_rollback);
+                return Err(map_shared_read_error(
+                    error,
+                    limits,
+                    file_limit_denied.get(),
+                ));
+            }
+        };
         let canonical_path = loaded.canonical_path().to_owned();
-        let previous_charge = self.charged.get(&canonical_path).copied();
-        match self.finish_read(source_id, loaded) {
-            Ok(loaded) => {
+        match self.finish_read(source_id, path, loaded) {
+            Ok((loaded, accounting)) => {
                 let applied_generation = self
                     .charged
                     .get(&canonical_path)
@@ -750,21 +787,22 @@ impl LocalFilesystemSession {
                         canonical_path,
                         candidate_path: path.to_owned(),
                         session_index: index,
-                        candidate_was_inspected,
-                        previous_charge,
+                        candidate_rollback,
+                        accounting,
+                        text_rollback,
                     },
                 ))
             }
             Err(error) => {
-                if !candidate_was_inspected {
-                    self.sessions[index].release_candidate(path);
-                }
+                self.sessions[index].rollback_cached_text(text_rollback);
+                self.sessions[index].rollback_candidate(candidate_rollback);
                 Err(error)
             }
         }
     }
 
-    /// Restores the charge replaced by [`Self::reread_utf8_with_rollback`].
+    /// Restores the charge and cached command snapshot replaced by
+    /// [`Self::reread_utf8_with_rollback`].
     pub fn rollback_reread(
         &mut self,
         rollback: FilesystemReadRollback,
@@ -778,26 +816,50 @@ impl LocalFilesystemSession {
         if current.generation != rollback.applied_generation {
             return Err(ResourceError::InvalidRollback);
         }
-        match rollback.previous_charge {
+        if self.candidates.get(&rollback.candidate_path) != Some(&rollback.canonical_path) {
+            return Err(ResourceError::InvalidRollback);
+        }
+        if let Some((path, _)) = &rollback.accounting.displaced_charge
+            && self.charged.contains_key(path)
+        {
+            return Err(ResourceError::InvalidRollback);
+        }
+        match rollback.accounting.previous_charge {
             Some(previous) => {
                 self.budget
                     .restore_replacement(current.bytes, previous.bytes);
-                self.charged.insert(rollback.canonical_path, previous);
+                self.charged
+                    .insert(rollback.canonical_path.clone(), previous);
             }
             None => {
                 self.budget.release(current.bytes);
                 self.charged.remove(&rollback.canonical_path);
             }
         }
-        if !rollback.candidate_was_inspected {
-            self.sessions[rollback.session_index].release_candidate(&rollback.candidate_path);
+        if let Some((path, charge)) = rollback.accounting.displaced_charge {
+            self.budget.restore_charge(charge.bytes);
+            self.charged.insert(path, charge);
         }
+        match rollback.accounting.previous_candidate {
+            Some(previous) => {
+                self.candidates
+                    .insert(rollback.candidate_path.clone(), previous);
+            }
+            None => {
+                self.candidates.remove(&rollback.candidate_path);
+            }
+        }
+        self.sessions[rollback.session_index].rollback_cached_text(rollback.text_rollback);
+        self.sessions[rollback.session_index].rollback_candidate(rollback.candidate_rollback);
         Ok(())
     }
 
     /// Releases the budget charge for a resource removed from the caller's workspace.
     pub fn release(&mut self, path: &Path) {
-        if let Some(charge) = self.charged.remove(path) {
+        if let Some(canonical) = self.candidates.remove(path)
+            && !self.candidates.values().any(|other| other == &canonical)
+            && let Some(charge) = self.charged.remove(&canonical)
+        {
             self.budget.release(charge.bytes);
         }
         if let Ok(index) = self.root_index(path) {
@@ -824,10 +886,20 @@ impl LocalFilesystemSession {
         after_open: impl FnOnce(),
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let index = self.root_index(base)?;
-        let loaded = self.sessions[index]
-            .read_utf8_after_open(base, target, after_open)
+        let candidate = self.sessions[index]
+            .candidate(base, target)
             .map_err(ResourceError::from)?;
-        self.finish_read(source_id, loaded)
+        let loaded = self.sessions[index]
+            .read_candidate_utf8_with_capacity(&candidate, true, true, after_open, |_| {
+                crate::local_target::CandidateReadCapacity {
+                    allow_file: true,
+                    max_total_bytes: u64::MAX,
+                    max_resource_bytes: self.limits.max_resource_bytes,
+                }
+            })
+            .map_err(ResourceError::from)?;
+        self.finish_read(source_id, &candidate, loaded)
+            .map(|(loaded, _)| loaded)
     }
 
     fn read_utf8_with(
@@ -846,14 +918,24 @@ impl LocalFilesystemSession {
         }
         let budget = self.budget;
         let charged = &self.charged;
+        let candidates = &self.candidates;
         let limits = self.limits;
         let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
             .read_candidate_utf8_with_capacity(&candidate, false, true, after_open, |canonical| {
-                shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
+                shared_read_capacity(
+                    budget,
+                    charged,
+                    candidates,
+                    limits,
+                    &candidate,
+                    canonical,
+                    &file_limit_denied,
+                )
             })
             .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
-        self.finish_read(source_id, loaded)
+        self.finish_read(source_id, &candidate, loaded)
+            .map(|(loaded, _)| loaded)
     }
 
     fn root_index(&self, path: &Path) -> Result<usize, ResourceError> {
@@ -872,14 +954,34 @@ impl LocalFilesystemSession {
     fn finish_read(
         &mut self,
         source_id: LogicalSourceId,
+        candidate: &Path,
         loaded: crate::local_target::LoadedLocalTarget,
-    ) -> Result<LoadedFilesystemSource, ResourceError> {
+    ) -> Result<(LoadedFilesystemSource, FilesystemAccountingRollback), ResourceError> {
         let (canonical_path, source) = loaded.into_parts();
         let bytes = source.len() as u64;
-        let previous = self.charged.get(&canonical_path).copied();
-        self.budget.replace(
+        let previous_candidate = self.candidates.get(candidate).cloned();
+        let displaced_charge = previous_candidate
+            .as_ref()
+            .filter(|previous| previous.as_path() != canonical_path)
+            .filter(|previous| {
+                !self.candidates.iter().any(|(other, canonical)| {
+                    other.as_path() != candidate && canonical == *previous
+                })
+            })
+            .and_then(|previous| {
+                self.charged
+                    .get(previous)
+                    .copied()
+                    .map(|charge| (previous.clone(), charge))
+            });
+        let previous_charge = self.charged.get(&canonical_path).copied();
+        let mut next_budget = self.budget;
+        if let Some((_, charge)) = &displaced_charge {
+            next_budget.release(charge.bytes);
+        }
+        next_budget.replace(
             &canonical_path,
-            previous.map(|charge| charge.bytes),
+            previous_charge.map(|charge| charge.bytes),
             bytes,
             self.limits,
         )?;
@@ -888,15 +990,28 @@ impl LocalFilesystemSession {
             .next_generation
             .checked_add(1)
             .expect("filesystem session generation exhausted");
+        self.budget = next_budget;
+        if let Some((path, _)) = &displaced_charge {
+            self.charged.remove(path);
+        }
         self.charged.insert(
             canonical_path.clone(),
             FilesystemCharge { bytes, generation },
         );
-        Ok(LoadedFilesystemSource {
-            source_id,
-            source: Arc::from(source),
-            provenance: FilesystemProvenance { canonical_path },
-        })
+        self.candidates
+            .insert(candidate.to_owned(), canonical_path.clone());
+        Ok((
+            LoadedFilesystemSource {
+                source_id,
+                source: Arc::from(source),
+                provenance: FilesystemProvenance { canonical_path },
+            },
+            FilesystemAccountingRollback {
+                previous_candidate,
+                previous_charge,
+                displaced_charge,
+            },
+        ))
     }
 
     pub const fn budget(&self) -> ResourceBudget {
@@ -905,12 +1020,23 @@ impl LocalFilesystemSession {
 }
 
 fn shared_read_capacity(
-    budget: ResourceBudget,
+    mut budget: ResourceBudget,
     charged: &BTreeMap<PathBuf, FilesystemCharge>,
+    candidates: &BTreeMap<PathBuf, PathBuf>,
     limits: FilesystemReadLimits,
+    candidate: &Path,
     canonical: &Path,
     file_limit_denied: &std::cell::Cell<bool>,
 ) -> crate::local_target::CandidateReadCapacity {
+    if let Some(previous) = candidates.get(candidate)
+        && previous != canonical
+        && !candidates
+            .iter()
+            .any(|(other, resolved)| other.as_path() != candidate && resolved == previous)
+        && let Some(charge) = charged.get(previous)
+    {
+        budget.release(charge.bytes);
+    }
     let previous = charged.get(canonical).copied();
     let allow_file = previous.is_some() || budget.files < limits.max_files;
     file_limit_denied.set(!allow_file);
@@ -1007,6 +1133,17 @@ impl ResourceBudget {
             .checked_sub(current)
             .and_then(|bytes| bytes.checked_add(previous))
             .expect("replacement charge is part of the budget");
+    }
+
+    fn restore_charge(&mut self, bytes: u64) {
+        self.files = self
+            .files
+            .checked_add(1)
+            .expect("restored file count fits the original budget");
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .expect("restored bytes fit the original budget");
     }
 
     fn release(&mut self, bytes: u64) {
@@ -1739,6 +1876,106 @@ mod tests {
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn release_uses_the_candidate_after_the_opened_file_is_renamed() {
+        let root = TestDir::new("release-renamed-candidate");
+        let candidate = root.path().join("source.adoc");
+        let renamed = root.path().join("renamed.adoc");
+        fs::write(&candidate, "text").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let loaded = session
+            .read_utf8_after_open(source_id(), &candidate, || {
+                fs::rename(&candidate, &renamed).expect("rename opened source");
+            })
+            .expect("read renamed source");
+        assert_eq!(loaded.canonical_path(), renamed);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+
+        session.release(&candidate);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn release_reclaims_a_nested_parent_component_alias() {
+        let root = TestDir::new("release-parent-alias");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        let source = root.path().join("source.adoc");
+        let alias = nested.join("..").join("source.adoc");
+        fs::write(&source, "text").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        session.read_utf8(source_id(), &alias).expect("alias read");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+        session.release(&alias);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn release_reclaims_a_symbolic_link_alias() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("release-symlink-alias");
+        let source = root.path().join("source.adoc");
+        let alias = root.path().join("alias.adoc");
+        fs::write(&source, "text").expect("source");
+        symlink("source.adoc", &alias).expect("source alias");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        session.read_utf8(source_id(), &alias).expect("alias read");
+        session.release(&alias);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_last_alias_release_reclaims_the_shared_file_limit() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("release-last-alias");
+        let source = root.path().join("source.adoc");
+        let first_alias = source.clone();
+        let second_alias = root.path().join("alias.adoc");
+        let replacement = root.path().join("replacement.adoc");
+        fs::write(&source, "text").expect("source");
+        fs::write(&replacement, "new").expect("replacement");
+        symlink("source.adoc", &second_alias).expect("second alias");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 2,
+                max_total_bytes: 8,
+                max_resource_bytes: 4,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        let first_loaded = session
+            .read_utf8(source_id(), &first_alias)
+            .expect("first alias");
+        let second_loaded = session
+            .read_utf8(source_id(), &second_alias)
+            .expect("second alias");
+        assert_eq!(
+            first_loaded.canonical_path(),
+            second_loaded.canonical_path()
+        );
+        session.release(&first_alias);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+
+        session.release(&second_alias);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+        session
+            .read_utf8(source_id(), &replacement)
+            .expect("released file slot");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+    }
+
     #[test]
     fn reread_rollback_restores_replaced_and_new_charges() {
         let root = TestDir::new("reread-rollback");
@@ -1778,6 +2015,61 @@ mod tests {
             .rollback_reread(rollback)
             .expect("rollback new read");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
+    }
+
+    #[test]
+    fn reread_commit_replaces_the_command_text_snapshot() {
+        let root = TestDir::new("reread-cache-commit");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old").expect("initial source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial cached read");
+
+        fs::write(&path, "new text").expect("replacement source");
+        let reread = session
+            .reread_utf8(source_id(), &path)
+            .expect("committed reread");
+        assert_eq!(reread.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+
+        fs::write(&path, "disk changed again").expect("later disk source");
+        let cached = session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("committed command snapshot");
+        assert_eq!(cached.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+    }
+
+    #[test]
+    fn reread_rollback_restores_the_previous_command_text_snapshot() {
+        let root = TestDir::new("reread-cache-rollback");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old").expect("initial source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial cached read");
+
+        fs::write(&path, "new text").expect("replacement source");
+        let (prepared, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("prepared reread");
+        assert_eq!(prepared.source(), "new text");
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+
+        session.rollback_reread(rollback).expect("rollback reread");
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("restored snapshot")
+                .source(),
+            "old"
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
     }
 
     #[test]
@@ -1859,6 +2151,13 @@ mod tests {
             .rollback_reread(second_rollback)
             .expect("latest rollback");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("latest rollback restores the preceding cache generation")
+                .source(),
+            "bb"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1913,6 +2212,9 @@ mod tests {
         .expect("policy");
         let mut session = policy.session().expect("session");
         session.read_utf8(source_id(), &path).expect("initial read");
+        session.sessions[0]
+            .read_candidate_utf8(&path)
+            .expect("initial canonical cache");
         assert_eq!(session.sessions[0].inspected_paths(), 1);
 
         fs::write(&path, "new").expect("replacement");
@@ -1924,6 +2226,13 @@ mod tests {
 
         assert_eq!(session.sessions[0].inspected_paths(), 1);
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
+        assert_eq!(
+            session.sessions[0]
+                .read_candidate_utf8(&path)
+                .expect("alias rollback preserves the canonical cache")
+                .source(),
+            "old"
+        );
     }
 
     #[test]
@@ -2189,6 +2498,9 @@ mod tests {
             .expect("opened source remains valid");
 
         assert_eq!(loaded.source(), "inside");
+        #[cfg(target_os = "linux")]
+        assert_eq!(loaded.canonical_path(), moved);
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(loaded.canonical_path(), candidate);
     }
 
@@ -2258,5 +2570,35 @@ mod tests {
 
         assert_eq!(loaded.source(), "inside");
         assert_ne!(loaded.source(), "outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_file_does_not_charge_or_cache_a_literal_deleted_suffix_path() {
+        let root = TestDir::new("deleted-suffix-budget");
+        let candidate = root.path().join("part.adoc");
+        let suffix = root.path().join("part.adoc (deleted)");
+        fs::write(&candidate, "opened").expect("opened source");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+
+        let error = session
+            .read_utf8_after_open(source_id(), &candidate, || {
+                fs::remove_file(&candidate).expect("unlink opened source");
+            })
+            .expect_err("unlinked identity must fail closed");
+
+        assert!(matches!(error, ResourceError::Unverifiable(_)));
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+
+        let loaded = session
+            .read_utf8(source_id(), &suffix)
+            .expect("literal suffix remains independently readable");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), "literal suffix");
+        assert_eq!(
+            (session.budget().files(), session.budget().bytes()),
+            (1, 14)
+        );
     }
 }

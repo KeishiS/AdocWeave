@@ -50,6 +50,9 @@ thread_local! {
     static FORCED_FD_PATH_ERROR: std::cell::Cell<Option<std::io::ErrorKind>> = const {
         std::cell::Cell::new(None)
     };
+    static FORCED_EXPLICIT_RETRY_OPEN_ERROR: std::cell::Cell<Option<rustix::io::Errno>> = const {
+        std::cell::Cell::new(None)
+    };
 }
 
 #[cfg(target_os = "linux")]
@@ -167,14 +170,33 @@ impl LocalTargetPolicy {
             use rustix::fs::{Mode, OFlags, open};
 
             let mut after_open = Some(after_open);
+            let mut prior_race_failure = None;
             for _ in 0..CONFINED_OPEN_ATTEMPTS {
-                let file = open(
+                #[cfg(test)]
+                if prior_race_failure.is_some()
+                    && let Some(error) = FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(std::cell::Cell::get)
+                {
+                    return Err(classify_errno(path, error));
+                }
+                let file = match open(
                     path,
                     OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
                     Mode::empty(),
-                )
-                .map(fs::File::from)
-                .map_err(|error| classify_errno(path, error))?;
+                ) {
+                    Ok(file) => fs::File::from(file),
+                    Err(error) => {
+                        let error = classify_errno(path, error);
+                        // A missing retry target confirms the same namespace
+                        // race that made the preceding verification fail. All
+                        // other errors describe the current attempt and keep
+                        // their more specific public classification.
+                        return Err(if matches!(error, LocalTargetError::Missing(_)) {
+                            prior_race_failure.unwrap_or(error)
+                        } else {
+                            error
+                        });
+                    }
+                };
                 let metadata = file
                     .metadata()
                     .map_err(|source| classify_io(path.to_owned(), source))?;
@@ -185,18 +207,32 @@ impl LocalTargetPolicy {
                     callback();
                 }
                 let selected = path_from_file_handle(&file, path)?;
+                let procfs_reports_deleted = procfs_reports_deleted_path(&selected);
                 let file_name = selected
                     .file_name()
                     .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
                 let parent = selected
                     .parent()
                     .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
-                let Ok(policy) = Self::new(parent) else {
-                    continue;
+                let policy = match Self::new(parent) {
+                    Ok(policy) => policy,
+                    Err(LocalTargetError::Missing(_)) => {
+                        prior_race_failure = Some(explicit_target_changed_error());
+                        continue;
+                    }
+                    Err(error) => return Err(error),
                 };
                 let candidate = policy.root.join(file_name);
-                let Ok(verified) = policy.open_confined(&candidate) else {
-                    continue;
+                let verified = match policy.open_confined(&candidate) {
+                    Ok(verified) => verified,
+                    Err(LocalTargetError::Missing(_)) => {
+                        prior_race_failure = Some(explicit_target_changed_error());
+                        continue;
+                    }
+                    Err(LocalTargetError::NotFile(_)) if procfs_reports_deleted => {
+                        return Err(explicit_target_changed_error());
+                    }
+                    Err(error) => return Err(error),
                 };
                 let verified_metadata = verified
                     .file
@@ -205,14 +241,13 @@ impl LocalTargetPolicy {
                 if metadata.dev() != verified_metadata.dev()
                     || metadata.ino() != verified_metadata.ino()
                 {
+                    prior_race_failure = Some(explicit_target_changed_error());
                     continue;
                 }
                 let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
                 return Ok((policy, loaded));
             }
-            Err(LocalTargetError::Unverifiable(
-                "explicit local target changed while its authority was established".to_owned(),
-            ))
+            Err(prior_race_failure.unwrap_or_else(explicit_target_changed_error))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -632,6 +667,16 @@ impl LocalTargetPolicy {
         candidate: &Path,
         follow_symlinks: bool,
     ) -> Result<OpenedTarget, LocalTargetError> {
+        self.open_confined_with_symlinks_after_open(candidate, follow_symlinks, || {})
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_confined_with_symlinks_after_open(
+        &self,
+        candidate: &Path,
+        follow_symlinks: bool,
+        after_open: impl FnOnce(),
+    ) -> Result<OpenedTarget, LocalTargetError> {
         use rustix::fd::OwnedFd;
         use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
 
@@ -699,6 +744,7 @@ impl LocalTargetPolicy {
         {
             return Err(LocalTargetError::NotFile(candidate.to_owned()));
         }
+        after_open();
         let canonical_path = logical_path_from_opened_handle(
             &self.root,
             self.root_handle.as_ref(),
@@ -719,18 +765,140 @@ impl LocalTargetPolicy {
 }
 
 #[cfg(target_os = "linux")]
+fn explicit_target_changed_error() -> LocalTargetError {
+    LocalTargetError::Unverifiable(
+        "explicit local target changed while its authority was established".to_owned(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn procfs_reports_deleted_path(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    path.as_os_str().as_bytes().ends_with(b" (deleted)")
+}
+
+#[cfg(target_os = "linux")]
 fn logical_path_from_opened_handle(
     logical_root: &Path,
     root_handle: &fs::File,
     opened: &fs::File,
     candidate: &Path,
 ) -> Result<PathBuf, LocalTargetError> {
+    logical_path_from_opened_handle_with(logical_root, root_handle, opened, candidate, || {}, || {})
+}
+
+#[cfg(target_os = "linux")]
+fn logical_path_from_opened_handle_with(
+    logical_root: &Path,
+    root_handle: &fs::File,
+    opened: &fs::File,
+    candidate: &Path,
+    after_root_path: impl FnOnce(),
+    before_identity_open: impl FnOnce(),
+) -> Result<PathBuf, LocalTargetError> {
     let root_path = path_from_fd(root_handle, candidate)?;
+    after_root_path();
     let opened_path = path_from_fd(opened, candidate)?;
     let relative = opened_path
         .strip_prefix(&root_path)
         .map_err(|_| LocalTargetError::Unverifiable(candidate.to_string_lossy().into_owned()))?;
+    before_identity_open();
+    verify_opened_path_identity(root_handle, opened, relative, candidate)?;
     Ok(logical_root.join(relative))
+}
+
+#[cfg(target_os = "linux")]
+fn verify_opened_path_identity(
+    root_handle: &fs::File,
+    opened: &fs::File,
+    relative: &Path,
+    candidate: &Path,
+) -> Result<(), LocalTargetError> {
+    use std::os::unix::fs::MetadataExt;
+
+    use rustix::fd::OwnedFd;
+    use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
+
+    let flags = OFlags::PATH | OFlags::CLOEXEC;
+    let mut attempts = 0;
+    let verified = loop {
+        let outcome = confined_openat2(
+            root_handle,
+            relative,
+            flags,
+            ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
+        );
+        attempts += 1;
+        if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS {
+            continue;
+        }
+        break outcome;
+    };
+    let verified = match verified {
+        Ok(file) => fs::File::from(file),
+        Err(error) if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL => {
+            let mut directory: OwnedFd = openat(
+                root_handle,
+                ".",
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|error| opened_identity_error(candidate, error))?;
+            let mut components = relative.components().peekable();
+            while let Some(component) = components.next() {
+                let Component::Normal(name) = component else {
+                    return Err(opened_identity_mismatch(candidate));
+                };
+                let component_flags = if components.peek().is_some() {
+                    OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+                } else {
+                    flags | OFlags::NOFOLLOW
+                };
+                directory = openat(&directory, name, component_flags, Mode::empty())
+                    .map_err(|error| opened_identity_error(candidate, error))?;
+            }
+            fs::File::from(directory)
+        }
+        Err(error) => return Err(opened_identity_error(candidate, error)),
+    };
+    let opened_metadata = opened
+        .metadata()
+        .map_err(|error| opened_identity_io_error(candidate, error))?;
+    let verified_metadata = verified
+        .metadata()
+        .map_err(|error| opened_identity_io_error(candidate, error))?;
+    if opened_metadata.dev() != verified_metadata.dev()
+        || opened_metadata.ino() != verified_metadata.ino()
+        || opened_metadata.file_type() != verified_metadata.file_type()
+    {
+        return Err(opened_identity_mismatch(candidate));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_error(candidate: &Path, source: rustix::io::Errno) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "cannot verify the opened local target path for {}: {source}",
+        candidate.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_io_error(candidate: &Path, source: std::io::Error) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "cannot verify the opened local target identity for {}: {source}",
+        candidate.display()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn opened_identity_mismatch(candidate: &Path) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "opened local target no longer matches its filesystem path: {}",
+        candidate.display()
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -844,6 +1012,18 @@ pub struct LocalTargetSession {
     bases: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
     inspections: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
     text: BTreeMap<PathBuf, Result<String, LocalTargetError>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LocalTargetTextRollback {
+    canonical_path: PathBuf,
+    previous: Option<Result<String, LocalTargetError>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LocalTargetCandidateRollback {
+    candidate: PathBuf,
+    previous: Option<Result<PathBuf, LocalTargetError>>,
 }
 
 /// UTF-8 local target returned by a bounded validation session.
@@ -964,7 +1144,11 @@ impl LocalTargetSession {
         Ok(())
     }
 
-    fn candidate(&mut self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
+    pub(crate) fn candidate(
+        &mut self,
+        base: &Path,
+        target: &str,
+    ) -> Result<PathBuf, LocalTargetError> {
         let canonical_base = if let Some(result) = self.bases.get(base) {
             result.clone()?
         } else {
@@ -983,16 +1167,6 @@ impl LocalTargetSession {
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
         self.read_candidate_utf8(&candidate)
-    }
-
-    pub(crate) fn read_utf8_with_capacity(
-        &mut self,
-        base: &Path,
-        target: &str,
-        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
-    ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        let candidate = self.candidate(base, target)?;
-        self.read_candidate_utf8_with_capacity(&candidate, false, true, || {}, capacity)
     }
 
     /// Opens and reads an already normalized path below this session's root.
@@ -1026,7 +1200,7 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_bytes_with_capacity(candidate, capacity, true)
+        self.read_candidate_bytes_with_capacity(candidate, capacity, true, || {})
     }
 
     /// Opens and reads bounded bytes while rejecting every symbolic link.
@@ -1035,7 +1209,17 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_bytes_with_capacity(candidate, capacity, false)
+        self.read_candidate_bytes_with_capacity(candidate, capacity, false, || {})
+    }
+
+    #[cfg(test)]
+    fn read_candidate_bytes_after_open(
+        &mut self,
+        candidate: &Path,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedLocalBytes, LocalTargetError> {
+        let capacity = self.default_read_capacity();
+        self.read_candidate_bytes_with_capacity(candidate, capacity, true, after_open)
     }
 
     fn read_candidate_bytes_with_capacity(
@@ -1043,8 +1227,9 @@ impl LocalTargetSession {
         candidate: &Path,
         capacity: CandidateReadCapacity,
         follow_symlinks: bool,
+        after_open: impl FnOnce(),
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
-        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
         if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded);
         }
@@ -1075,8 +1260,31 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
-    ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)
+    ) -> Result<(LoadedLocalTarget, LocalTargetTextRollback), LocalTargetError> {
+        let loaded =
+            self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)?;
+        let canonical_path = loaded.canonical_path.clone();
+        let previous = self
+            .text
+            .insert(canonical_path.clone(), Ok(loaded.source.clone()));
+        Ok((
+            loaded,
+            LocalTargetTextRollback {
+                canonical_path,
+                previous,
+            },
+        ))
+    }
+
+    pub(crate) fn rollback_cached_text(&mut self, rollback: LocalTargetTextRollback) {
+        match rollback.previous {
+            Some(previous) => {
+                self.text.insert(rollback.canonical_path, previous);
+            }
+            None => {
+                self.text.remove(&rollback.canonical_path);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1108,8 +1316,7 @@ impl LocalTargetSession {
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
-        after_open();
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
         if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
@@ -1152,6 +1359,7 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
         follow_symlinks: bool,
+        after_open: impl FnOnce(),
     ) -> Result<(PathBuf, fs::File), LocalTargetError> {
         // The number of distinct paths a session may examine is a resource
         // bound on every platform. Only resolution and opening differ below.
@@ -1160,8 +1368,11 @@ impl LocalTargetSession {
         {
             let opened = self.remember(
                 candidate,
-                self.policy
-                    .open_confined_with_symlinks(candidate, follow_symlinks),
+                self.policy.open_confined_with_symlinks_after_open(
+                    candidate,
+                    follow_symlinks,
+                    after_open,
+                ),
             )?;
             self.inspections
                 .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
@@ -1176,6 +1387,7 @@ impl LocalTargetSession {
             self.inspections
                 .insert(candidate.to_owned(), Ok(canonical.clone()));
             let file = self.policy.open_confined(&canonical)?;
+            after_open();
             Ok((canonical, file))
         }
     }
@@ -1184,14 +1396,39 @@ impl LocalTargetSession {
         self.inspections.len()
     }
 
-    pub(crate) fn has_inspected_candidate(&self, candidate: &Path) -> bool {
-        self.inspections.contains_key(candidate)
+    pub(crate) fn candidate_rollback(&self, candidate: &Path) -> LocalTargetCandidateRollback {
+        LocalTargetCandidateRollback {
+            candidate: candidate.to_owned(),
+            previous: self.inspections.get(candidate).cloned(),
+        }
+    }
+
+    pub(crate) fn rollback_candidate(&mut self, rollback: LocalTargetCandidateRollback) {
+        let current = self.inspections.remove(&rollback.candidate);
+        match (current.is_some(), rollback.previous) {
+            (true, Some(previous)) => {
+                self.inspections.insert(rollback.candidate, previous);
+            }
+            (true, None) => {
+                self.requests = self.requests.saturating_sub(1);
+            }
+            (false, Some(previous)) => {
+                self.requests = self.requests.saturating_add(1);
+                self.inspections.insert(rollback.candidate, previous);
+            }
+            (false, None) => {}
+        }
     }
 
     pub(crate) fn release_candidate(&mut self, candidate: &Path) {
         if let Some(result) = self.inspections.remove(candidate) {
             self.requests = self.requests.saturating_sub(1);
-            if let Ok(canonical) = result {
+            if let Ok(canonical) = result
+                && !self
+                    .inspections
+                    .values()
+                    .any(|result| result.as_ref() == Ok(&canonical))
+            {
                 self.text.remove(&canonical);
             }
         }
@@ -1702,6 +1939,133 @@ mod tests {
         fs::rename(&displaced, &parent.0).expect("restore selected parent");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_load_preserves_unverifiable_after_an_opened_file_is_unlinked() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+        })
+        .expect_err("an unlinked explicit target cannot establish its authority");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_load_rejects_a_literal_deleted_suffix_inode_collision() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+        })
+        .expect_err("the procfs suffix must not select another inode");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_retry_preserves_permission_and_fd_limit_errors() {
+        for error in [rustix::io::Errno::ACCESS, rustix::io::Errno::MFILE] {
+            let root = TestDir::new();
+            let selected = root.0.join("docs/guide.adoc");
+            FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(|forced| forced.set(Some(error)));
+            let result = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+                fs::remove_file(&selected).expect("unlink selected file");
+            });
+            FORCED_EXPLICIT_RETRY_OPEN_ERROR.with(|forced| forced.set(None));
+
+            match error {
+                rustix::io::Errno::ACCESS => {
+                    assert_eq!(result, Err(LocalTargetError::PermissionDenied(selected)));
+                }
+                rustix::io::Errno::MFILE => {
+                    assert!(matches!(
+                        result,
+                        Err(LocalTargetError::Unverifiable(reason))
+                            if reason.contains(&selected.to_string_lossy().into_owned())
+                                && !reason.contains("authority was established")
+                    ));
+                }
+                _ => unreachable!("test covers two explicit errors"),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_retry_does_not_replace_not_file_with_a_saved_race() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::create_dir(&selected).expect("replace selected file with directory");
+        })
+        .expect_err("the retry must preserve the current file type error");
+
+        assert_eq!(error, LocalTargetError::NotFile(selected));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_preserves_self_new_not_directory() {
+        let root = TestDir::new();
+        let parent = root.0.join("explicit-parent");
+        fs::create_dir(&parent).expect("explicit parent");
+        let selected = parent.join("guide.adoc");
+        fs::write(&selected, "= Guide").expect("selected file");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::remove_dir(&parent).expect("remove selected parent");
+            fs::write(&parent, "not a directory").expect("replace parent with file");
+        })
+        .expect_err("policy construction must preserve not-directory");
+
+        assert_eq!(error, LocalTargetError::NotDirectory(parent));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_reports_unverifiable_for_a_deleted_suffix_directory_collision() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+            fs::create_dir(&suffix).expect("create suffix directory");
+        })
+        .expect_err("a procfs deletion race must not be reported as an authored directory");
+
+        assert!(
+            matches!(error, LocalTargetError::Unverifiable(_)),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_preserves_not_file_for_an_authored_directory() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs");
+
+        let error = LocalTargetPolicy::load_explicit_utf8(&selected, 1024)
+            .expect_err("an explicitly selected directory is not a file");
+
+        assert_eq!(error, LocalTargetError::NotFile(selected));
+    }
+
     #[test]
     fn confined_directory_derivation_rejects_an_outside_directory() {
         let root = TestDir::new();
@@ -2100,6 +2464,42 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn openat2_fallback_verifies_rename_and_rejects_unlink() {
+        let renamed_root = TestDir::new();
+        let renamed_policy = LocalTargetPolicy::new(&renamed_root.0).expect("rename policy");
+        let mut renamed_session =
+            LocalTargetSession::new(renamed_policy, 1, FilesystemReadLimits::default());
+        let renamed_target = renamed_root.0.join("docs/guide.adoc");
+        let displaced = renamed_root.0.join("docs/original.adoc");
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(rustix::io::Errno::NOSYS)));
+        let renamed = renamed_session.read_utf8_after_open(
+            &renamed_root.0.join("docs"),
+            "guide.adoc",
+            || fs::rename(&renamed_target, &displaced).expect("rename opened target"),
+        );
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+        let renamed = renamed.expect("fallback verifies the renamed inode");
+        assert_eq!(renamed.canonical_path(), displaced);
+        assert_eq!(renamed.source(), "= Guide");
+
+        let unlinked_root = TestDir::new();
+        let unlinked_policy = LocalTargetPolicy::new(&unlinked_root.0).expect("unlink policy");
+        let mut unlinked_session =
+            LocalTargetSession::new(unlinked_policy, 1, FilesystemReadLimits::default());
+        let unlinked_target = unlinked_root.0.join("docs/guide.adoc");
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(rustix::io::Errno::NOSYS)));
+        let unlinked = unlinked_session.read_utf8_after_open(
+            &unlinked_root.0.join("docs"),
+            "guide.adoc",
+            || fs::remove_file(&unlinked_target).expect("unlink opened target"),
+        );
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+        assert!(matches!(unlinked, Err(LocalTargetError::Unverifiable(_))));
+        assert_eq!(unlinked_session.read_files(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn procfs_failures_are_unverifiable_during_policy_creation() {
         let root = TestDir::new();
         for kind in [
@@ -2201,5 +2601,171 @@ mod tests {
 
         assert_eq!(loaded.source(), "= Guide");
         assert_ne!(loaded.source(), "= Replacement");
+        assert_eq!(loaded.canonical_path(), displaced);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_opened_file_fails_closed_instead_of_accepting_the_deleted_suffix() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+        let target = root.0.join("docs/guide.adoc");
+
+        let error = session
+            .read_utf8_after_open(&root.0.join("docs"), "guide.adoc", || {
+                fs::remove_file(&target).expect("unlink opened file");
+            })
+            .expect_err("unlinked identity must fail closed");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+        assert_eq!(session.read_files, 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_real_file_name_ending_in_deleted_is_preserved() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&target, "literal suffix").expect("suffix source");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+
+        let loaded = session
+            .read_candidate_utf8(&target)
+            .expect("literal suffix is a valid file name");
+
+        assert_eq!(loaded.canonical_path(), target);
+        assert_eq!(loaded.source(), "literal suffix");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn deleted_suffix_collision_cannot_reuse_an_unlinked_files_cache_entry() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+
+        let error = session
+            .read_utf8_after_open(&root.0.join("docs"), "guide.adoc", || {
+                fs::remove_file(&target).expect("unlink opened file");
+            })
+            .expect_err("suffix collision must not verify another inode");
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+
+        let loaded = session
+            .read_candidate_utf8(&suffix)
+            .expect("read the literal suffix file");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), "literal suffix");
+        assert_eq!(session.read_files, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn identity_reopen_rejects_a_leaf_swapped_after_procfs_resolution() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let target = root.0.join("docs/guide.adoc");
+        let displaced = root.0.join("docs/original.adoc");
+        let opened = fs::File::open(&target).expect("opened target");
+
+        let result = logical_path_from_opened_handle_with(
+            policy.root(),
+            policy.root_handle.as_ref(),
+            &opened,
+            &target,
+            || {},
+            || {
+                fs::rename(&target, &displaced).expect("rename resolved target");
+                fs::write(&target, "= Replacement").expect("replace resolved target");
+            },
+        );
+
+        assert!(matches!(result, Err(LocalTargetError::Unverifiable(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn root_rename_between_procfs_reads_fails_closed() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let target = root.0.join("docs/guide.adoc");
+        let opened = fs::File::open(&target).expect("opened target");
+        let displaced = root.0.with_extension("between-fd-reads");
+
+        let result = logical_path_from_opened_handle_with(
+            policy.root(),
+            policy.root_handle.as_ref(),
+            &opened,
+            &target,
+            || fs::rename(&root.0, &displaced).expect("rename root between fd reads"),
+            || {},
+        );
+
+        fs::rename(&displaced, &root.0).expect("restore root");
+        assert!(matches!(result, Err(LocalTargetError::Unverifiable(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn byte_read_unlink_does_not_consume_the_read_budget() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, b"suffix").expect("suffix bytes");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+
+        let error = session
+            .read_candidate_bytes_after_open(&target, || {
+                fs::remove_file(&target).expect("unlink opened bytes");
+            })
+            .expect_err("unlinked bytes must fail before reading");
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(session.read_files(), 0);
+        assert_eq!(session.read_bytes, 0);
+
+        let loaded = session
+            .read_candidate_bytes(&suffix)
+            .expect("literal suffix bytes remain readable");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), b"suffix");
+        assert_eq!(session.read_files(), 1);
+        assert_eq!(session.read_bytes, 6);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn same_path_replacement_keeps_the_command_snapshot_until_reread() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let displaced = root.0.join("docs/first.adoc");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 3, FilesystemReadLimits::default());
+
+        let first = session
+            .read_candidate_utf8(&target)
+            .expect("initial snapshot");
+        fs::rename(&target, &displaced).expect("retain first inode");
+        fs::write(&target, "= Second").expect("second inode");
+        let cached = session
+            .read_candidate_utf8(&target)
+            .expect("cached command snapshot");
+
+        assert_eq!(first.source(), "= Guide");
+        assert_eq!(cached.source(), "= Guide");
+        assert_eq!(session.read_files(), 1);
+
+        let capacity = session.default_read_capacity();
+        let (reread, _) = session
+            .reread_candidate_utf8_with_capacity(&target, |_| capacity)
+            .expect("explicit reread");
+        assert_eq!(reread.source(), "= Second");
+        assert_eq!(session.read_files(), 2);
     }
 }
