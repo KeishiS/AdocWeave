@@ -29,6 +29,10 @@ file watcherが通知した文書およびinclude先には適用しません。�
 includeに必要な文書がsnapshotにない場合だけ、従来のworkspace root、``resources.roots``、symlink検査および
 resource上限を使って読み込みます。読み込んだinclude先は解析の起点として登録しません。
 
+初期走査の後に編集で新しいincludeが追加された場合は、解析workerが返す不足resourceの論理IDを使います。
+main loopは解析対象の文書revisionとworkspace世代が現在も有効であることを確認し、不足resourceを同じ権限と
+上限で読み込んでから、新しい世代の解析jobを実行します。古い解析結果や許可範囲外の要求では読み込みません。
+
 workspace folderが入れ子の場合、外側のfolderの走査では内側のfolderを枝刈りし、内側のfolder自身の走査へ
 委ねます。各folderの走査方針を一つのroot相対名前空間へ限定し、重複走査による除外規則の迂回を防ぎます。
 

@@ -77,6 +77,7 @@ struct AnalysisCompleted {
     job: AnalysisJob,
     result: Result<adocweave::AnalysisResult, String>,
     workspace_result: Option<Result<WorkspaceAnalysis, WorkspaceProblem>>,
+    missing_resource: Option<adocweave_workspace::ResourceId>,
 }
 
 /// A workspace read that finished on a worker and is ready to install.
@@ -369,6 +370,7 @@ impl Backend {
                     .request
                     .analyze(worker_job.cancellation.as_ref())
                     .map_err(|error| error.to_string());
+                let mut missing_resource = None;
                 let workspace_result =
                     worker_job.workspace_problem.clone().map(Err).or_else(|| {
                         worker_job.workspace.as_ref().map(|input| {
@@ -377,22 +379,29 @@ impl Backend {
                                     &worker_job.request.options,
                                     worker_job.cancellation.as_ref(),
                                 )
-                                .map_err(|error| WorkspaceProblem {
-                                    source_id: error.source_id.as_ref().map(ToString::to_string),
-                                    range: error.range.unwrap_or_else(zero_range),
-                                    code: error.diagnostic_code().to_owned(),
-                                    message: error.to_string(),
+                                .map_err(|error| {
+                                    missing_resource = error.requested_resource().cloned();
+                                    WorkspaceProblem {
+                                        source_id: error
+                                            .source_id
+                                            .as_ref()
+                                            .map(ToString::to_string),
+                                        range: error.range.unwrap_or_else(zero_range),
+                                        code: error.diagnostic_code().to_owned(),
+                                        message: error.to_string(),
+                                    }
                                 })
                         })
                     });
-                (result, workspace_result)
+                (result, workspace_result, missing_resource)
             })
             .await
-            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None));
+            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None, None));
             let _ = client.emit(AnalysisCompleted {
                 job,
                 result: result.0,
                 workspace_result: result.1,
+                missing_resource: result.2,
             });
         });
         self.analysis_tasks
@@ -410,6 +419,28 @@ impl Backend {
         {
             self.analysis_tasks.remove(&completed.job.uri);
         }
+        let mut resolution_problem = None;
+        if let Some(target) = &completed.missing_resource {
+            match self.service.resolve_missing_include(&completed.job, target) {
+                Ok(Some(retry)) => {
+                    self.schedule_analysis(retry);
+                    return ControlFlow::Continue(());
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    let original = completed
+                        .workspace_result
+                        .as_ref()
+                        .and_then(|result| result.as_ref().err());
+                    resolution_problem = Some(WorkspaceProblem {
+                        source_id: original.and_then(|problem| problem.source_id.clone()),
+                        range: original.map_or_else(zero_range, |problem| problem.range),
+                        code: "workspace-input-error".to_owned(),
+                        message,
+                    });
+                }
+            }
+        }
         let Ok(analysis) = completed.result else {
             return ControlFlow::Continue(());
         };
@@ -417,7 +448,11 @@ impl Backend {
             return ControlFlow::Continue(());
         }
         let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
-        if let Some(workspace) = completed.workspace_result {
+        if let Some(problem) = resolution_problem {
+            let _ = self
+                .service
+                .adopt_workspace_problem(&completed.job, problem);
+        } else if let Some(workspace) = completed.workspace_result {
             match workspace {
                 Ok(workspace) => {
                     publish_uris.extend(

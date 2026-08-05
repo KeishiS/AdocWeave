@@ -87,6 +87,150 @@ fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
 }
 
 #[test]
+fn include_added_after_initial_scan_loads_an_excluded_target() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-dynamic-include-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("excluded directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 1\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("configuration");
+    let initial = "= Root\n";
+    let changed = "= Root\n\ninclude::generated/part.adoc[]\n";
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, initial).expect("root document");
+    fs::write(excluded.join("part.adoc"), "dynamic included marker\n").expect("included document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, initial);
+
+    let mut jobs = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": changed}]
+        })))
+        .expect("change");
+    assert_eq!(jobs.len(), 1);
+    let job = jobs.pop().expect("changed analysis");
+    let error = job
+        .workspace
+        .as_ref()
+        .expect("workspace input")
+        .analyze(&job.request.options, job.cancellation.as_ref())
+        .expect_err("missing excluded include");
+    let target = error
+        .requested_resource()
+        .expect("structured missing resource")
+        .clone();
+
+    let retry = service
+        .resolve_missing_include(&job, &target)
+        .expect("resolve missing include")
+        .expect("replacement analysis");
+    adopt(&mut service, retry);
+
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("root document")
+        .workspace_analysis()
+        .expect("workspace analysis");
+    assert!(
+        analysis
+            .analysis
+            .source()
+            .contains("dynamic included marker")
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn stale_analysis_cannot_load_a_new_include_resource() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-stale-include-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("workspace directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 1\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let target_path = excluded.join("part.adoc");
+    fs::write(&document_path, "= Root\n").expect("root document");
+    fs::write(&target_path, "stale included marker\n").expect("included document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Root\n");
+
+    let stale_job = service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 2},
+            "contentChanges": [{"text": "include::generated/part.adoc[]\n"}]
+        })))
+        .expect("first change")
+        .pop()
+        .expect("stale analysis");
+    let target = stale_job
+        .workspace
+        .as_ref()
+        .expect("workspace input")
+        .analyze(&stale_job.request.options, stale_job.cancellation.as_ref())
+        .expect_err("missing include")
+        .requested_resource()
+        .expect("structured missing resource")
+        .clone();
+    service
+        .begin_change(typed(json!({
+            "textDocument": {"uri": document_uri, "version": 3},
+            "contentChanges": [{"text": "= Newer root\n"}]
+        })))
+        .expect("newer change");
+
+    assert!(
+        service
+            .resolve_missing_include(&stale_job, &target)
+            .expect("ignore stale analysis")
+            .is_none()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn explicitly_opened_document_remains_available_below_an_excluded_directory() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
