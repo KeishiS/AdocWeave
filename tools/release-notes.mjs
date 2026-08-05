@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.31.0";
+export const PREVIOUS_RELEASE_VERSION = "0.32.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#468：日本語や単語に接する単一バッククォートの等幅表記に``monospace-boundary``を報告し、二重バッククォートの使用を案内するようにしました。修正候補は返しません。",
+  "#476：利用側アプリが生成した参考文献を、AsciiDocへ文字列連結せずに構造化入力として描画できるようにしました。RustとWASMで同じ契約を使用できます。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -72,9 +72,9 @@ export function breakingMigrationNotes(changes) {
 /// diff. `tools/release-claims.mjs` reads this list and checks every entry that
 /// has a single machine-readable source of truth.
 export const UNCHANGED_CONTRACTS = [
-  "WASM protocol",
   "CLI引数",
   "Language Server protocol",
+  "設定schema",
 ];
 
 /// The file that decides whether a named contract changed.
@@ -94,19 +94,19 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。v0.23.0から変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。v0.32.0の9から更新しました。Worker protocol versionは${protocol.workerProtocolVersion}のままです。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
-  "設定schemaの規則codeに``monospace-boundary``を追加しました。有効な等幅表記の意味ASTとHTML出力、CLIの入力選択およびBrowser APIの動作は変更していません。",
+  "WASM protocolの``render.inputs``へ任意の``generatedBibliography``を追加しました。見出し、citation key、表示文字列および任意のlabelを構造化データとして渡し、文字列はAsciiDocやHTMLとして解釈しません。",
+  "Rust APIへ``GeneratedBibliography``と``GeneratedBibliographyEntry``を追加し、``RenderInputs::with_generated_bibliography``から同じ描画機能を利用できるようにしました。",
+  "Node.js向けの``parseText``は専用の``adocweave-textlint-wasm``だけに含み、Browser packageには含めません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "単語やCJK文字に接する等幅表記は、単一バッククォートから二重バッククォートへ変更してください。",
-  "既存文書の境界違反を許容する場合は、``.adocweave.toml``の``[lint.rules.monospace-boundary]``で``enabled = false``を指定してください。",
+  "WASMのJSON protocolを直接構築する場合は``schemaVersion``を10へ更新してください。参考文献を生成しない要求では``generatedBibliography``を省略できます。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

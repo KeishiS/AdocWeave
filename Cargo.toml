@@ -21,7 +21,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/KeishiS/adocweave"
 rust-version = "1.97.1"
-version = "0.32.0"
+version = "0.33.0"
 
 # The profile used by cargo-dist for release artifacts.
 [profile.dist]

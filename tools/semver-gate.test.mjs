@@ -213,17 +213,11 @@ const recordedChange = {
   description: "ResolvedProjectConfigにworkspaceを追加しました。",
   migration: "構造体リテラルへworkspaceを追加します。",
 };
-const detectedMonospaceProblemChange = {
-  crate: "adocweave",
-  lint: "enum_variant_added",
-  item: "variant InlineProblemKind:MonospaceBoundary",
-  summary: "enum variant added on exhaustive enum",
-};
-const detectedMonospaceSyntaxChange = {
-  crate: "adocweave",
-  lint: "enum_variant_added",
-  item: "variant SyntaxIssueClass:MonospaceBoundary",
-  summary: "enum variant added on exhaustive enum",
+const detectedGeneratedBibliographyChange = {
+  crate: "adocweave-wasm",
+  lint: "constructible_struct_adds_field",
+  item: "field WasmRenderInputs.generated_bibliography",
+  summary: "externally-constructible struct adds field",
 };
 const record = (changes = [recordedChange]) => ({
   schemaVersion: 1,
@@ -237,12 +231,10 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
   assert.deepEqual(
     actual.changes.map(({ crate, lint, item, summary }) => ({ crate, lint, item, summary })),
-    [detectedMonospaceProblemChange, detectedMonospaceSyntaxChange],
+    [detectedGeneratedBibliographyChange],
   );
-  assert.match(actual.changes[0].description, /InlineProblemKind/);
-  assert.match(actual.changes[0].migration, /InlineProblemKind::MonospaceBoundary/);
-  assert.match(actual.changes[1].description, /SyntaxIssueClass/);
-  assert.match(actual.changes[1].migration, /SyntaxIssueClass::MonospaceBoundary/);
+  assert.match(actual.changes[0].description, /WasmRenderInputs/);
+  assert.match(actual.changes[0].migration, /generated_bibliography/);
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
   assert.throws(
