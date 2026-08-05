@@ -28,8 +28,11 @@ use dependency_graph::DependencyGraph;
 
 #[cfg(test)]
 thread_local! {
-    static RESUMABLE_STAGE_RUNS: std::cell::Cell<[usize; 3]> = const {
-        std::cell::Cell::new([0; 3])
+    static RESUMABLE_STAGE_RUNS: std::cell::Cell<[usize; 4]> = const {
+        std::cell::Cell::new([0; 4])
+    };
+    static RESUMABLE_EVIDENCE_RECORDS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
     };
 }
 
@@ -399,7 +402,17 @@ pub struct WorkspaceError {
     pub range: Option<adocweave::text::TextRange>,
     detail_code: Option<&'static str>,
     requested_resource: Option<ResourceId>,
+    host_resource_kind: Option<WorkspaceHostResourceErrorKind>,
     message: String,
+}
+
+/// Stable category for a host resource failure during workspace analysis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceHostResourceErrorKind {
+    /// The host could not load the requested resource.
+    LoadFailed,
+    /// A response belongs to another request or preprocessing run.
+    ResponseMismatch,
 }
 
 impl WorkspaceError {
@@ -410,6 +423,7 @@ impl WorkspaceError {
             range: None,
             detail_code: None,
             requested_resource: None,
+            host_resource_kind: None,
             message: message.into(),
         }
     }
@@ -439,8 +453,31 @@ impl WorkspaceError {
         self.requested_resource.as_ref()
     }
 
+    /// Returns the typed host resource cause when this error crossed that boundary.
+    pub const fn host_resource_kind(&self) -> Option<WorkspaceHostResourceErrorKind> {
+        self.host_resource_kind
+    }
+
     fn with_requested_resource(mut self, target: Option<&str>) -> Self {
         self.requested_resource = target.and_then(|target| ResourceId::new(target).ok());
+        self
+    }
+
+    fn with_host_resource(mut self, kind: HostResourceErrorKind, target: &str) -> Self {
+        let (kind, detail_code) = match kind {
+            HostResourceErrorKind::LoadFailed => (
+                WorkspaceHostResourceErrorKind::LoadFailed,
+                "host-resource-load-failed",
+            ),
+            HostResourceErrorKind::ResponseMismatch => (
+                WorkspaceHostResourceErrorKind::ResponseMismatch,
+                "host-resource-response-mismatch",
+            ),
+            _ => return self,
+        };
+        self.host_resource_kind = Some(kind);
+        self.requested_resource = ResourceId::new(target).ok();
+        self.detail_code = Some(detail_code);
         self
     }
 }
@@ -751,11 +788,17 @@ impl Workspace {
         Ok(())
     }
 
-    /// Validates and stamps a completed draft against the current workspace.
+    /// Validates observed evidence and stamps a draft against the current workspace.
     ///
-    /// Unrelated workspace changes may advance the generation without
-    /// invalidating the draft. Every resource actually observed by
-    /// preprocessing is checked by shared-text identity before publication.
+    /// This is the workspace layer of a two-layer adoption contract. Unrelated
+    /// workspace changes may advance the generation without invalidating the
+    /// draft. Every resource actually observed by preprocessing is checked by
+    /// shared-text identity before publication. Revisions and layers of
+    /// non-root resources may change when they retain the same `Arc<str>`.
+    ///
+    /// A Language Server or another owner of one canonical result must first
+    /// apply [`WorkspaceAnalysisDraft::matches_canonical_context`] to enforce
+    /// the stricter starting-generation and configuration gate.
     pub fn finalize_draft(
         &self,
         draft: WorkspaceAnalysisDraft,
@@ -1065,10 +1108,12 @@ impl ResourceLookup for StableWorkspaceLookup {
 }
 
 struct WorkspaceAnalysisRun {
+    base_generation: Generation,
     root: ResourceId,
     root_revision: Revision,
     root_text: Arc<str>,
     options: EffectiveProcessingOptions,
+    canonical_options: EffectiveProcessingOptions,
     projection_limits: ProjectionLimits,
     lookup: StableWorkspaceLookup,
     found: BTreeMap<ResourceId, Arc<str>>,
@@ -1103,7 +1148,22 @@ impl WorkspaceAnalysisRun {
                     .directives
                     .iter()
                     .filter(|directive| directive.kind == DirectiveKind::Include)
-                    .filter_map(|directive| ResourceId::new(&directive.target).ok())
+                    .map(|directive| {
+                        let target = ResourceId::new(&directive.target)
+                            .expect("preprocessor returned a valid target");
+                        let resolution = if self.found.contains_key(&target) {
+                            WorkspaceIncludeResolution::DeferredFound
+                        } else if self.missing.contains(&target) {
+                            WorkspaceIncludeResolution::AuthoritativeMissing
+                        } else {
+                            WorkspaceIncludeResolution::SnapshotReady
+                        };
+                        WorkspaceIncludeEvent {
+                            target,
+                            resolution,
+                            optional: directive.optional,
+                        }
+                    })
                     .collect();
                 #[cfg(test)]
                 record_resumable_stage(2);
@@ -1119,6 +1179,8 @@ impl WorkspaceAnalysisRun {
                         ));
                     }
                 };
+                #[cfg(test)]
+                record_resumable_stage(3);
                 if adocweave::CancellationCheck::is_cancelled(cancellation) {
                     return WorkspaceAnalysisStep::Cancelled;
                 }
@@ -1137,6 +1199,8 @@ impl WorkspaceAnalysisRun {
                     })
                     .collect();
                 WorkspaceAnalysisStep::Complete(WorkspaceAnalysisDraft {
+                    base_generation: self.base_generation,
+                    canonical_options: self.canonical_options,
                     root: self.root,
                     root_revision: self.root_revision,
                     root_text: self.root_text,
@@ -1170,9 +1234,9 @@ impl WorkspaceAnalysisRun {
             EffectivePreprocessStep::Failed(error) => {
                 WorkspaceAnalysisStep::Failed(preprocess_workspace_error(error))
             }
-            EffectivePreprocessStep::HostError(error) => WorkspaceAnalysisStep::Failed(
-                WorkspaceError::new(WorkspaceErrorCode::Preprocess, error.to_string()),
-            ),
+            EffectivePreprocessStep::HostError(error) => {
+                WorkspaceAnalysisStep::Failed(host_resource_workspace_error(error))
+            }
             EffectivePreprocessStep::Cancelled => WorkspaceAnalysisStep::Cancelled,
             _ => WorkspaceAnalysisStep::Failed(WorkspaceError::new(
                 WorkspaceErrorCode::Preprocess,
@@ -1182,6 +1246,8 @@ impl WorkspaceAnalysisRun {
     }
 
     fn record_evidence(&mut self, evidence: WorkspaceResourceEvidence) {
+        #[cfg(test)]
+        RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(records.get() + 1));
         match evidence {
             WorkspaceResourceEvidence::Found { id, text } => {
                 self.missing.remove(&id);
@@ -1196,9 +1262,11 @@ impl WorkspaceAnalysisRun {
     }
 }
 
-/// Generation-independent analysis awaiting validation against live workspace state.
+/// Unstamped analysis awaiting validation against live workspace state.
 #[derive(Debug)]
 pub struct WorkspaceAnalysisDraft {
+    base_generation: Generation,
+    canonical_options: EffectiveProcessingOptions,
     root: ResourceId,
     root_revision: Revision,
     root_text: Arc<str>,
@@ -1214,7 +1282,45 @@ pub struct WorkspaceAnalysisDraft {
     base: BTreeMap<ResourceId, Arc<str>>,
     found: BTreeMap<ResourceId, Arc<str>>,
     missing: BTreeSet<ResourceId>,
-    include_journal: Vec<ResourceId>,
+    include_journal: Vec<WorkspaceIncludeEvent>,
+}
+
+/// How an executed include was resolved during suspended workspace analysis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceIncludeResolution {
+    /// The immutable starting snapshot already contained the resource.
+    SnapshotReady,
+    /// The host supplied the resource after preprocessing suspended.
+    DeferredFound,
+    /// The host authoritatively established that the resource was absent.
+    AuthoritativeMissing,
+}
+
+/// One executed include in source execution order.
+///
+/// The journal preserves repeated includes as separate events.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceIncludeEvent {
+    target: ResourceId,
+    resolution: WorkspaceIncludeResolution,
+    optional: bool,
+}
+
+impl WorkspaceIncludeEvent {
+    /// Returns the resolved resource identity.
+    pub fn target(&self) -> &ResourceId {
+        &self.target
+    }
+
+    /// Returns how this include was resolved.
+    pub const fn resolution(&self) -> WorkspaceIncludeResolution {
+        self.resolution
+    }
+
+    /// Returns whether the include declared the resource optional.
+    pub const fn is_optional(&self) -> bool {
+        self.optional
+    }
 }
 
 impl WorkspaceAnalysisDraft {
@@ -1223,9 +1329,28 @@ impl WorkspaceAnalysisDraft {
         &self.root
     }
 
-    /// Returns include requests in the order preprocessing executed them.
-    pub fn include_journal(&self) -> &[ResourceId] {
+    /// Returns includes in execution order, preserving repetitions and outcomes.
+    pub fn include_journal(&self) -> &[WorkspaceIncludeEvent] {
         &self.include_journal
+    }
+
+    /// Returns the immutable workspace generation used to start this draft.
+    pub const fn base_generation(&self) -> Generation {
+        self.base_generation
+    }
+
+    /// Applies the strict generation and configuration gate required by an integration layer.
+    ///
+    /// [`Workspace::finalize_draft`] intentionally validates only resources
+    /// observed by the run, so unrelated workspace updates may still finalize.
+    /// A Language Server or another canonical-result owner must call this
+    /// method separately and discard a draft when it returns `false`.
+    pub fn matches_canonical_context(
+        &self,
+        generation: Generation,
+        options: &EffectiveProcessingOptions,
+    ) -> bool {
+        self.base_generation == generation && self.canonical_options.same_contract(options)
     }
 }
 
@@ -1289,6 +1414,9 @@ impl WorkspaceSnapshot {
     ///
     /// The returned continuation retains this immutable lookup and resumes from
     /// the exact include directive without rebuilding or rescanning the snapshot.
+    /// The resulting draft records this snapshot generation and the exact
+    /// effective-options instance so an integration layer can strictly reject
+    /// non-canonical work before calling [`Workspace::finalize_draft`].
     pub fn analyze_resumable(
         &self,
         root: &ResourceId,
@@ -1311,10 +1439,12 @@ impl WorkspaceSnapshot {
                 root.to_string(),
             ));
         };
+        let canonical_options = options.clone();
         let options = options
             .clone()
             .with_source_id(Some(SourceId::new(root.to_string())));
         let state = WorkspaceAnalysisRun {
+            base_generation: self.generation,
             root: root.clone(),
             root_revision: root_resource.revision,
             root_text: Arc::clone(&root_resource.text),
@@ -1325,6 +1455,7 @@ impl WorkspaceSnapshot {
                 observed: Mutex::new(BTreeSet::new()),
             },
             options,
+            canonical_options,
             found: BTreeMap::new(),
             missing: BTreeSet::new(),
         };
@@ -1585,6 +1716,13 @@ fn preprocess_workspace_error(error: PreprocessError) -> WorkspaceError {
                 .then_some(error.target.as_deref())
                 .flatten(),
         )
+}
+
+fn host_resource_workspace_error(
+    error: adocweave::preprocess::HostResourceError,
+) -> WorkspaceError {
+    WorkspaceError::new(WorkspaceErrorCode::Preprocess, error.to_string())
+        .with_host_resource(error.kind(), error.target())
 }
 
 fn actual_dependencies(
@@ -2140,6 +2278,9 @@ mod tests {
         assert_send_sync::<SuspendedWorkspaceAnalysis>();
         assert_send_sync::<WorkspaceResourceRequest>();
         assert_send_sync::<WorkspaceResourceResponse>();
+        assert_send_sync::<WorkspaceIncludeEvent>();
+        assert_send_sync::<WorkspaceIncludeResolution>();
+        assert_send_sync::<WorkspaceHostResourceErrorKind>();
 
         let mut workspace = Workspace::default();
         let root = id("file:///book/root.adoc");
@@ -2266,7 +2407,7 @@ mod tests {
 
     #[test]
     fn resumable_workspace_analysis_uses_each_stage_once_and_finalizes_evidence() {
-        RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 3]));
+        RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
         let mut workspace = Workspace::default();
         let root = id("file:///book/root.adoc");
         let base = id("file:///book/base.adoc");
@@ -2276,7 +2417,7 @@ mod tests {
             .upsert_disk(
                 root.clone(),
                 Revision::new(1),
-                "include::base.adoc[]\ninclude::loaded.adoc[]\ninclude::missing.adoc[optional]\n",
+                "include::base.adoc[]\ninclude::loaded.adoc[]\ninclude::base.adoc[]\ninclude::loaded.adoc[]\ninclude::missing.adoc[optional]\n",
             )
             .expect("root");
         workspace
@@ -2284,10 +2425,11 @@ mod tests {
             .expect("base");
         workspace.register_root(root.clone()).expect("root");
         let snapshot = workspace.snapshot();
+        let canonical_options = effective_options();
 
         let WorkspaceAnalysisStep::NeedResource(loaded_continuation) = snapshot.analyze_resumable(
             &root,
-            &effective_options(),
+            &canonical_options,
             ProjectionLimits::default(),
             &NeverCancelled,
         ) else {
@@ -2311,11 +2453,43 @@ mod tests {
             panic!("authoritative absence must complete analysis");
         };
 
-        assert_eq!(draft.include_journal(), &[base, loaded.clone(), missing]);
-        RESUMABLE_STAGE_RUNS.with(|runs| assert_eq!(runs.get(), [1, 1, 1]));
+        assert_eq!(
+            draft.include_journal(),
+            &[
+                WorkspaceIncludeEvent {
+                    target: base,
+                    resolution: WorkspaceIncludeResolution::SnapshotReady,
+                    optional: false,
+                },
+                WorkspaceIncludeEvent {
+                    target: loaded.clone(),
+                    resolution: WorkspaceIncludeResolution::DeferredFound,
+                    optional: false,
+                },
+                WorkspaceIncludeEvent {
+                    target: id("file:///book/base.adoc"),
+                    resolution: WorkspaceIncludeResolution::SnapshotReady,
+                    optional: false,
+                },
+                WorkspaceIncludeEvent {
+                    target: loaded.clone(),
+                    resolution: WorkspaceIncludeResolution::DeferredFound,
+                    optional: false,
+                },
+                WorkspaceIncludeEvent {
+                    target: missing,
+                    resolution: WorkspaceIncludeResolution::AuthoritativeMissing,
+                    optional: true,
+                },
+            ]
+        );
+        RESUMABLE_STAGE_RUNS.with(|runs| assert_eq!(runs.get(), [1, 1, 1, 1]));
+        assert!(draft.matches_canonical_context(snapshot.generation(), &canonical_options));
+        assert!(!draft.matches_canonical_context(snapshot.generation(), &effective_options()));
         workspace
             .upsert_disk(loaded.clone(), Revision::new(3), Arc::clone(&loaded_text))
             .expect("stage loaded resource");
+        assert!(!draft.matches_canonical_context(workspace.generation(), &canonical_options));
         let analysis = workspace.finalize_draft(draft).expect("current evidence");
         assert_eq!(analysis.generation(), workspace.generation());
         assert_eq!(analysis.resource_revisions[&loaded], Revision::new(3));
@@ -2449,6 +2623,232 @@ mod tests {
             workspace
                 .finalize_draft(root_draft)
                 .expect_err("root evidence must remain current")
+                .code,
+            WorkspaceErrorCode::StaleRevision
+        );
+    }
+
+    struct CancelAtResumableStage(usize);
+
+    impl adocweave::CancellationCheck for CancelAtResumableStage {
+        fn is_cancelled(&self) -> bool {
+            RESUMABLE_STAGE_RUNS.with(|runs| runs.get()[self.0] > 0)
+        }
+    }
+
+    #[test]
+    fn resumable_analysis_discards_analysis_projection_and_pre_draft_cancellation() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), "paragraph\n")
+            .expect("root");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+
+        for stage in 1..=3 {
+            RESUMABLE_STAGE_RUNS.with(|runs| runs.set([0; 4]));
+            assert!(matches!(
+                snapshot.analyze_resumable(
+                    &root,
+                    &effective_options(),
+                    ProjectionLimits::default(),
+                    &CancelAtResumableStage(stage),
+                ),
+                WorkspaceAnalysisStep::Cancelled
+            ));
+            RESUMABLE_STAGE_RUNS.with(|runs| {
+                let actual = runs.get();
+                assert_eq!(actual[0], 1);
+                assert_eq!(actual[1], 1);
+                assert_eq!(actual[2], usize::from(stage >= 2));
+                assert_eq!(actual[3], usize::from(stage >= 3));
+            });
+        }
+    }
+
+    #[test]
+    fn workspace_preserves_host_failure_kinds_and_rejects_foreign_responses() {
+        let mut workspace = Workspace::default();
+        let first_root = id("file:///book/first.adoc");
+        let second_root = id("file:///book/second.adoc");
+        workspace
+            .upsert_disk(
+                first_root.clone(),
+                Revision::new(1),
+                "include::first-part.adoc[]\n",
+            )
+            .expect("first root");
+        workspace
+            .upsert_disk(
+                second_root.clone(),
+                Revision::new(1),
+                "include::second-part.adoc[]\n",
+            )
+            .expect("second root");
+        workspace
+            .register_root(first_root.clone())
+            .expect("first root");
+        workspace
+            .register_root(second_root.clone())
+            .expect("second root");
+        let snapshot = workspace.snapshot();
+        let options = effective_options();
+        let WorkspaceAnalysisStep::NeedResource(first) = snapshot.analyze_resumable(
+            &first_root,
+            &options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("first run must suspend");
+        };
+        let WorkspaceAnalysisStep::NeedResource(second) = snapshot.analyze_resumable(
+            &second_root,
+            &options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("second run must suspend");
+        };
+        let foreign_response = first.request().found("foreign\n");
+        RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(0));
+        let WorkspaceAnalysisStep::Failed(error) = second.resume(foreign_response, &NeverCancelled)
+        else {
+            panic!("foreign response must fail");
+        };
+        assert_eq!(error.code, WorkspaceErrorCode::Preprocess);
+        assert_eq!(
+            error.host_resource_kind(),
+            Some(WorkspaceHostResourceErrorKind::ResponseMismatch)
+        );
+        assert_eq!(error.diagnostic_code(), "host-resource-response-mismatch");
+        RESUMABLE_EVIDENCE_RECORDS.with(|records| assert_eq!(records.get(), 0));
+
+        let WorkspaceAnalysisStep::NeedResource(same_run_first) = snapshot.analyze_resumable(
+            &first_root,
+            &options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("same target first run must suspend");
+        };
+        let WorkspaceAnalysisStep::NeedResource(same_run_second) = snapshot.analyze_resumable(
+            &first_root,
+            &options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("same target second run must suspend");
+        };
+        let stale_response = same_run_first.request().found("stale\n");
+        RESUMABLE_EVIDENCE_RECORDS.with(|records| records.set(0));
+        let WorkspaceAnalysisStep::Failed(error) =
+            same_run_second.resume(stale_response, &NeverCancelled)
+        else {
+            panic!("response from another run must fail");
+        };
+        assert_eq!(
+            error.host_resource_kind(),
+            Some(WorkspaceHostResourceErrorKind::ResponseMismatch)
+        );
+        RESUMABLE_EVIDENCE_RECORDS.with(|records| assert_eq!(records.get(), 0));
+
+        let WorkspaceAnalysisStep::NeedResource(load) = snapshot.analyze_resumable(
+            &first_root,
+            &options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("load failure run must suspend");
+        };
+        let target = id(load.request().target());
+        let response = load.request().load_failed("permission denied");
+        let WorkspaceAnalysisStep::Failed(error) = load.resume(response, &NeverCancelled) else {
+            panic!("load failure must remain typed");
+        };
+        assert_eq!(error.code, WorkspaceErrorCode::Preprocess);
+        assert_eq!(
+            error.host_resource_kind(),
+            Some(WorkspaceHostResourceErrorKind::LoadFailed)
+        );
+        assert_eq!(error.requested_resource(), Some(&target));
+        assert_eq!(error.diagnostic_code(), "host-resource-load-failed");
+    }
+
+    #[test]
+    fn non_root_revision_and_layer_changes_accept_the_same_shared_text() {
+        let mut workspace = Workspace::default();
+        let root = id("file:///book/root.adoc");
+        let base = id("file:///book/base.adoc");
+        let loaded = id("file:///book/loaded.adoc");
+        let unrelated = id("file:///book/unrelated.adoc");
+        let root_text = Arc::<str>::from("include::base.adoc[]\ninclude::loaded.adoc[]\n");
+        let base_text = Arc::<str>::from("base\n");
+        workspace
+            .upsert_disk(root.clone(), Revision::new(1), Arc::clone(&root_text))
+            .expect("root");
+        workspace
+            .upsert_disk(base.clone(), Revision::new(1), Arc::clone(&base_text))
+            .expect("base");
+        workspace.register_root(root.clone()).expect("root");
+        let snapshot = workspace.snapshot();
+        let canonical_options = effective_options();
+        let WorkspaceAnalysisStep::NeedResource(continuation) = snapshot.analyze_resumable(
+            &root,
+            &canonical_options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("loaded resource must suspend");
+        };
+        let loaded_text = Arc::<str>::from("loaded\n");
+        let response = continuation.request().found(Arc::clone(&loaded_text));
+        let WorkspaceAnalysisStep::Complete(draft) = continuation.resume(response, &NeverCancelled)
+        else {
+            panic!("analysis must complete");
+        };
+        let base_generation = draft.base_generation();
+
+        workspace
+            .upsert_disk(base.clone(), Revision::new(2), Arc::clone(&base_text))
+            .expect("base revision");
+        workspace
+            .upsert_disk(loaded.clone(), Revision::new(1), Arc::clone(&loaded_text))
+            .expect("found disk");
+        workspace
+            .upsert_overlay(loaded.clone(), Revision::new(2), Arc::clone(&loaded_text))
+            .expect("found overlay");
+        workspace
+            .upsert_disk(unrelated, Revision::new(1), "unrelated\n")
+            .expect("unrelated generation");
+
+        assert_ne!(base_generation, workspace.generation());
+        assert!(!draft.matches_canonical_context(workspace.generation(), &canonical_options));
+        let analysis = workspace
+            .finalize_draft(draft)
+            .expect("same observed allocations remain valid");
+        assert_eq!(analysis.resource_revisions[&base], Revision::new(2));
+        assert_eq!(analysis.resource_revisions[&loaded], Revision::new(2));
+        assert_eq!(
+            workspace.get(&loaded).unwrap().layer(),
+            ResourceLayer::Overlay
+        );
+
+        let WorkspaceAnalysisStep::Complete(root_draft) = workspace.snapshot().analyze_resumable(
+            &root,
+            &canonical_options,
+            ProjectionLimits::default(),
+            &NeverCancelled,
+        ) else {
+            panic!("all resources are ready");
+        };
+        workspace
+            .upsert_disk(root, Revision::new(2), Arc::clone(&root_text))
+            .expect("root revision changes with shared text");
+        assert_eq!(
+            workspace
+                .finalize_draft(root_draft)
+                .expect_err("root revision remains an explicit gate")
                 .code,
             WorkspaceErrorCode::StaleRevision
         );
