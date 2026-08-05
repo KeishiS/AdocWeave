@@ -148,11 +148,23 @@ impl Default for PreprocessOptions {
 }
 
 /// A validated, immutable configuration for preprocessing followed by analysis.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct EffectiveProcessingOptions {
     analysis: crate::core::AnalysisOptions,
     preprocess: PreprocessOptions,
+    contract: Arc<ProcessingContract>,
 }
+
+#[derive(Debug)]
+struct ProcessingContract;
+
+impl PartialEq for EffectiveProcessingOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.analysis == other.analysis && self.preprocess == other.preprocess
+    }
+}
+
+impl Eq for EffectiveProcessingOptions {}
 
 impl EffectiveProcessingOptions {
     /// Validates that settings consumed by both stages have one effective value.
@@ -176,6 +188,7 @@ impl EffectiveProcessingOptions {
         Ok(Self {
             analysis,
             preprocess,
+            contract: Arc::new(ProcessingContract),
         })
     }
 
@@ -192,6 +205,7 @@ impl EffectiveProcessingOptions {
     /// Returns the same effective settings with one source identity.
     pub fn with_source_id(mut self, source_id: Option<SourceId>) -> Self {
         self.preprocess.source_id = source_id;
+        self.contract = Arc::new(ProcessingContract);
         self
     }
 }
@@ -205,6 +219,8 @@ pub enum ProcessingOptionsError {
     AttributeExpansionDepth,
     /// Attribute expansion byte limits differ between stages.
     AttributeExpansionBytes,
+    /// A prepared document belongs to a different effective processing contract.
+    ContractMismatch,
 }
 
 impl ProcessingOptionsError {
@@ -214,6 +230,7 @@ impl ProcessingOptionsError {
             Self::ExternalAttributes => "external-attributes-mismatch",
             Self::AttributeExpansionDepth => "attribute-expansion-depth-mismatch",
             Self::AttributeExpansionBytes => "attribute-expansion-bytes-mismatch",
+            Self::ContractMismatch => "processing-contract-mismatch",
         }
     }
 }
@@ -229,6 +246,9 @@ impl fmt::Display for ProcessingOptionsError {
             }
             Self::AttributeExpansionBytes => {
                 "analysis and preprocessing attribute expansion byte limits do not match"
+            }
+            Self::ContractMismatch => {
+                "prepared document belongs to a different effective processing contract"
             }
         })
     }
@@ -396,6 +416,23 @@ pub struct PreprocessedDocument {
     pub notices: Vec<PreprocessNotice>,
 }
 
+/// A preprocessed document bound to the effective settings that produced it.
+///
+/// The private contract prevents a host from preprocessing with one set of
+/// shared analysis settings and analyzing the result with another.
+#[derive(Debug)]
+pub struct PreparedPreprocessedDocument {
+    document: PreprocessedDocument,
+    contract: Arc<ProcessingContract>,
+}
+
+impl PreparedPreprocessedDocument {
+    /// Returns the completed preprocessed document and source map.
+    pub const fn document(&self) -> &PreprocessedDocument {
+        &self.document
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SourceMapInvariantError;
@@ -487,6 +524,52 @@ impl EffectiveProcessingOptions {
     ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
         preprocess_and_analyze_effective(source, snapshot, self, inputs.cancellation())
     }
+
+    /// Starts preprocessing under this effective processing contract.
+    pub fn preprocess_resumable(
+        &self,
+        source: &str,
+        resources: &(impl ResourceLookup + ?Sized),
+        cancellation: &dyn CancellationCheck,
+    ) -> EffectivePreprocessStep {
+        bind_effective_step(
+            preprocess_resumable(source, self.preprocess(), resources, cancellation),
+            Arc::clone(&self.contract),
+        )
+    }
+
+    /// Analyzes a document prepared under this same effective contract.
+    pub fn analyze_preprocessed(
+        &self,
+        prepared: PreparedPreprocessedDocument,
+        inputs: PreprocessInputs<'_>,
+    ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
+        if !Arc::ptr_eq(&self.contract, &prepared.contract) {
+            return Err(PreprocessedAnalysisError::Options(
+                ProcessingOptionsError::ContractMismatch,
+            ));
+        }
+        let cancellation = inputs.cancellation();
+        let analysis = Engine::new(self.analysis().clone())
+            .analyze_with(
+                &prepared.document.source,
+                crate::AnalysisInputs {
+                    source_id: self.preprocess().source_id.as_ref(),
+                    cancellation: Some(cancellation),
+                },
+            )
+            .map_err(|error| {
+                if error == ParseError::Cancelled {
+                    PreprocessedAnalysisError::Cancelled
+                } else {
+                    PreprocessedAnalysisError::Parse(error)
+                }
+            })?;
+        Ok(PreprocessedAnalysis {
+            document: prepared.document,
+            analysis,
+        })
+    }
 }
 
 fn preprocess_and_analyze_effective(
@@ -495,34 +578,28 @@ fn preprocess_and_analyze_effective(
     options: &EffectiveProcessingOptions,
     cancellation: &dyn CancellationCheck,
 ) -> Result<PreprocessedAnalysis, PreprocessedAnalysisError> {
-    let document = preprocess_with(
-        source,
-        snapshot,
-        options.preprocess(),
+    let prepared = match options.preprocess_resumable(source, snapshot, cancellation) {
+        EffectivePreprocessStep::Complete(document) => document,
+        EffectivePreprocessStep::NeedResource(_) => unreachable!("snapshots never defer resources"),
+        EffectivePreprocessStep::Failed(error) => {
+            return Err(PreprocessedAnalysisError::Preprocess(error));
+        }
+        EffectivePreprocessStep::HostError(host_error) => {
+            return Err(PreprocessedAnalysisError::Preprocess(error(
+                PreprocessErrorKind::InternalInvariant,
+                options.preprocess().source_id.clone(),
+                zero_range(),
+                host_error.to_string(),
+            )));
+        }
+        EffectivePreprocessStep::Cancelled => return Err(PreprocessedAnalysisError::Cancelled),
+    };
+    options.analyze_preprocessed(
+        prepared,
         PreprocessInputs {
             cancellation: Some(cancellation),
         },
     )
-    .map_err(|failure| match failure {
-        PreprocessFailure::Error(error) => PreprocessedAnalysisError::Preprocess(error),
-        PreprocessFailure::Cancelled => PreprocessedAnalysisError::Cancelled,
-    })?;
-    let analysis = Engine::new(options.analysis().clone())
-        .analyze_with(
-            &document.source,
-            crate::AnalysisInputs {
-                source_id: options.preprocess().source_id.as_ref(),
-                cancellation: Some(cancellation),
-            },
-        )
-        .map_err(|error| {
-            if error == ParseError::Cancelled {
-                PreprocessedAnalysisError::Cancelled
-            } else {
-                PreprocessedAnalysisError::Parse(error)
-            }
-        })?;
-    Ok(PreprocessedAnalysis { document, analysis })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -790,6 +867,65 @@ pub enum PreprocessStep {
     HostError(HostResourceError),
     /// Cooperative cancellation discarded all unpublished state.
     Cancelled,
+}
+
+/// Result of preprocessing under one validated effective processing contract.
+#[non_exhaustive]
+pub enum EffectivePreprocessStep {
+    /// Preprocessing completed and the document is ready for matching analysis.
+    Complete(PreparedPreprocessedDocument),
+    /// Processing needs one authoritative host resource response.
+    NeedResource(Box<EffectiveSuspendedPreprocess>),
+    /// Processing failed with a deterministic preprocessing error.
+    Failed(PreprocessError),
+    /// The host failed to satisfy the resource-loading contract.
+    HostError(HostResourceError),
+    /// Cooperative cancellation discarded all unpublished state.
+    Cancelled,
+}
+
+/// Opaque continuation bound to one effective processing contract.
+pub struct EffectiveSuspendedPreprocess {
+    inner: SuspendedPreprocess,
+    contract: Arc<ProcessingContract>,
+}
+
+impl EffectiveSuspendedPreprocess {
+    /// Returns the resource request that must be answered before resuming.
+    pub const fn request(&self) -> &ResourceRequest {
+        self.inner.request()
+    }
+
+    /// Consumes this continuation and resumes under its original contract.
+    pub fn resume(
+        self,
+        response: ResourceResponse,
+        resources: &(impl ResourceLookup + ?Sized),
+        cancellation: &dyn CancellationCheck,
+    ) -> EffectivePreprocessStep {
+        let Self { inner, contract } = self;
+        bind_effective_step(inner.resume(response, resources, cancellation), contract)
+    }
+}
+
+fn bind_effective_step(
+    step: PreprocessStep,
+    contract: Arc<ProcessingContract>,
+) -> EffectivePreprocessStep {
+    match step {
+        PreprocessStep::Complete(document) => {
+            EffectivePreprocessStep::Complete(PreparedPreprocessedDocument { document, contract })
+        }
+        PreprocessStep::NeedResource(suspended) => {
+            EffectivePreprocessStep::NeedResource(Box::new(EffectiveSuspendedPreprocess {
+                inner: *suspended,
+                contract,
+            }))
+        }
+        PreprocessStep::Failed(error) => EffectivePreprocessStep::Failed(error),
+        PreprocessStep::HostError(error) => EffectivePreprocessStep::HostError(error),
+        PreprocessStep::Cancelled => EffectivePreprocessStep::Cancelled,
+    }
 }
 
 /// Opaque, single-use continuation for one deferred resource request.
@@ -2516,9 +2652,72 @@ mod tests {
 
         assert_send::<PreprocessStep>();
         assert_send::<SuspendedPreprocess>();
+        assert_send::<EffectivePreprocessStep>();
+        assert_send::<EffectiveSuspendedPreprocess>();
+        assert_send::<PreparedPreprocessedDocument>();
         assert_send_sync::<ResourceRequest>();
         assert_send_sync::<ResourceResponse>();
         assert_send_sync::<ResourceLookupResult>();
+    }
+
+    #[test]
+    fn effective_resumption_prepares_for_the_same_analysis_contract() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert("part.adoc", resource("part.adoc", "included\n"));
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let options = EffectiveProcessingOptions::new(
+            crate::AnalysisOptions::default(),
+            PreprocessOptions::default(),
+        )
+        .expect("effective options");
+        let EffectivePreprocessStep::NeedResource(suspended) =
+            options.preprocess_resumable("include::part.adoc[]\n", &lookup, &NeverCancel)
+        else {
+            panic!("preprocessing must suspend");
+        };
+        let response = suspended
+            .request()
+            .found(resource("part.adoc", "included\n"));
+        let EffectivePreprocessStep::Complete(prepared) =
+            suspended.resume(response, &lookup, &NeverCancel)
+        else {
+            panic!("preprocessing must complete");
+        };
+
+        let result = options
+            .analyze_preprocessed(prepared, PreprocessInputs::default())
+            .expect("matching contract");
+
+        assert_eq!(result.document.source, "included\n");
+    }
+
+    #[test]
+    fn prepared_document_rejects_a_different_effective_contract() {
+        let first = EffectiveProcessingOptions::new(
+            crate::AnalysisOptions::default(),
+            PreprocessOptions::default(),
+        )
+        .expect("first contract");
+        let second = EffectiveProcessingOptions::new(
+            crate::AnalysisOptions::default(),
+            PreprocessOptions::default(),
+        )
+        .expect("second contract");
+        let EffectivePreprocessStep::Complete(prepared) =
+            first.preprocess_resumable("paragraph\n", &ResourceSnapshot::default(), &NeverCancel)
+        else {
+            panic!("preprocessing must complete");
+        };
+
+        assert!(matches!(
+            second.analyze_preprocessed(prepared, PreprocessInputs::default()),
+            Err(PreprocessedAnalysisError::Options(
+                ProcessingOptionsError::ContractMismatch
+            ))
+        ));
     }
 
     #[test]

@@ -161,11 +161,12 @@ pub mod output {
 /// Deterministic preprocessing over caller-provided resource snapshots.
 pub mod preprocess {
     pub use crate::preprocessor::{
-        AnalysisProjection, Directive, DirectiveKind, EffectiveProcessingOptions, ExpandedOffset,
-        ExpandedRange, HostResourceError, HostResourceErrorKind, IncludeRequest, OriginRange,
-        Originated, PreprocessError, PreprocessErrorKind, PreprocessFailure, PreprocessInputs,
-        PreprocessNotice, PreprocessNoticeKind, PreprocessOptions, PreprocessStep,
-        PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
+        AnalysisProjection, Directive, DirectiveKind, EffectivePreprocessStep,
+        EffectiveProcessingOptions, EffectiveSuspendedPreprocess, ExpandedOffset, ExpandedRange,
+        HostResourceError, HostResourceErrorKind, IncludeRequest, OriginRange, Originated,
+        PreparedPreprocessedDocument, PreprocessError, PreprocessErrorKind, PreprocessFailure,
+        PreprocessInputs, PreprocessNotice, PreprocessNoticeKind, PreprocessOptions,
+        PreprocessStep, PreprocessedAnalysis, PreprocessedAnalysisError, PreprocessedDocument,
         ProcessingOptionsError, ProjectedAttributeBinding, ProjectedAttributeReference,
         ProjectedDiagnostic, ProjectedDocumentAttribute, ProjectedDocumentAttributeValueLine,
         ProjectedDocumentSymbol, ProjectedFix, ProjectedLocalTarget, ProjectedReference,
