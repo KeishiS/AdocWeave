@@ -7,6 +7,20 @@
       "match": "substring",
       "message": "この語が指す保証、条件または判定を具体的に記述してください。",
       "documentation": "docs/developer-guide/terminology.adoc#legal-contract-metaphor"
+    },
+    {
+      "id": "syntax-mode-permissive-label",
+      "term": "寛容モード",
+      "match": "substring",
+      "message": "設定値の原綴りを用いて`permissive`モードと記載してください。",
+      "documentation": "docs/README.adoc#syntax-mode-terminology"
+    },
+    {
+      "id": "syntax-mode-strict-label",
+      "term": "厳格モード",
+      "match": "substring",
+      "message": "設定値の原綴りを用いて`strict`モードと記載してください。",
+      "documentation": "docs/README.adoc#syntax-mode-terminology"
     }
   ]
 }

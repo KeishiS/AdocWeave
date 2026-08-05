@@ -17,7 +17,7 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 |領域 |AdocWeaveの動作
 
 |未対応構文
-|寛容モードでは元の内容を保持し、厳格モードではコア操作を拒否します。
+|``permissive``モードでは元の内容を保持し、``strict``モードではコア操作を拒否します。
 
 |インライン書式
 |highlight、subscript、superscript、typographic quoteを含む対応書式について、境界と不完全なマーカーの
