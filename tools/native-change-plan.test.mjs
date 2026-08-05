@@ -57,6 +57,8 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/textlint-plugin-post-release-smoke.mjs",
     "tools/textlint-plugin-e2e/package-lock.json",
     "tools/build-textlint-wasm-node.sh",
+    "tools/textlint-plugin-compatibility-probe.mjs",
+    "tools/textlint-plugin-compatibility-probe.test.mjs",
     "tools/verify-textlint-wasm-memory.mjs",
     "packages/textlint-plugin-asciidoc/processor.mjs",
     "tools/protocol-rust-codegen.mjs",
@@ -312,6 +314,13 @@ test("検査の定義を変える変更ではすべてを実行する", () => {
     const scope = qualityScope([pathname]);
     assert.deepEqual(Object.values(scope), Array(Object.keys(scope).length).fill(true), pathname);
   }
+});
+
+test("互換性観測workflowの変更はpolicyとcandidate検証へ到達する", () => {
+  const pathname = ".github/workflows/textlint-plugin-compatibility-probe.yml";
+  assert.deepEqual(candidateImpact(pathname), { global: true, native: true });
+  const scope = qualityScope([pathname]);
+  assert.deepEqual(Object.values(scope), Array(Object.keys(scope).length).fill(true));
 });
 
 test("分類できないpathと空の変更集合ではすべてを実行する", () => {

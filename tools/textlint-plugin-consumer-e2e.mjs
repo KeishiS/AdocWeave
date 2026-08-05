@@ -23,27 +23,26 @@ import {
 } from "./textlint-plugin-e2e/installed-tree.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
-const PACKAGE_CONTRACT = loadTextlintPluginPackageContract();
-const TEXTLINT_VERSION = PACKAGE_CONTRACT.compatibility.textlintVersion;
-const TEXTLINT_TYPES_VERSION = PACKAGE_CONTRACT.compatibility.textlintTypesVersion;
-const PACKAGE_NAME = PACKAGE_CONTRACT.identity.packageName;
-const PLUGIN_NAME = PACKAGE_CONTRACT.identity.pluginName;
 const EXPECTED_LINE = 3;
 const EXPECTED_COLUMN = 6;
 const CONSUMER_FIXTURE = fileURLToPath(new URL("./textlint-plugin-e2e/", import.meta.url));
 
-const fileCases = [
-  ...PACKAGE_CONTRACT.extensions.map((extension, index) => ({
-    name: `sample${extension}`,
-    newline: index === 1 ? "\r\n" : "\n",
-  })),
-  { name: "sample.guide", newline: "\n" },
-];
+function fileCases(contract) {
+  return [
+    ...contract.extensions.map((extension, index) => ({
+      name: `sample${extension}`,
+      newline: index === 1 ? "\r\n" : "\n",
+    })),
+    { name: "sample.guide", newline: "\n" },
+  ];
+}
 
-const stdinCases = PACKAGE_CONTRACT.extensions.map((extension, index) => ({
-  name: `stdin${extension}`,
-  newline: index === 1 ? "\r\n" : "\n",
-}));
+function stdinCases(contract) {
+  return contract.extensions.map((extension, index) => ({
+    name: `stdin${extension}`,
+    newline: index === 1 ? "\r\n" : "\n",
+  }));
+}
 
 const probeRule = String.raw`"use strict";
 
@@ -80,6 +79,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 export async function runTextlintPluginConsumerE2E(
   archive,
   {
+    contract = loadTextlintPluginPackageContract(),
     installPackage = installFixedConsumerAndPlugin,
     invokeTextlint = invokeTextlintCli,
   } = {},
@@ -90,22 +90,22 @@ export async function runTextlintPluginConsumerE2E(
 
   const root = await mkdtemp(join(tmpdir(), "adocweave-textlint-plugin-smoke-"));
   try {
-    await installPackage({ archive: archivePath, cwd: root });
-    await assertInstalledPackage(root);
+    await installPackage({ archive: archivePath, contract, cwd: root });
+    await assertInstalledPackage(root, contract);
 
     const rulesDirectory = join(root, "rules");
     await mkdir(rulesDirectory);
     await writeFile(join(rulesDirectory, "probe.js"), probeRule);
     const config = join(root, ".textlintrc.json");
     await writeFile(config, `${JSON.stringify({
-      plugins: { [PLUGIN_NAME]: { extensions: [".guide"] } },
+      plugins: { [contract.identity.pluginName]: { extensions: [".guide"] } },
       rules: {},
     }, null, 2)}\n`);
 
     const fixtures = join(root, "fixtures");
     await mkdir(fixtures);
     const inputByPath = new Map();
-    for (const fixture of fileCases) {
+    for (const fixture of fileCases(contract)) {
       const path = join(fixtures, fixture.name);
       const input = fixtureSource(fixture.newline);
       await writeFile(path, input);
@@ -122,7 +122,7 @@ export async function runTextlintPluginConsumerE2E(
     assert.equal(lintResult.code, 1, diagnosticForUnexpectedExit("file lint", lintResult));
     assertDiagnostics(lintResult.stdout, [...inputByPath.keys()]);
 
-    for (const fixture of stdinCases) {
+    for (const fixture of stdinCases(contract)) {
       const filename = join(fixtures, fixture.name);
       const stdinResult = await invokeTextlint({
         args: [...commonArguments, "--stdin", "--stdin-filename", filename],
@@ -183,26 +183,28 @@ export function assertDiagnostics(stdout, expectedPaths) {
   }
 }
 
-async function assertInstalledPackage(root) {
-  const packageRoot = join(root, "node_modules", ...PACKAGE_NAME.split("/"));
+async function assertInstalledPackage(root, contract) {
+  const { packageName } = contract.identity;
+  const textlintVersion = contract.compatibility.textlintVersion;
+  const packageRoot = join(root, "node_modules", ...packageName.split("/"));
   assert.equal((await lstat(packageRoot)).isSymbolicLink(), false, "installed plugin must not be a symlink");
   const manifestPath = join(packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  assert.equal(manifest.name, PACKAGE_NAME, `installed package name must be ${PACKAGE_NAME}`);
+  assert.equal(manifest.name, packageName, `installed package name must be ${packageName}`);
   assert.deepEqual(manifest.peerDependencies, {
-    "@textlint/types": TEXTLINT_TYPES_VERSION,
-    textlint: TEXTLINT_VERSION,
-  }, "installed plugin peer dependencies must match the package contract");
+    "@textlint/types": contract.compatibility.textlintTypesVersion,
+    textlint: textlintVersion,
+  }, `installed plugin peer dependencies must be pinned to ${textlintVersion}`);
   const require = createRequire(import.meta.url);
   assert.deepEqual(
-    Object.keys(require(join(packageRoot, PACKAGE_CONTRACT.wasm.wrapperPath))),
-    PACKAGE_CONTRACT.wasm.exportNames,
+    Object.keys(require(join(packageRoot, contract.wasm.wrapperPath))),
+    contract.wasm.exportNames,
     "packed WebAssembly wrapper exports must match the package contract",
   );
   const textlintManifest = JSON.parse(
     await readFile(join(root, "node_modules", "textlint", "package.json"), "utf8"),
   );
-  assert.equal(textlintManifest.version, TEXTLINT_VERSION, `textlint must be pinned to ${TEXTLINT_VERSION}`);
+  assert.equal(textlintManifest.version, textlintVersion, `textlint must be pinned to ${textlintVersion}`);
 }
 
 export async function installFixedConsumerAndPlugin({ archive, cwd }) {
@@ -245,7 +247,11 @@ export async function installFixedConsumerAndPlugin({ archive, cwd }) {
   assertConsumerTreeUnchanged(treeBefore, treeAfter);
 }
 
-export async function installLatestCompatibleConsumer({ archive, cwd }) {
+export async function installLatestCompatibleConsumer({
+  archive,
+  contract = loadTextlintPluginPackageContract(),
+  cwd,
+}) {
   const npm = npmInvocation();
   const result = await runProcess(npm.command, [
     ...npm.arguments,
@@ -254,7 +260,7 @@ export async function installLatestCompatibleConsumer({ archive, cwd }) {
     "--no-audit",
     "--no-fund",
     "--save-exact",
-    `textlint@${TEXTLINT_VERSION}`,
+    `textlint@${contract.compatibility.textlintVersion}`,
     archive,
   ], {
     cwd,

@@ -247,6 +247,7 @@ args = [
   "tools/platform-contract.test.mjs",
   "tools/release-installation-e2e.test.mjs",
   "tools/textlint-plugin-npx-smoke.test.mjs",
+  "tools/textlint-plugin-compatibility-probe.test.mjs",
   "tools/textlint-plugin-post-release-smoke.test.mjs",
   "tools/textlint-plugin-release-smoke.test.mjs",
   "tools/textlint-plugin-e2e/installed-tree.test.mjs",
@@ -475,6 +476,16 @@ node tools/textlint-plugin-npx-smoke.mjs \
 description = "Observe the published GitHub Release asset, checksum, and one-shot npx path after publication"
 command = "node"
 args = ["tools/textlint-plugin-post-release-smoke.mjs"]
+
+[tasks.textlint-plugin-compatibility-probe]
+description = "Observe the latest transitive npm resolution against a freshly built and verified candidate"
+dependencies = ["textlint-plugin-package-contract"]
+script_runner = "@shell"
+script = '''
+version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
+node tools/textlint-plugin-compatibility-probe.mjs \
+  "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
+'''
 
 [tasks.test-zed-release-package]
 description = "Verify the Zed release archive layout and deterministic bytes"

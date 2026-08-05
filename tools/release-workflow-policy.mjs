@@ -137,6 +137,72 @@ export function parseMakeTasks(source) {
   return tasks;
 }
 
+export function validateCompatibilityProbeWorkflow({
+  makefile,
+  protectedWorkflows,
+  source,
+}) {
+  const document = parseWorkflow("textlint-plugin-compatibility-probe.yml", source);
+  const triggers = Object.keys(document.on ?? {}).sort();
+  if (JSON.stringify(triggers) !== JSON.stringify(["schedule", "workflow_dispatch"])) {
+    fail("textlint compatibility probe must only support schedule and workflow_dispatch");
+  }
+  if (JSON.stringify(document.on.schedule) !== JSON.stringify([{ cron: "17 6 * * 1" }])) {
+    fail("textlint compatibility probe must use the reviewed weekly schedule");
+  }
+  if (JSON.stringify(document.permissions) !== JSON.stringify({ contents: "read" })) {
+    fail("textlint compatibility probe must only read repository contents");
+  }
+  if (document.concurrency?.group !== "textlint-plugin-compatibility-probe" ||
+      document.concurrency?.["cancel-in-progress"] !== false) {
+    fail("textlint compatibility probe must serialize observations without cancelling a running probe");
+  }
+  const jobNames = Object.keys(document.jobs ?? {});
+  if (JSON.stringify(jobNames) !== JSON.stringify(["observe-latest-resolution"])) {
+    fail("textlint compatibility workflow must contain only the observation job");
+  }
+  const job = document.jobs["observe-latest-resolution"];
+  requireTimeout(job, 30, "textlint compatibility observation must have a timeout");
+  if (job.needs !== undefined || job.if !== undefined || job["continue-on-error"] !== undefined) {
+    fail("textlint compatibility observation must remain an independent scheduled signal");
+  }
+  const checkout = step(
+    job,
+    (item) => item.uses?.startsWith("actions/checkout@"),
+    "textlint compatibility probe checkout is missing",
+  );
+  if (checkout.with?.["persist-credentials"] !== false) {
+    fail("textlint compatibility probe must not persist checkout credentials");
+  }
+  step(
+    job,
+    (item) => item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"),
+    "textlint compatibility probe must use the locked Nix environment",
+  );
+  requireExactCommand(
+    step(
+      job,
+      (item) => item.name ===
+        "Build, verify, and observe the latest compatible dependency resolution",
+      "textlint compatibility observation step is missing",
+    ).run,
+    "nix develop .#ci -c cargo make textlint-plugin-compatibility-probe",
+    "textlint compatibility workflow must build, verify, and probe the current checkout",
+  );
+  if (source.includes("secrets.") || /\bgh\s|permissions:\s*write/m.test(source)) {
+    fail("textlint compatibility probe must not receive secrets or mutate GitHub state");
+  }
+  for (const [name, protectedSource] of Object.entries(protectedWorkflows)) {
+    if (protectedSource.includes("textlint-plugin-compatibility-probe")) {
+      fail(`textlint compatibility probe must not enter the ${name} workflow`);
+    }
+  }
+  const tasks = parseMakeTasks(makefile);
+  requireTask(tasks, "textlint-plugin-compatibility-probe", {
+    dependencies: ["textlint-plugin-package-contract"],
+  });
+}
+
 function requireTask(tasks, name, expected) {
   const actual = tasks.get(name);
   if (!actual) fail(`Makefile is missing task: ${name}`);
@@ -202,7 +268,13 @@ export function validateReleaseWorkflowPolicy({
   windowsDistInstaller,
   browserStartup,
   textlintPackageContract,
+  compatibilityProbe,
 }) {
+  validateCompatibilityProbeWorkflow({
+    makefile,
+    protectedWorkflows: { contract, publish, release, smoke },
+    source: compatibilityProbe,
+  });
   validateBrowserStartupPolicy(browserStartup);
   const releaseDoc = parseWorkflow("release.yml", release);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
@@ -728,6 +800,7 @@ export function validateReleaseWorkflowPolicy({
       "tools/platform-contract.test.mjs",
       "tools/release-installation-e2e.test.mjs",
       "tools/textlint-plugin-npx-smoke.test.mjs",
+      "tools/textlint-plugin-compatibility-probe.test.mjs",
       "tools/textlint-plugin-post-release-smoke.test.mjs",
       "tools/textlint-plugin-release-smoke.test.mjs",
       "tools/textlint-plugin-e2e/installed-tree.test.mjs",
@@ -870,6 +943,7 @@ export function loadWorkflowPolicyInputs() {
     windowsDistBootstrap: JSON.parse(read("release/windows-dist-bootstrap.json")),
     windowsDistInstaller: read("tools/install-pinned-cargo-dist.ps1"),
     browserStartup: read("tools/browser-startup.mjs"),
+    compatibilityProbe: workflows["textlint-plugin-compatibility-probe.yml"],
     textlintPackageContract: loadTextlintPluginPackageContract(),
   };
 }

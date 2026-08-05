@@ -69,6 +69,61 @@ test("every external action requires a full commit SHA", () => {
   );
 });
 
+test("latest textlint compatibility probe stays scheduled, read-only, bounded, and non-gating", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  for (const [current, replacement, pattern] of [
+    ["  schedule:\n", "  pull_request:\n", /only support schedule and workflow_dispatch/],
+    ["cron: '17 6 * * 1'", "cron: '0 * * * *'", /reviewed weekly schedule/],
+    ["permissions:\n  contents: read", "permissions:\n  contents: write", /only read repository contents/],
+    ["cancel-in-progress: false", "cancel-in-progress: true", /without cancelling a running probe/],
+    ["timeout-minutes: 30", "timeout-minutes: 0", /must have a timeout/],
+    [
+      "nix develop .#ci -c cargo make textlint-plugin-compatibility-probe",
+      "nix develop .#ci -c node --version",
+      /build, verify, and probe the current checkout/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateReleaseWorkflowPolicy({
+        ...inputs,
+        compatibilityProbe: inputs.compatibilityProbe.replace(current, replacement),
+      }),
+      pattern,
+    );
+  }
+
+  assert.throws(
+    () => validatePinnedActions({
+      "textlint-plugin-compatibility-probe.yml": inputs.compatibilityProbe.replace(
+        /actions\/checkout@[0-9a-f]{40}/,
+        "actions/checkout@v7",
+      ),
+    }),
+    /not pinned/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        "[tasks.textlint-plugin-compatibility-probe]\n" +
+          "description = \"Observe the latest transitive npm resolution against a freshly built and verified candidate\"\n" +
+          "dependencies = [\"textlint-plugin-package-contract\"]",
+        "[tasks.textlint-plugin-compatibility-probe]\n" +
+          "description = \"Observe the latest transitive npm resolution against a freshly built and verified candidate\"\n" +
+          "dependencies = []",
+      ),
+    }),
+    /textlint-plugin-compatibility-probe dependencies must exactly match/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      release: `${inputs.release}\n# textlint-plugin-compatibility-probe\n`,
+    }),
+    /must not enter the release workflow/,
+  );
+});
+
 test("build and publish workflows cannot receive repository secrets", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
