@@ -29,6 +29,7 @@ pub use projection::{
 #[cfg(test)]
 thread_local! {
     static RESUMABLE_INCLUDE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RESUMABLE_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -73,7 +74,10 @@ impl FromIterator<(String, ResourceDocument)> for ResourceSnapshot {
 ///
 /// `Deferred` distinguishes a resource that a host may still acquire from a
 /// resource whose absence is authoritative for this preprocessing run.
+/// This enum is non-exhaustive so new host outcomes can be added without a
+/// breaking API change. Callers must retain a fallback match arm.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ResourceLookupResult {
     /// The resource is ready for deterministic preprocessing.
     Ready(ResourceDocument),
@@ -81,11 +85,19 @@ pub enum ResourceLookupResult {
     Missing,
     /// The host must acquire or otherwise resolve the resource before work can continue.
     Deferred,
+    /// The host could not load the resource and preprocessing cannot continue.
+    Failed(String),
 }
 
 /// Read-only resource boundary used by resumable preprocessing.
 pub trait ResourceLookup {
     /// Looks up one validated, resolved snapshot key.
+    ///
+    /// The lookup view must remain stable for the lifetime of one preprocessing
+    /// run. A host must not replace its workspace generation in place: it
+    /// starts a new run with a new view instead. Answers already observed by
+    /// the machine, including answers supplied after `Deferred`, are retained
+    /// and reused for the remainder of the run.
     fn lookup(&self, target: &str) -> ResourceLookupResult;
 }
 
@@ -616,6 +628,9 @@ pub fn preprocess_with(
     match preprocess_resumable(source, options, snapshot, cancellation) {
         PreprocessStep::Complete(document) => Ok(document),
         PreprocessStep::Failed(error) => Err(PreprocessFailure::Error(error)),
+        PreprocessStep::HostError(_) => {
+            unreachable!("ResourceSnapshot cannot report a host loading failure")
+        }
         PreprocessStep::Cancelled => Err(PreprocessFailure::Cancelled),
         PreprocessStep::NeedResource(_) => {
             unreachable!("ResourceSnapshot reports authoritative absence")
@@ -624,13 +639,29 @@ pub fn preprocess_with(
 }
 
 /// One resource requested by a suspended preprocessing run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
+struct ResourceCorrelation;
+
+#[derive(Clone, Debug)]
 pub struct ResourceRequest {
     target: String,
     optional: bool,
     source_id: Option<SourceId>,
     range: TextRange,
+    correlation: Arc<ResourceCorrelation>,
 }
+
+impl PartialEq for ResourceRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.target == other.target
+            && self.optional == other.optional
+            && self.source_id == other.source_id
+            && self.range == other.range
+            && Arc::ptr_eq(&self.correlation, &other.correlation)
+    }
+}
+
+impl Eq for ResourceRequest {}
 
 impl ResourceRequest {
     /// Returns the resolved snapshot key.
@@ -652,18 +683,102 @@ impl ResourceRequest {
     pub const fn range(&self) -> TextRange {
         self.range
     }
+
+    /// Builds the response for this request when loading succeeds.
+    pub fn found(&self, document: ResourceDocument) -> ResourceResponse {
+        ResourceResponse {
+            correlation: Arc::clone(&self.correlation),
+            outcome: ResourceResponseOutcome::Found(document),
+        }
+    }
+
+    /// Builds the response for this request when absence is authoritative.
+    pub fn not_found(&self) -> ResourceResponse {
+        ResourceResponse {
+            correlation: Arc::clone(&self.correlation),
+            outcome: ResourceResponseOutcome::NotFound,
+        }
+    }
+
+    /// Builds a terminal host-load failure for this request.
+    pub fn load_failed(&self, message: impl Into<String>) -> ResourceResponse {
+        ResourceResponse {
+            correlation: Arc::clone(&self.correlation),
+            outcome: ResourceResponseOutcome::LoadFailed(message.into()),
+        }
+    }
 }
 
 /// Authoritative answer supplied when suspended preprocessing resumes.
+///
+/// Responses can only be built from the matching [`ResourceRequest`]. The
+/// continuation verifies that correlation before accepting the answer.
+#[derive(Clone, Debug)]
+pub struct ResourceResponse {
+    correlation: Arc<ResourceCorrelation>,
+    outcome: ResourceResponseOutcome,
+}
+
+impl PartialEq for ResourceResponse {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.correlation, &other.correlation) && self.outcome == other.outcome
+    }
+}
+
+impl Eq for ResourceResponse {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceResponse {
-    /// The requested UTF-8 resource is available.
+enum ResourceResponseOutcome {
     Found(ResourceDocument),
-    /// The host established that the requested resource does not exist.
     NotFound,
+    LoadFailed(String),
+}
+
+/// A terminal failure at the host-owned resource boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostResourceError {
+    kind: HostResourceErrorKind,
+    target: String,
+    message: String,
+}
+
+impl HostResourceError {
+    pub const fn kind(&self) -> HostResourceErrorKind {
+        self.kind
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for HostResourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for HostResourceError {}
+
+/// Stable category for a host resource failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HostResourceErrorKind {
+    /// The host failed while loading the requested resource.
+    LoadFailed,
+    /// A response was built from a different or stale request.
+    ResponseMismatch,
 }
 
 /// Result of starting or resuming preprocessing.
+///
+/// This enum is non-exhaustive so future suspension and terminal states can be
+/// added compatibly. Callers must retain a fallback match arm.
+#[non_exhaustive]
 pub enum PreprocessStep {
     /// Preprocessing completed and produced one immutable document.
     Complete(PreprocessedDocument),
@@ -671,6 +786,8 @@ pub enum PreprocessStep {
     NeedResource(Box<SuspendedPreprocess>),
     /// Processing failed with a deterministic preprocessing error.
     Failed(PreprocessError),
+    /// The host failed to satisfy the resource-loading contract.
+    HostError(HostResourceError),
     /// Cooperative cancellation discarded all unpublished state.
     Cancelled,
 }
@@ -701,18 +818,36 @@ impl SuspendedPreprocess {
         if cancellation.is_cancelled() {
             return PreprocessStep::Cancelled;
         }
-        let cached = match &response {
-            ResourceResponse::Found(document) => Some(document.clone()),
-            ResourceResponse::NotFound => None,
+        if !Arc::ptr_eq(&self.request.correlation, &response.correlation) {
+            return PreprocessStep::HostError(HostResourceError {
+                kind: HostResourceErrorKind::ResponseMismatch,
+                target: self.request.target,
+                message: "resource response does not match the suspended request".to_owned(),
+            });
+        }
+        let document = match response.outcome {
+            ResourceResponseOutcome::Found(document) => Some(document),
+            ResourceResponseOutcome::NotFound => None,
+            ResourceResponseOutcome::LoadFailed(message) => {
+                return PreprocessStep::HostError(HostResourceError {
+                    kind: HostResourceErrorKind::LoadFailed,
+                    target: self.request.target,
+                    message,
+                });
+            }
         };
         self.machine
             .resolved
-            .insert(self.request.target.clone(), cached);
-        if let Err(failure) = self
+            .insert(self.request.target.clone(), document.clone());
+        let child = match self
             .machine
-            .resolve_pending(self.pending, response, cancellation)
+            .resolve_pending(self.pending, document, cancellation)
         {
-            return failure.into_step();
+            Ok(child) => child,
+            Err(failure) => return failure.into_step(),
+        };
+        if let Some(child) = child {
+            self.machine.push_cursor(child);
         }
         self.machine.drive(resources, cancellation)
     }
@@ -756,7 +891,7 @@ pub fn preprocess_resumable(
         Ok(frame) => frame,
         Err(error) => return PreprocessStep::Failed(error),
     };
-    machine.stack.push(frame);
+    machine.push_cursor(frame);
     machine.drive(resources, cancellation)
 }
 
@@ -829,6 +964,12 @@ struct PendingInclude {
 enum MachineFailure {
     Error(PreprocessError),
     Cancelled,
+}
+
+enum MachineLookup {
+    Resolved(Option<ResourceDocument>),
+    Deferred(ResourceRequest),
+    Failed(HostResourceError),
 }
 
 impl MachineFailure {
@@ -959,9 +1100,9 @@ impl PreprocessMachine {
     fn resolve_pending(
         &mut self,
         pending: PendingInclude,
-        response: ResourceResponse,
+        document: Option<ResourceDocument>,
         cancellation: &dyn CancellationCheck,
-    ) -> Result<(), MachineFailure> {
+    ) -> Result<Option<ExpansionCursor>, MachineFailure> {
         let PendingInclude {
             frame,
             source_id,
@@ -972,10 +1113,6 @@ impl PreprocessMachine {
             attributes,
             optional,
         } = pending;
-        let document = match response {
-            ResourceResponse::Found(document) => Some(document),
-            ResourceResponse::NotFound => None,
-        };
         self.directives.push(Directive {
             kind: DirectiveKind::Include,
             source_id: source_id.clone(),
@@ -994,7 +1131,7 @@ impl PreprocessMachine {
                     range,
                     target,
                 });
-                return Ok(());
+                return Ok(None);
             }
             return Err(PreprocessError {
                 kind: PreprocessErrorKind::MissingResource,
@@ -1025,8 +1162,7 @@ impl PreprocessMachine {
             document.source_id.clone(),
             target_base(&target),
         );
-        self.stack.push(ExpansionCursor::new(transformed, child)?);
-        Ok(())
+        Ok(Some(ExpansionCursor::new(transformed, child)?))
     }
 
     fn drive(
@@ -1054,6 +1190,8 @@ impl PreprocessMachine {
             }
             let line_index = cursor.next_line;
             cursor.next_line += 1;
+            #[cfg(test)]
+            RESUMABLE_LINE_VISITS.with(|visits| visits.set(visits.get().saturating_add(1)));
             let line = cursor.lines[line_index].clone();
             let source_id = cursor.frame.source_id();
             let content = line.text.trim_end_matches(['\r', '\n']);
@@ -1073,63 +1211,21 @@ impl PreprocessMachine {
                 if cursor.attribute_value_through == Some(line_index) {
                     cursor.attribute_value_through = None;
                 }
-                self.stack.push(cursor);
+                self.push_cursor(cursor);
                 continue;
             }
             match directive::recognize(content) {
                 RecognizedDirective::Conditional(directive) => {
-                    if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
+                    if let Err(failure) = self.process_conditional(
+                        &mut cursor,
+                        directive,
+                        &line,
+                        content.len(),
+                        enabled,
+                    ) {
                         return failure.into_step();
                     }
-                    self.directives.push(Directive {
-                        kind: directive.kind,
-                        source_id: source_id.clone(),
-                        range: line.range,
-                        authored_target: None,
-                        optional: false,
-                        target: directive.target.clone(),
-                        target_range: relative_range(
-                            line.range,
-                            directive.target_start,
-                            directive.target_end,
-                        ),
-                        resource_source_id: None,
-                    });
-                    match directive::transition(
-                        &directive,
-                        enabled,
-                        self.state.attributes(),
-                        self.state.attribute_limits(),
-                    ) {
-                        ConditionalTransition::Inline { selected } => {
-                            if selected {
-                                let ending = &line.text[content.len()..];
-                                if let Err(failure) = self.append(
-                                    &format!("{}{ending}", directive.attributes),
-                                    source_id.clone(),
-                                    line.range,
-                                    SourceMapping::WholeOrigin,
-                                ) {
-                                    return failure.into_step();
-                                }
-                                self.state.finish_directive_output();
-                            }
-                        }
-                        ConditionalTransition::Open { enabled: condition } => {
-                            cursor.conditions.push(condition)
-                        }
-                        ConditionalTransition::Close => {
-                            if cursor.conditions.pop().is_none() {
-                                return PreprocessStep::Failed(error(
-                                    PreprocessErrorKind::InvalidDirective,
-                                    source_id,
-                                    line.range,
-                                    "endif has no matching conditional",
-                                ));
-                            }
-                        }
-                    }
-                    self.stack.push(cursor);
+                    self.push_cursor(cursor);
                 }
                 RecognizedDirective::Include(include) if enabled => {
                     if self.options.enable_includes {
@@ -1138,43 +1234,16 @@ impl PreprocessMachine {
                             Ok(pending) => pending,
                             Err(failure) => return failure.into_step(),
                         };
-                        self.stack.push(cursor);
-                        let response = if let Some(cached) = self.resolved.get(&pending.target) {
-                            cached
-                                .clone()
-                                .map_or(ResourceLookupResult::Missing, ResourceLookupResult::Ready)
-                        } else {
-                            resources.lookup(&pending.target)
-                        };
-                        match response {
-                            ResourceLookupResult::Ready(document) => {
-                                self.resolved
-                                    .insert(pending.target.clone(), Some(document.clone()));
-                                if let Err(failure) = self.resolve_pending(
-                                    pending,
-                                    ResourceResponse::Found(document),
-                                    cancellation,
-                                ) {
-                                    return failure.into_step();
+                        self.push_cursor(cursor);
+                        match self.lookup_resource(&pending, resources) {
+                            MachineLookup::Resolved(document) => {
+                                match self.resolve_pending(pending, document, cancellation) {
+                                    Ok(Some(child)) => self.push_cursor(child),
+                                    Ok(None) => {}
+                                    Err(failure) => return failure.into_step(),
                                 }
                             }
-                            ResourceLookupResult::Missing => {
-                                self.resolved.insert(pending.target.clone(), None);
-                                if let Err(failure) = self.resolve_pending(
-                                    pending,
-                                    ResourceResponse::NotFound,
-                                    cancellation,
-                                ) {
-                                    return failure.into_step();
-                                }
-                            }
-                            ResourceLookupResult::Deferred => {
-                                let request = ResourceRequest {
-                                    target: pending.target.clone(),
-                                    optional: pending.optional,
-                                    source_id: pending.source_id.clone(),
-                                    range: pending.range,
-                                };
+                            MachineLookup::Deferred(request) => {
                                 return PreprocessStep::NeedResource(Box::new(
                                     SuspendedPreprocess {
                                         machine: self,
@@ -1183,114 +1252,230 @@ impl PreprocessMachine {
                                     },
                                 ));
                             }
+                            MachineLookup::Failed(error) => {
+                                return PreprocessStep::HostError(error);
+                            }
                         }
                     } else {
-                        if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
-                            return failure.into_step();
-                        }
-                        let authored_target = directive::expand_attributes(
-                            &include.target,
-                            self.state.attributes(),
-                            self.state.attribute_limits(),
-                        );
-                        let optional = parse_attributes(&include.attributes)
-                            .is_ok_and(|attributes| attributes.contains_key("optional"));
-                        self.directives.push(Directive {
-                            kind: DirectiveKind::Include,
-                            source_id: source_id.clone(),
-                            range: line.range,
-                            authored_target: Some(authored_target),
-                            optional,
-                            target: include.target,
-                            target_range: relative_range(
-                                line.range,
-                                include.target_start,
-                                include.target_end,
-                            ),
-                            resource_source_id: None,
-                        });
                         if let Err(failure) =
-                            self.append(&line.text, source_id.clone(), line.range, line.mapping)
+                            self.process_unexpanded_include(include, &line, source_id)
                         {
                             return failure.into_step();
                         }
-                        self.state.finish_directive_output();
-                        self.stack.push(cursor);
+                        self.push_cursor(cursor);
                     }
                 }
                 RecognizedDirective::Escaped(literal) if enabled => {
-                    let ending = &line.text[content.len()..];
-                    if let Err(failure) = self.append(
-                        &format!("{literal}{ending}"),
-                        source_id.clone(),
-                        line.range,
-                        SourceMapping::WholeOrigin,
-                    ) {
+                    if let Err(failure) =
+                        self.process_escaped(literal, &line, content.len(), source_id)
+                    {
                         return failure.into_step();
                     }
-                    self.state.finish_directive_output();
-                    self.stack.push(cursor);
+                    self.push_cursor(cursor);
                 }
                 RecognizedDirective::Text if enabled => {
-                    let delimiter = self.state.observe_delimiter(content);
-                    let mut document_attribute = false;
-                    if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
-                        return failure.into_step();
-                    }
-                    if self.state.accepts_attribute(delimiter)
-                        && crate::attributes::parse_line(
-                            content,
-                            cursor.document.lines()[line_index]
-                                .content_range()
-                                .start()
-                                .to_usize(),
-                            cursor.document.lines()[line_index].full_range(),
-                        )
-                        .is_some()
-                    {
-                        let parsed = match crate::attributes::parse_lines(
-                            &cursor.document,
-                            line_index,
-                            &|| cancellation.is_cancelled(),
-                        ) {
-                            Ok(parsed) => parsed,
-                            Err(crate::parser_support::ParseFailure::Cancelled) => {
-                                return PreprocessStep::Cancelled;
-                            }
-                            Err(
-                                crate::parser_support::ParseFailure::Position(_)
-                                | crate::parser_support::ParseFailure::Budget(_)
-                                | crate::parser_support::ParseFailure::InternalInvariant,
-                            ) => {
-                                return PreprocessStep::Failed(error(
-                                    PreprocessErrorKind::InternalInvariant,
-                                    source_id.clone(),
-                                    line.range,
-                                    "attribute preprocessing failed",
-                                ));
-                            }
-                        };
-                        if let Some((occurrence, _, last_line)) = parsed {
-                            self.state.apply_attribute(&occurrence);
-                            document_attribute = true;
-                            if last_line > line_index {
-                                cursor.attribute_value_through = Some(last_line);
-                            }
-                        }
-                    }
                     if let Err(failure) =
-                        self.append(&line.text, source_id.clone(), line.range, line.mapping)
+                        self.process_text(&mut cursor, line_index, &line, content, cancellation)
                     {
                         return failure.into_step();
                     }
-                    self.state.finish_line(document_attribute, content);
-                    self.stack.push(cursor);
+                    self.push_cursor(cursor);
                 }
                 RecognizedDirective::Include(_)
                 | RecognizedDirective::Escaped(_)
-                | RecognizedDirective::Text => self.stack.push(cursor),
+                | RecognizedDirective::Text => self.push_cursor(cursor),
             }
         }
+    }
+
+    fn push_cursor(&mut self, cursor: ExpansionCursor) {
+        self.stack.push(cursor);
+    }
+
+    fn lookup_resource(
+        &mut self,
+        pending: &PendingInclude,
+        resources: &(impl ResourceLookup + ?Sized),
+    ) -> MachineLookup {
+        if let Some(cached) = self.resolved.get(&pending.target) {
+            return MachineLookup::Resolved(cached.clone());
+        }
+        let result = resources.lookup(&pending.target);
+        match result {
+            ResourceLookupResult::Ready(document) => {
+                self.resolved
+                    .insert(pending.target.clone(), Some(document.clone()));
+                MachineLookup::Resolved(Some(document))
+            }
+            ResourceLookupResult::Missing => {
+                self.resolved.insert(pending.target.clone(), None);
+                MachineLookup::Resolved(None)
+            }
+            ResourceLookupResult::Deferred => MachineLookup::Deferred(ResourceRequest {
+                target: pending.target.clone(),
+                optional: pending.optional,
+                source_id: pending.source_id.clone(),
+                range: pending.range,
+                correlation: Arc::new(ResourceCorrelation),
+            }),
+            ResourceLookupResult::Failed(message) => MachineLookup::Failed(HostResourceError {
+                kind: HostResourceErrorKind::LoadFailed,
+                target: pending.target.clone(),
+                message,
+            }),
+        }
+    }
+
+    fn process_conditional(
+        &mut self,
+        cursor: &mut ExpansionCursor,
+        directive: ParsedDirective,
+        line: &SelectedLine,
+        content_len: usize,
+        enabled: bool,
+    ) -> Result<(), MachineFailure> {
+        let source_id = cursor.frame.source_id();
+        self.bump_node(source_id.clone(), line.range)?;
+        self.directives.push(Directive {
+            kind: directive.kind,
+            source_id: source_id.clone(),
+            range: line.range,
+            authored_target: None,
+            optional: false,
+            target: directive.target.clone(),
+            target_range: relative_range(line.range, directive.target_start, directive.target_end),
+            resource_source_id: None,
+        });
+        match directive::transition(
+            &directive,
+            enabled,
+            self.state.attributes(),
+            self.state.attribute_limits(),
+        ) {
+            ConditionalTransition::Inline { selected } => {
+                if selected {
+                    let ending = &line.text[content_len..];
+                    self.append(
+                        &format!("{}{ending}", directive.attributes),
+                        source_id,
+                        line.range,
+                        SourceMapping::WholeOrigin,
+                    )?;
+                    self.state.finish_directive_output();
+                }
+            }
+            ConditionalTransition::Open { enabled } => cursor.conditions.push(enabled),
+            ConditionalTransition::Close => {
+                if cursor.conditions.pop().is_none() {
+                    return Err(error(
+                        PreprocessErrorKind::InvalidDirective,
+                        source_id,
+                        line.range,
+                        "endif has no matching conditional",
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_unexpanded_include(
+        &mut self,
+        include: ParsedDirective,
+        line: &SelectedLine,
+        source_id: Option<SourceId>,
+    ) -> Result<(), MachineFailure> {
+        self.bump_node(source_id.clone(), line.range)?;
+        let authored_target = directive::expand_attributes(
+            &include.target,
+            self.state.attributes(),
+            self.state.attribute_limits(),
+        );
+        let optional = parse_attributes(&include.attributes)
+            .is_ok_and(|attributes| attributes.contains_key("optional"));
+        self.directives.push(Directive {
+            kind: DirectiveKind::Include,
+            source_id: source_id.clone(),
+            range: line.range,
+            authored_target: Some(authored_target),
+            optional,
+            target: include.target,
+            target_range: relative_range(line.range, include.target_start, include.target_end),
+            resource_source_id: None,
+        });
+        self.append(&line.text, source_id, line.range, line.mapping)?;
+        self.state.finish_directive_output();
+        Ok(())
+    }
+
+    fn process_escaped(
+        &mut self,
+        literal: &str,
+        line: &SelectedLine,
+        content_len: usize,
+        source_id: Option<SourceId>,
+    ) -> Result<(), MachineFailure> {
+        let ending = &line.text[content_len..];
+        self.append(
+            &format!("{literal}{ending}"),
+            source_id,
+            line.range,
+            SourceMapping::WholeOrigin,
+        )?;
+        self.state.finish_directive_output();
+        Ok(())
+    }
+
+    fn process_text(
+        &mut self,
+        cursor: &mut ExpansionCursor,
+        line_index: usize,
+        line: &SelectedLine,
+        content: &str,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<(), MachineFailure> {
+        let source_id = cursor.frame.source_id();
+        let delimiter = self.state.observe_delimiter(content);
+        let mut document_attribute = false;
+        self.bump_node(source_id.clone(), line.range)?;
+        if self.state.accepts_attribute(delimiter)
+            && crate::attributes::parse_line(
+                content,
+                cursor.document.lines()[line_index]
+                    .content_range()
+                    .start()
+                    .to_usize(),
+                cursor.document.lines()[line_index].full_range(),
+            )
+            .is_some()
+        {
+            let parsed = crate::attributes::parse_lines(&cursor.document, line_index, &|| {
+                cancellation.is_cancelled()
+            })
+            .map_err(|failure| match failure {
+                crate::parser_support::ParseFailure::Cancelled => MachineFailure::Cancelled,
+                crate::parser_support::ParseFailure::Position(_)
+                | crate::parser_support::ParseFailure::Budget(_)
+                | crate::parser_support::ParseFailure::InternalInvariant => error(
+                    PreprocessErrorKind::InternalInvariant,
+                    source_id.clone(),
+                    line.range,
+                    "attribute preprocessing failed",
+                )
+                .into(),
+            })?;
+            if let Some((occurrence, _, last_line)) = parsed {
+                self.state.apply_attribute(&occurrence);
+                document_attribute = true;
+                if last_line > line_index {
+                    cursor.attribute_value_through = Some(last_line);
+                }
+            }
+        }
+        self.append(&line.text, source_id, line.range, line.mapping)?;
+        self.state.finish_line(document_attribute, content);
+        Ok(())
     }
 
     fn check_cancelled(
@@ -1819,16 +2004,16 @@ mod tests {
                 PreprocessStep::NeedResource(suspended) => {
                     let target = suspended.request().target().to_owned();
                     requests.push(target.clone());
-                    let response = lookup
-                        .snapshot
-                        .get(&target)
-                        .cloned()
-                        .map_or(ResourceResponse::NotFound, ResourceResponse::Found);
+                    let response = lookup.snapshot.get(&target).cloned().map_or_else(
+                        || suspended.request().not_found(),
+                        |document| suspended.request().found(document),
+                    );
                     step = suspended.resume(response, &lookup, &NeverCancel);
                 }
                 PreprocessStep::Failed(error) => {
                     return (Err(error), requests, lookup.lookups.get());
                 }
+                PreprocessStep::HostError(error) => panic!("unexpected host error: {error}"),
                 PreprocessStep::Cancelled => panic!("NeverCancel cannot cancel preprocessing"),
             }
         }
@@ -1858,6 +2043,7 @@ mod tests {
         let options = PreprocessOptions::default();
         let expected = preprocess(&source, &snapshot, &options).expect("one-shot preprocessing");
         RESUMABLE_INCLUDE_VISITS.with(|visits| visits.set(0));
+        RESUMABLE_LINE_VISITS.with(|visits| visits.set(0));
 
         let (actual, requests, lookups) = deferred_preprocess(&source, &snapshot, &options);
         let actual = actual.expect("resumable preprocessing");
@@ -1869,6 +2055,7 @@ mod tests {
         assert_eq!(requests.len(), INCLUDE_COUNT);
         assert_eq!(lookups, INCLUDE_COUNT);
         RESUMABLE_INCLUDE_VISITS.with(|visits| assert_eq!(visits.get(), INCLUDE_COUNT));
+        RESUMABLE_LINE_VISITS.with(|visits| assert_eq!(visits.get(), INCLUDE_COUNT * 2));
     }
 
     #[test]
@@ -1888,6 +2075,7 @@ mod tests {
         let options = PreprocessOptions::default();
         let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
         RESUMABLE_INCLUDE_VISITS.with(|visits| visits.set(0));
+        RESUMABLE_LINE_VISITS.with(|visits| visits.set(0));
 
         let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
 
@@ -1902,6 +2090,214 @@ mod tests {
             ]
         );
         RESUMABLE_INCLUDE_VISITS.with(|visits| assert_eq!(visits.get(), 4));
+        RESUMABLE_LINE_VISITS.with(|visits| assert_eq!(visits.get(), 8));
+    }
+
+    #[test]
+    fn deferred_selection_and_transformations_preserve_unicode_crlf_source_maps() {
+        let source =
+            "前\r\ninclude::part.adoc[tags=keep,lines=2..4,indent=2,leveloffset=+1]\r\n後\r\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "part.adoc",
+            resource(
+                "part",
+                "// tag::keep[]\r\n= 日本語🙂\r\n本文\r\n// end::keep[]\r\n除外\r\n",
+            ),
+        );
+        let expected = preprocess(source, &snapshot, &PreprocessOptions::default())
+            .expect("one-shot preprocessing");
+
+        let (actual, requests, _) =
+            deferred_preprocess(source, &snapshot, &PreprocessOptions::default());
+        let actual = actual.expect("resumable preprocessing");
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.source, "前\r\n  == 日本語🙂\r\n  本文\r\n後\r\n");
+        assert_eq!(requests, ["part.adoc"]);
+        assert!(
+            actual
+                .source_map()
+                .iter()
+                .any(|segment| segment.mapping == SourceMapping::WholeOrigin)
+        );
+    }
+
+    #[test]
+    fn attributes_and_depth_state_survive_multiple_resumes() {
+        let source = ":part: child- \\\n  one\ninclude::{part}.adoc[]\n";
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "child- one.adoc",
+            resource("child", ":next: grandchild\ninclude::{next}.adoc[]\n"),
+        );
+        snapshot.insert("grandchild.adoc", resource("grandchild", "完了\n"));
+        let options = PreprocessOptions {
+            max_include_depth: 2,
+            ..PreprocessOptions::default()
+        };
+        let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
+
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+
+        assert_eq!(actual.expect("resumable preprocessing"), expected);
+        assert_eq!(requests, ["child- one.adoc", "grandchild.adoc"]);
+    }
+
+    #[test]
+    fn terminal_include_validation_precedes_lookup() {
+        let snapshot = ResourceSnapshot::default();
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let step = preprocess_resumable(
+            "include::../outside.adoc[]\n",
+            &PreprocessOptions::default(),
+            &lookup,
+            &NeverCancel,
+        );
+
+        assert!(matches!(
+            step,
+            PreprocessStep::Failed(PreprocessError {
+                kind: PreprocessErrorKind::UnsafeTarget,
+                ..
+            })
+        ));
+        assert_eq!(lookup.lookups.get(), 0);
+    }
+
+    #[test]
+    fn stale_or_wrong_response_is_a_terminal_host_error() {
+        let snapshot = ResourceSnapshot::default();
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let PreprocessStep::NeedResource(first) = preprocess_resumable(
+            "include::one.adoc[optional]\ninclude::two.adoc[optional]\n",
+            &PreprocessOptions::default(),
+            &lookup,
+            &NeverCancel,
+        ) else {
+            panic!("first request");
+        };
+        let stale = first.request().not_found();
+        let PreprocessStep::NeedResource(second) =
+            first.resume(stale.clone(), &lookup, &NeverCancel)
+        else {
+            panic!("second request");
+        };
+
+        let PreprocessStep::HostError(error) = second.resume(stale, &lookup, &NeverCancel) else {
+            panic!("mismatched response must fail");
+        };
+        assert_eq!(error.kind(), HostResourceErrorKind::ResponseMismatch);
+        assert_eq!(error.target(), "two.adoc");
+    }
+
+    #[test]
+    fn host_load_failure_discards_the_continuation() {
+        let snapshot = ResourceSnapshot::default();
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let PreprocessStep::NeedResource(suspended) = preprocess_resumable(
+            "include::part.adoc[]\n",
+            &PreprocessOptions::default(),
+            &lookup,
+            &NeverCancel,
+        ) else {
+            panic!("request");
+        };
+        let response = suspended.request().load_failed("host read failed");
+
+        let PreprocessStep::HostError(error) = suspended.resume(response, &lookup, &NeverCancel)
+        else {
+            panic!("load failure must be terminal");
+        };
+        assert_eq!(error.kind(), HostResourceErrorKind::LoadFailed);
+        assert_eq!(error.target(), "part.adoc");
+        assert_eq!(error.message(), "host read failed");
+    }
+
+    #[test]
+    fn synchronous_lookup_failure_is_a_terminal_host_error() {
+        struct FailedLookup;
+
+        impl ResourceLookup for FailedLookup {
+            fn lookup(&self, _target: &str) -> ResourceLookupResult {
+                ResourceLookupResult::Failed("host lookup failed".to_owned())
+            }
+        }
+
+        let PreprocessStep::HostError(error) = preprocess_resumable(
+            "include::part.adoc[]\n",
+            &PreprocessOptions::default(),
+            &FailedLookup,
+            &NeverCancel,
+        ) else {
+            panic!("lookup failure must be terminal");
+        };
+        assert_eq!(error.kind(), HostResourceErrorKind::LoadFailed);
+        assert_eq!(error.target(), "part.adoc");
+        assert_eq!(error.message(), "host lookup failed");
+    }
+
+    #[test]
+    fn selection_transform_and_resume_stages_observe_cancellation() {
+        let finish_cancellation = CancelAfter {
+            checks: AtomicUsize::new(0),
+            completed_checks: 1,
+        };
+        assert!(matches!(
+            preprocess_resumable(
+                "",
+                &PreprocessOptions::default(),
+                &ResourceSnapshot::default(),
+                &finish_cancellation,
+            ),
+            PreprocessStep::Cancelled
+        ));
+        assert_eq!(finish_cancellation.checks.load(Ordering::Relaxed), 2);
+
+        let cancellation = crate::core::CancellationToken::new();
+        cancellation.cancel();
+        assert!(select_lines("one\ntwo\n", &BTreeMap::new(), &cancellation).is_err());
+        assert!(matches!(
+            transform_lines(
+                vec![SelectedLine {
+                    text: "one\n".to_owned(),
+                    range: range(0, 4),
+                    mapping: SourceMapping::Identity,
+                }],
+                &BTreeMap::new(),
+                usize::MAX,
+                &cancellation,
+            ),
+            Err(TransformFailure::Cancelled)
+        ));
+
+        let snapshot = ResourceSnapshot::default();
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let PreprocessStep::NeedResource(suspended) = preprocess_resumable(
+            "include::part.adoc[]\n",
+            &PreprocessOptions::default(),
+            &lookup,
+            &NeverCancel,
+        ) else {
+            panic!("request");
+        };
+        let response = suspended.request().not_found();
+        assert!(matches!(
+            suspended.resume(response, &lookup, &cancellation),
+            PreprocessStep::Cancelled
+        ));
     }
 
     #[test]
@@ -2066,13 +2462,10 @@ mod tests {
         };
         let cancellation = crate::core::CancellationToken::new();
         cancellation.cancel();
+        let response = suspended.request().found(resource("part", "included\n"));
 
         assert!(matches!(
-            suspended.resume(
-                ResourceResponse::Found(resource("part", "included\n")),
-                &lookup,
-                &cancellation,
-            ),
+            suspended.resume(response, &lookup, &cancellation),
             PreprocessStep::Cancelled
         ));
     }

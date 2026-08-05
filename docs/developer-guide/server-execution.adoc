@@ -80,6 +80,17 @@ Mapとsetは規範順に並べるため、挿入順は結果へ影響しませ�
 ``ResourceSnapshot``を構築し、文書構造の解析前にプリプロセッサへ渡します。NativeとWASMは、同じスナップショットと
 設定から同じ展開結果を生成します。
 
+非同期にresourceを取得する場合は``preprocess_resumable``を使用します。利用側アプリは
+``SuspendedPreprocess``、文書revision、workspace generationおよび取消tokenを一つの実行単位として保持します。
+取得完了時にrevisionまたはgenerationが変わっていた場合は、``resume``を呼ばずに継続を破棄します。
+現在の要求から``found``、``not_found``または``load_failed``で応答を構築し、再開直前と結果採用前にも
+世代を確認します。``load_failed``と要求が一致しない応答は、その継続を消費する終端の
+``HostResourceError``です。再試行する場合は、現在のworkspace snapshotから新しい前処理を開始します。
+
+一回の処理中は``ResourceLookup``の参照内容を固定します。本文は``Arc<str>``で共有されますが、利用側アプリが
+保持するresourceは``max_includes``だけでは制限されません。workspaceのresource件数と総byte数には
+``RetainedResourceLimits``および``AnalysisSnapshotLimits``も適用します。
+
 WASMの解析requestでincludeを展開する場合は、``preprocess.resources``へ取得済みresourceを、
 ``preprocess.options``へ前処理設定を指定します。``preprocess``を省略した場合は入力のソースをそのまま解析し、
 暗黙のresource取得やinclude展開を行いません。

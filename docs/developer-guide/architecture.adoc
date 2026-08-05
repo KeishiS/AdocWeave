@@ -84,6 +84,17 @@ testとしては成立しません。``cargo test -p adocweave``は構文解析�
 参照索引を担当します。コアは渡された入力から決定的な解析結果を生成し、取得処理を呼び戻しません。
 詳しい実行順序はxref:server-execution.adoc[利用側アプリの実行仕様]で定義します。
 
+前処理を途中から再開する利用側アプリは、一回の処理中に``ResourceLookup``が参照する内容を変更しません。
+``Deferred``に対する応答は、対応する``ResourceRequest``からだけ構築します。コアは再開時に要求と応答の
+対応を検証し、異なる要求または以前の要求への応答を受理しません。resourceの読込に失敗した場合は、
+継続を消費して``HostResourceError``で終了します。同じ継続を別の応答で再利用することはできません。
+
+``ResourceDocument``の本文は``Arc<str>``で共有するため、応答、解決済みresource表およびinclude frameの間で
+本文全体を複製しません。一回の前処理が保持する解決済みresource数は``max_includes``以下であり、展開後の本文と
+source mapは``max_total_bytes``と``max_source_map_segments``で制限します。ただし、``ResourceLookup``自身が
+保持する未参照resourceはコアの上限に含まれません。利用側アプリはworkspaceのresource数と総byte数にも独立した
+上限を適用し、前処理の上限だけを保持予算として扱いません。
+
 アプリ固有のID、database schema、アクセス制御および検索用metadataは標準の意味情報へ混在させません。
 利用側アプリは標準解析後に同じスナップショットから独自情報を検証・投影します。
 拡張境界はxref:extensions.adoc[利用側アプリの拡張]で定義します。
@@ -104,6 +115,11 @@ HTML出力では要素、属性、classおよびURLを許可集合に制限し�
 
 非同期の利用側アプリは、解析対象の文書revisionとworkspace generationを記録します。
 結果は両方が現在値と一致する場合だけ採用し、異なる世代の解析結果を合成しません。
+
+再開可能な前処理の継続はworkspace generationを内部に持ちません。利用側アプリは継続、文書revision、
+workspace generationおよび取消tokenを一つのenvelopeとして保持します。resource取得の完了時、前処理の再開前、
+および結果の公開前にenvelopeと現在値を照合します。不一致の場合は応答を渡さずに継続を破棄し、新しい
+workspace snapshotから処理を開始します。この世代検査を``ResourceResponse``の相関検査で代用してはいけません。
 
 CPU解析はprotocolやUIのevent loopから分離し、同時実行数と待機数を制限します。
 キャンセルはコア解析へ伝播し、キャンセル済みまたは古い結果を診断、表示、編集およびキャッシュへ採用しません。

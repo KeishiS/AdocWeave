@@ -4,8 +4,8 @@ use adocweave::SourceId;
 use adocweave::preprocess::{
     DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions,
     PreprocessStep, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
-    ResourceLookupResult, ResourceResponse, ResourceSnapshot, SourceMapping, preprocess,
-    preprocess_and_analyze_with, preprocess_resumable, preprocess_with,
+    ResourceLookupResult, ResourceSnapshot, SourceMapping, preprocess, preprocess_and_analyze_with,
+    preprocess_resumable, preprocess_with,
 };
 use adocweave::{AnalysisOptions, CancellationToken, Engine, NeverCancel};
 use serde_json::Value;
@@ -38,23 +38,49 @@ fn fixture_snapshot(fixture: &Value) -> ResourceSnapshot {
 fn public_preprocess_fixture_fixes_source_map_directives_and_notices() {
     let fixture = public_fixture();
     assert_eq!(fixture["schemaVersion"], 1);
-    let document = preprocess(
-        fixture["source"].as_str().expect("source"),
-        &fixture_snapshot(&fixture),
-        &PreprocessOptions {
-            source_id: Some(SourceId::new(
-                fixture["sourceId"].as_str().expect("sourceId"),
-            )),
-            base_uri: Some(
-                fixture["options"]["baseUri"]
-                    .as_str()
-                    .expect("baseUri")
-                    .to_owned(),
-            ),
-            ..PreprocessOptions::default()
-        },
-    )
-    .expect("public preprocess result");
+    let source = fixture["source"].as_str().expect("source");
+    let snapshot = fixture_snapshot(&fixture);
+    let options = PreprocessOptions {
+        source_id: Some(SourceId::new(
+            fixture["sourceId"].as_str().expect("sourceId"),
+        )),
+        base_uri: Some(
+            fixture["options"]["baseUri"]
+                .as_str()
+                .expect("baseUri")
+                .to_owned(),
+        ),
+        ..PreprocessOptions::default()
+    };
+    let document = preprocess(source, &snapshot, &options).expect("public preprocess result");
+
+    struct Deferred;
+    impl ResourceLookup for Deferred {
+        fn lookup(&self, _target: &str) -> ResourceLookupResult {
+            ResourceLookupResult::Deferred
+        }
+    }
+    let mut resumable = preprocess_resumable(source, &options, &Deferred, &NeverCancel);
+    let resumed_document = loop {
+        match resumable {
+            PreprocessStep::Complete(document) => break document,
+            PreprocessStep::NeedResource(suspended) => {
+                let response = snapshot
+                    .get(suspended.request().target())
+                    .cloned()
+                    .map_or_else(
+                        || suspended.request().not_found(),
+                        |resource| suspended.request().found(resource),
+                    );
+                resumable = suspended.resume(response, &Deferred, &NeverCancel);
+            }
+            PreprocessStep::Failed(error) => panic!("resumable fixture failed: {error}"),
+            PreprocessStep::HostError(error) => panic!("resumable host failed: {error}"),
+            PreprocessStep::Cancelled => panic!("NeverCancel cannot cancel"),
+            _ => panic!("unknown resumable preprocessing state"),
+        }
+    };
+    assert_eq!(resumed_document, document);
 
     assert_eq!(
         document.source,
@@ -263,14 +289,11 @@ fn resumable_preprocess_contract_is_public_without_exposing_continuation_state()
     };
     assert_eq!(suspended.request().target(), "part.adoc");
     assert!(!suspended.request().is_optional());
-    let step = suspended.resume(
-        ResourceResponse::Found(ResourceDocument {
-            source_id: SourceId::new("part"),
-            source: Arc::from("included\n"),
-        }),
-        &Deferred,
-        &NeverCancel,
-    );
+    let response = suspended.request().found(ResourceDocument {
+        source_id: SourceId::new("part"),
+        source: Arc::from("included\n"),
+    });
+    let step = suspended.resume(response, &Deferred, &NeverCancel);
     let PreprocessStep::Complete(document) = step else {
         panic!("one supplied resource must complete preprocessing");
     };
