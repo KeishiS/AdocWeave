@@ -143,6 +143,17 @@ fn default_request_uses_every_schema_default() {
     assert_eq!(request.analysis_options, Default::default());
     assert_eq!(request.render_policy, Default::default());
     assert_eq!(request.output_limits, Default::default());
+    let mut without_generated_bibliography = base_request(&corpus);
+    without_generated_bibliography["renderInputs"] = json!({});
+    let without_generated_bibliography: WasmRequest =
+        serde_json::from_value(without_generated_bibliography)
+            .expect("generated bibliography is optional");
+    assert_eq!(
+        without_generated_bibliography
+            .render_inputs
+            .generated_bibliography,
+        None
+    );
     assert_schema_defaults(
         &serde_json::to_value(&request.analysis_options).expect("analysis defaults"),
         "AnalysisOptions",

@@ -97,7 +97,7 @@ const contractNotes = [
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。v0.32.0の9から更新しました。Worker protocol versionは${protocol.workerProtocolVersion}のままです。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  "WASM protocolの``render.inputs``へ任意の``generatedBibliography``を追加しました。見出し、citation key、表示文字列および任意のlabelを構造化データとして渡し、文字列はAsciiDocやHTMLとして解釈しません。",
+  "WASM protocolの``renderInputs.generatedBibliography``へ任意の構造化入力を追加しました。見出し、citation key、表示文字列および任意のlabelを渡し、文字列はAsciiDocやHTMLとして解釈しません。",
   "Rust APIへ``GeneratedBibliography``と``GeneratedBibliographyEntry``を追加し、``RenderInputs::with_generated_bibliography``から同じ描画機能を利用できるようにしました。",
   "Node.js向けの``parseText``は専用の``adocweave-textlint-wasm``だけに含み、Browser packageには含めません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
@@ -106,7 +106,7 @@ const contractNotes = [
 ];
 
 const migrationNotes = [
-  "WASMのJSON protocolを直接構築する場合は``schemaVersion``を10へ更新してください。参考文献を生成しない要求では``generatedBibliography``を省略できます。",
+  `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使い、以前のschemaで作ったデータと区別してください。参考文献を生成しないrequestでは、任意項目の\`\`renderInputs.generatedBibliography\`\`を省略できます。`,
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

@@ -98,6 +98,7 @@
     } }
   ],
   "unknownFieldCases": [
+    { "path": "/schemaVersion", "value": 10 },
     { "path": "/unexpected", "value": true },
     { "path": "/analysisOptions/unexpected", "value": true },
     { "path": "/analysisOptions/syntax/unexpected", "value": true },
