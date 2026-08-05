@@ -5,8 +5,8 @@ use crate::syntax::{SyntaxIssueClass, SyntaxIssueDetail};
 use super::{
     HEADING_MARKER_SPACE, INCONSISTENT_LIST, INVALID_ATTRIBUTE, INVALID_CROSS_REFERENCE,
     INVALID_HEADING_LEVEL, INVALID_STEM, INVALID_URL_SCHEME, LintContext, LintDiagnosticBody,
-    LintDiagnosticSink, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE, NESTING_LIMIT_EXCEEDED,
-    UNCLOSED_BLOCK, UNCLOSED_INLINE, UNPROCESSED_DIRECTIVE,
+    LintDiagnosticSink, MACRO_BOUNDARY, MISSING_SOURCE_LANGUAGE, MONOSPACE_BOUNDARY,
+    NESTING_LIMIT_EXCEEDED, UNCLOSED_BLOCK, UNCLOSED_INLINE, UNPROCESSED_DIRECTIVE,
 };
 
 pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagnosticSink<'_>) {
@@ -18,6 +18,7 @@ pub(super) fn lint_syntax_issues(context: &LintContext<'_>, sink: &mut LintDiagn
         let rule = match issue.class {
             SyntaxIssueClass::HeadingMarkerSpace => HEADING_MARKER_SPACE,
             SyntaxIssueClass::InvalidHeadingLevel => INVALID_HEADING_LEVEL,
+            SyntaxIssueClass::MonospaceBoundary => MONOSPACE_BOUNDARY,
             SyntaxIssueClass::UnclosedInline => UNCLOSED_INLINE,
             SyntaxIssueClass::NestingLimitExceeded => NESTING_LIMIT_EXCEEDED,
             SyntaxIssueClass::UnclosedBlock => UNCLOSED_BLOCK,

@@ -82,6 +82,10 @@ fn inline_issues(
             return Err(());
         }
         let (class, message) = match problem.kind {
+            InlineProblemKind::MonospaceBoundary => (
+                SyntaxIssueClass::MonospaceBoundary,
+                "single-backtick monospace span violates constrained boundaries; use double backticks",
+            ),
             InlineProblemKind::UnclosedMonospace => {
                 (SyntaxIssueClass::UnclosedInline, "unclosed monospace span")
             }

@@ -21,7 +21,8 @@ AdocWeaveはAsciiDoc全体やAsciidoctor固有機能の再現を目的としま�
 
 |インライン書式
 |highlight、subscript、superscript、typographic quoteを含む対応書式について、境界と不完全なマーカーの
-回復規則だけを保証します。AsciiDoc処理系すべてとの同一結果は保証しません。
+回復規則だけを保証します。制約付き等幅表記の境界を満たさない単一バッククォートの対は、
+等幅として認識せず、通常テキストと診断に回復します。AsciiDoc処理系すべてとの同一結果は保証しません。
 
 |Passthrough
 |置換を抑止する不透明なノードとして保持しますが、生のHTMLとして出力せずHTMLエスケープします。

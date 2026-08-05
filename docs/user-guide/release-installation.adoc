@@ -318,7 +318,7 @@ browser library、Zed拡張およびVS Code拡張は利用者ごとの設定を�
 
 === Windowsへの導入
 
-PowerShellで検証済みZIPをバージョン別のディレクトリへ展開し、そのディレクトリを利用者の`PATH`へ追加します。
+PowerShellで検証済みZIPをバージョン別のディレクトリへ展開し、そのディレクトリを利用者の``PATH``へ追加します。
 
 [source,powershell]
 ----
@@ -341,11 +341,11 @@ Get-Command adocweave.exe
 Get-Command adocweave-lsp.exe
 ----
 
-更新時は新しいバージョン別のディレクトリを作成して動作確認後に`PATH`を切り替えます。rollbackでは以前の
-バージョンを`$Version`へ指定して同じ`PATH`更新部分を再実行します。実行中の`.exe`を上書きせず、VS Codeと
+更新時は新しいバージョン別のディレクトリを作成して動作確認後に``PATH``を切り替えます。rollbackでは以前の
+バージョンを``$Version``へ指定して同じ``PATH``更新部分を再実行します。実行中の``.exe``を上書きせず、VS Codeと
 Zedを終了してから不要なバージョン別のディレクトリだけを削除します。
 
-Windowsから完全に削除する場合は、上記と同じ正規表現でAdocWeave管理下の2 entryだけを利用者`PATH`から
+Windowsから完全に削除する場合は、上記と同じ正規表現でAdocWeave管理下の2 entryだけを利用者``PATH``から
 除き、導入したバージョン別のディレクトリを削除します。
 
 [source,powershell]

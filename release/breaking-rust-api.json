@@ -1,22 +1,22 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.31.0",
+  "releaseVersion": "0.32.0",
   "changes": [
     {
-      "crate": "adocweave-config",
-      "lint": "constructible_struct_adds_field",
-      "item": "field ResolvedProjectConfig.workspace",
-      "summary": "externally-constructible struct adds field",
-      "description": "``ResolvedProjectConfig``に公開フィールドの``workspace``を追加しました。構造体リテラルまたは構造体のパターンで全フィールドを列挙している利用側コードは、そのままではコンパイルできません。",
-      "migration": "構造体リテラルには``workspace: WorkspaceSettings::default(),``を追加してください。例えば、``let config = ResolvedProjectConfig { workspace: WorkspaceSettings::default(), ..ResolvedProjectConfig::default() };``のように指定します。構造体のパターンには``workspace``を追加して値を受け取るか、残りのフィールドを無視する``..``を追加してください。"
+      "crate": "adocweave",
+      "lint": "enum_variant_added",
+      "item": "variant InlineProblemKind:MonospaceBoundary",
+      "summary": "enum variant added on exhaustive enum",
+      "description": "公開enumの``InlineProblemKind``へ、制約付き等幅表記の境界違反を表す``MonospaceBoundary``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
+      "migration": "``InlineProblemKind``を網羅的に``match``している場合は、``InlineProblemKind::MonospaceBoundary``を処理する分岐を追加してください。等幅表記の境界違反として表示するか、ほかの回復可能なインライン問題と同じ方法で処理できます。"
     },
     {
-      "crate": "adocweave-host",
+      "crate": "adocweave",
       "lint": "enum_variant_added",
-      "item": "variant ResourceError:RootLimit",
+      "item": "variant SyntaxIssueClass:MonospaceBoundary",
       "summary": "enum variant added on exhaustive enum",
-      "description": "公開enumの``ResourceError``へ、ファイルシステムのルート数が上限を超えたことを表す``RootLimit { limit }``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
-      "migration": "``ResourceError``を網羅的に``match``している場合は、``ResourceError::RootLimit { limit }``を処理する分岐を追加してください。``limit``を使って上限値を利用者へ示すか、ほかのリソース上限エラーと同じ方法で処理できます。"
+      "description": "公開enumの``SyntaxIssueClass``へ、制約付き等幅表記の境界違反を表す``MonospaceBoundary``を追加しました。すべてのvariantを列挙している``match``は、そのままではコンパイルできません。",
+      "migration": "``SyntaxIssueClass``を網羅的に``match``している場合は、``SyntaxIssueClass::MonospaceBoundary``を処理する分岐を追加してください。診断codeは``monospace-boundary``です。"
     }
   ]
 }

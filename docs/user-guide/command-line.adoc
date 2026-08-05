@@ -149,6 +149,10 @@ adocweave check --enable-rule macro-boundary document.adoc
 短縮xref、block macro、不完全またはescapeされた構文、comment、sourceブロックおよびliteralブロック、
 ほかの不透明なinline構文の内部は対象外です。任意の``subs``属性による置換設定は現在対応していません。
 
+``monospace-boundary``は既定で有効です。単一バッククォートの対が制約付き等幅表記の
+開始または終了の境界を満たさない場合にwarningを返し、二重バッククォートの使用を案内します。
+自動修正と修正候補は提供しません。sourceブロック、literalブロックおよび不透明なinline構文の内部は対象外です。
+
 [#formatting]
 == 整形
 

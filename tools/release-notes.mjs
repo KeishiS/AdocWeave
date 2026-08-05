@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.30.1";
+export const PREVIOUS_RELEASE_VERSION = "0.31.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,16 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#442：Language Serverの初期走査から、生成物や開発環境のディレクトリを``workspace.scan.exclude``で除外できるようにしました。除外した文書も、明示的に開いた場合またはinclude先として必要な場合は読み込めます。",
-  "#448：入れ子になったworkspace folderの走査を分離し、外側のworkspaceが内側の文書を重複して読み込まないようにしました。",
-  "#449：workspace走査を要求処理とは別に実行し、新しい走査が始まった場合は古い走査を取り消して、最新の結果だけを反映するようにしました。",
-  "#450：初期走査後に追加されたinclude先も同じworkspace境界内で解決し、読み込み後に文書を再解析するようにしました。",
-  "#453：複数のinclude先を同時に解決した場合も、最新のworkspace状態へ結果を収束させるようにしました。",
-  "#456：``workspace.scan.exclude``のpattern数、文字数および照合処理を制限し、大きな入力でも処理量が無制限に増えないようにしました。",
-  "#457：Language Serverの要求の取消をCPU workerへ伝え、応答を返す直前にも文書が変更されていないかを確認して、文書変更前の古い応答を返さないようにしました。",
-  `セキュリティ修正：v${PREVIOUS_RELEASE_VERSION}以前のLinux向けCLIとLanguage Serverでは、安全な読込先・出力先だと確認してから実際に使用するまでの間に同名pathが別のdirectoryへ置換されると、本文、include先、設定由来stylesheetまたは出力先を意図したroot外へ切り替えて読み書きする可能性がありました。v${RELEASE_NOTES_VERSION}では、読み書き対象ごとのdirectoryを検査時に固定し、処理中に同名pathが置換されても別の場所へ切り替えません。v${PREVIOUS_RELEASE_VERSION}以前を使用している場合はv${RELEASE_NOTES_VERSION}へ更新してください。`,
-  `安定性修正：公開前のv${RELEASE_NOTES_VERSION}開発版では、workspace走査中の通知履歴またはファイル監視による読込エラーが無制限に増え、通知が続くと走査が完了しない可能性がありました。v${RELEASE_NOTES_VERSION}では履歴とエラーに上限を設け、上限超過または走査失敗後は回復要求を保持します。その後に関連するファイル監視通知を受けた場合、通知が100 ms途切れてから全体走査を1件だけ実行します。公開済みの影響版はありません。`,
-  "live previewは依存する本文とstylesheetをraw pathから開き直さず、用途ごとに保持したfilesystem authorityから読み取って変更を検出するようにしました。",
+  "#468：日本語や単語に接する単一バッククォートの等幅表記に``monospace-boundary``を報告し、二重バッククォートの使用を案内するようにしました。修正候補は返しません。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -107,15 +98,15 @@ const contractNotes = [
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   `WASM protocolのschema version、Worker protocol versionおよびfield構造は変えず、\`\`packageVersion\`\`だけを${RELEASE_NOTES_VERSION}へ更新しました。Node.js向けの\`\`parseText\`\`は専用の\`\`adocweave-textlint-wasm\`\`だけに含み、Browser packageには含めません。`,
-  "パーサAPI、HTMLコンパイラ、CLIの入力選択およびBrowser APIの動作は変更していません。",
+  "設定schemaの規則codeに``monospace-boundary``を追加しました。有効な等幅表記の意味ASTとHTML出力、CLIの入力選択およびBrowser APIの動作は変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  "Language Serverのworkspace走査の除外設定は任意です。指定しなければ、従来どおりworkspace内を走査します。",
-  "初期走査の対象を狭める場合は、workspace folder直下の``.adocweave.toml``へ``[workspace.scan]``と``exclude``を追加します。patternはworkspace rootからの相対位置で、OSにかかわらず``/``を区切りに使います。",
+  "単語やCJK文字に接する等幅表記は、単一バッククォートから二重バッククォートへ変更してください。",
+  "既存文書の境界違反を許容する場合は、``.adocweave.toml``の``[lint.rules.monospace-boundary]``で``enabled = false``を指定してください。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

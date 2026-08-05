@@ -16,7 +16,7 @@
   "abnormal": [
     {
       "path": "fixtures/grammar/ambiguous.adoc",
-      "codes": ["unclosed-inline", "unclosed-block"]
+      "codes": ["monospace-boundary", "unclosed-inline", "unclosed-block"]
     },
     {
       "path": "fixtures/references/incomplete-note.adoc",

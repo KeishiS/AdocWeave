@@ -213,10 +213,16 @@ const recordedChange = {
   description: "ResolvedProjectConfigにworkspaceを追加しました。",
   migration: "構造体リテラルへworkspaceを追加します。",
 };
-const detectedRootLimitChange = {
-  crate: "adocweave-host",
+const detectedMonospaceProblemChange = {
+  crate: "adocweave",
   lint: "enum_variant_added",
-  item: "variant ResourceError:RootLimit",
+  item: "variant InlineProblemKind:MonospaceBoundary",
+  summary: "enum variant added on exhaustive enum",
+};
+const detectedMonospaceSyntaxChange = {
+  crate: "adocweave",
+  lint: "enum_variant_added",
+  item: "variant SyntaxIssueClass:MonospaceBoundary",
   summary: "enum variant added on exhaustive enum",
 };
 const record = (changes = [recordedChange]) => ({
@@ -231,12 +237,12 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
   assert.deepEqual(
     actual.changes.map(({ crate, lint, item, summary }) => ({ crate, lint, item, summary })),
-    [detectedChange, detectedRootLimitChange],
+    [detectedMonospaceProblemChange, detectedMonospaceSyntaxChange],
   );
-  assert.match(actual.changes[0].description, /構造体リテラルまたは構造体のパターン/);
-  assert.match(actual.changes[0].migration, /WorkspaceSettings::default/);
-  assert.match(actual.changes[1].description, /ResourceError/);
-  assert.match(actual.changes[1].migration, /ResourceError::RootLimit/);
+  assert.match(actual.changes[0].description, /InlineProblemKind/);
+  assert.match(actual.changes[0].migration, /InlineProblemKind::MonospaceBoundary/);
+  assert.match(actual.changes[1].description, /SyntaxIssueClass/);
+  assert.match(actual.changes[1].migration, /SyntaxIssueClass::MonospaceBoundary/);
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
   assert.throws(

@@ -100,7 +100,7 @@ devShellのNode.jsを使い、flakeはshellを構築する時点でNixpkgsのNod
 直接書くと、devShellのNode.jsと分かれても誰も気付かないため、``tools/release-workflow-policy.mjs``が
 manifest以外からの取得を拒否します。
 
-VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの`node_modules`とsource mapを同梱しません。
+VSIXは固定したNode.js依存とlockfileからbundleし、runtimeの``node_modules``とsource mapを同梱しません。
 許可file一覧、license、package size、機械固有pathの不在および同一sourceから2回構築したbyte列の一致を確認します。
 VSIXのmanaged Language Serverは同じバージョンの配布manifestだけを使用します。この判断の背景は
 xref:adr/0013-vscode-release-boundary.adoc[ADR 0013]を参照してください。

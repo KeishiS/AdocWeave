@@ -277,6 +277,13 @@ fn parse_segment(
                     }
                 }
             }
+            InlineCandidate::MonospaceBoundary { open, end } => {
+                output.problems.push(InlineProblem {
+                    kind: InlineProblemKind::MonospaceBoundary,
+                    range: subrange(range, open, end),
+                });
+                cursor = next_char_boundary(value, open);
+            }
             InlineCandidate::TypographicQuote {
                 open,
                 quote,
@@ -368,6 +375,10 @@ enum InlineCandidate {
         form: MarkerForm,
         close: Option<usize>,
     },
+    MonospaceBoundary {
+        open: usize,
+        end: usize,
+    },
     TypographicQuote {
         open: usize,
         quote: char,
@@ -411,6 +422,12 @@ impl InlineCandidateIndex {
     fn new(value: &str) -> Self {
         let (mut candidates, mut preparsed_markers, mut inspected_positions) =
             preparsed_candidates(value);
+        index_invalid_monospace_boundaries(
+            value,
+            &mut preparsed_markers,
+            &mut candidates,
+            &mut inspected_positions,
+        );
         let unconstrained_pairs = index_unconstrained_pairs(value, &mut inspected_positions);
         let url_candidates = UrlCandidateIndex::new(value, &mut inspected_positions);
         let mut rejected_macro_boundaries = Vec::new();
@@ -511,6 +528,7 @@ impl InlineCandidateIndex {
                 close,
             } => Some(recognize_marker(value, open, marker, form, close)),
             InlineCandidate::EscapedAnchor { .. }
+            | InlineCandidate::MonospaceBoundary { .. }
             | InlineCandidate::TypographicQuote { .. }
             | InlineCandidate::Passthrough { .. } => None,
         }
@@ -750,9 +768,59 @@ impl InlineCandidate {
             Self::Macro { open }
             | Self::MacroBoundary { open }
             | Self::Marker { open, .. }
+            | Self::MonospaceBoundary { open, .. }
             | Self::TypographicQuote { open, .. }
             | Self::Passthrough { open, .. } => open,
         }
+    }
+}
+
+fn index_invalid_monospace_boundaries(
+    value: &str,
+    protected: &mut [bool],
+    candidates: &mut Vec<InlineCandidate>,
+    inspected_positions: &mut usize,
+) {
+    let bytes = value.as_bytes();
+    let mut cursor = 0;
+    let mut pending = None;
+    while cursor < bytes.len() {
+        *inspected_positions = (*inspected_positions).saturating_add(1);
+        if bytes[cursor] != b'`' {
+            cursor += 1;
+            continue;
+        }
+        let end = bytes[cursor..]
+            .iter()
+            .take_while(|byte| **byte == b'`')
+            .count()
+            + cursor;
+        if end - cursor != 1 {
+            pending = None;
+            cursor = end;
+            continue;
+        }
+        let Some(open) = pending.take() else {
+            pending = Some(cursor);
+            cursor = end;
+            continue;
+        };
+        let close = cursor;
+        cursor = end;
+        if protected[open]
+            || protected[close]
+            || is_escaped(value, open)
+            || is_escaped(value, close)
+            || is_open_boundary(value, open, '`') && is_close_boundary(value, close, '`')
+        {
+            continue;
+        }
+        protected[open] = true;
+        protected[close] = true;
+        candidates.push(InlineCandidate::MonospaceBoundary {
+            open,
+            end: close + 1,
+        });
     }
 }
 
@@ -2090,10 +2158,11 @@ pub fn inline_at(inlines: &[Inline], offset: u32) -> Option<&Inline> {
 mod tests {
     use super::{
         AnalysisLimits, DelimiterIndex, FormulaToken, Inline, InlineCandidate,
-        InlineCandidateIndex, InlineLiteralKind, InlineParseConfig, InlineProblemKind,
-        InlineRecognition, InlineStyle, InlineToken, LinkToken, MacroForm, MacroToken, MarkerForm,
-        MarkerToken, ReferenceDestination, ReferenceToken, StandardMacroKind, inline_at,
-        is_plain_inline_text, next_candidate, parse, parse_text, recognize_macro, recognize_marker,
+        InlineCandidateIndex, InlineLiteralKind, InlineParseConfig, InlineProblem,
+        InlineProblemKind, InlineRecognition, InlineStyle, InlineToken, LinkToken, MacroForm,
+        MacroToken, MarkerForm, MarkerToken, ReferenceDestination, ReferenceToken,
+        StandardMacroKind, inline_at, is_plain_inline_text, next_candidate, parse, parse_text,
+        recognize_macro, recognize_marker,
     };
     use crate::source::{TextRange, TextSize};
 
@@ -2183,7 +2252,7 @@ mod tests {
             );
         }
 
-        assert_eq!(InlineCandidateIndex::new("abc").inspected_positions(), 26);
+        assert_eq!(InlineCandidateIndex::new("abc").inspected_positions(), 29);
 
         let source = "日本語 *open xref:broken[ https://example.org[label] _tail";
         let index = InlineCandidateIndex::new(source);
@@ -2713,7 +2782,7 @@ mod tests {
     }
 
     #[test]
-    fn monospace_requires_constrained_boundaries() {
+    fn monospace_reports_invalid_constrained_boundaries() {
         let output = parse(
             "word`code`word and ``",
             range(0, 20),
@@ -2725,7 +2794,13 @@ mod tests {
                 .iter()
                 .all(|inline| matches!(inline, Inline::Text(_)))
         );
-        assert!(output.problems.is_empty());
+        assert_eq!(
+            output.problems,
+            [InlineProblem {
+                kind: InlineProblemKind::MonospaceBoundary,
+                range: range(4, 10),
+            }]
+        );
     }
 
     #[test]
@@ -2746,7 +2821,16 @@ mod tests {
                     .all(|inline| matches!(inline, Inline::Text(_))),
                 "{source:?} unexpectedly contained formatted inline content"
             );
-            assert!(output.problems.is_empty(), "{source:?}");
+            assert_eq!(
+                output.problems.len(),
+                1,
+                "{source:?} must report one boundary problem"
+            );
+            assert_eq!(
+                output.problems[0].kind,
+                InlineProblemKind::MonospaceBoundary,
+                "{source:?}"
+            );
         }
 
         let output = parse(
@@ -2768,7 +2852,7 @@ mod tests {
                 .map(|problem| (problem.kind, problem.range))
                 .collect::<Vec<_>>(),
             [
-                (InlineProblemKind::UnclosedMonospace, range(0, 1)),
+                (InlineProblemKind::MonospaceBoundary, range(0, 6)),
                 (InlineProblemKind::UnclosedEmphasis, range(6, 7)),
             ]
         );
@@ -2787,8 +2871,41 @@ mod tests {
         assert_eq!(output.problems.len(), 1);
         assert_eq!(
             (output.problems[0].kind, output.problems[0].range),
-            (InlineProblemKind::UnclosedMonospace, range(0, 1))
+            (InlineProblemKind::MonospaceBoundary, range(0, 6))
         );
+    }
+
+    #[test]
+    fn monospace_boundary_diagnostic_preserves_valid_and_protected_forms() {
+        for source in [
+            "(`code`)",
+            "before `code` after",
+            "日本語``code``日本語",
+            r"日本語\`code\`日本語",
+            r#""`quoted`""#,
+            "+日本語`code`日本語+",
+        ] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            assert!(output.problems.is_empty(), "{source:?}: {output:#?}");
+        }
+    }
+
+    #[test]
+    fn monospace_boundary_diagnostic_replaces_derived_unclosed_problem() {
+        for source in [
+            "ファイル`pbmc_processed.h5ad`を",
+            "AnnDataの`obs[\"predicted.celltype.l1\"]`を",
+            "key:`code`",
+            "before ` code ` after",
+        ] {
+            let output = parse(source, range(0, source.len()), InlineParseConfig::default());
+            assert_eq!(output.problems.len(), 1, "{source:?}: {output:#?}");
+            assert_eq!(
+                output.problems[0].kind,
+                InlineProblemKind::MonospaceBoundary,
+                "{source:?}"
+            );
+        }
     }
 
     #[test]

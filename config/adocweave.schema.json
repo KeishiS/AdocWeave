@@ -102,6 +102,7 @@
               "line-too-long",
               "macro-boundary",
               "missing-source-language",
+              "monospace-boundary",
               "nesting-limit-exceeded",
               "non-asciidoc-xref",
               "protected-attribute",

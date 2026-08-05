@@ -121,7 +121,7 @@ URL policy、安全性検査およびnativeとWASMの一致検査は引き続き
 Source blockの言語classは``SourceLanguagePolicy``で許可した言語だけに付けます。未知の言語ではclassを
 省略して診断を返します。
 
-Block titleまたは`linenums`を持つsource blockは``figure.source-block``で囲み、titleを``figcaption``へ
+Block titleまたは``linenums``を持つsource blockは``figure.source-block``で囲み、titleを``figcaption``へ
 inline装飾を除いた解決済みplain textとして安全に出力します。Projectionのtitleも同じplain textです。
 ``pre``の``data-language``、``data-line-numbers="true"``および``data-line-start``は
 projectionと同じ言語、行番号指定および開始行を表します。行番号要素、構文強調、themeおよび操作buttonは
@@ -129,7 +129,7 @@ projectionと同じ言語、行番号指定および開始行を表します。�
 
 数式engineは内蔵しません。許可した数式言語だけに固定class、``data-math-language``および
 ``data-math-display``を付け、内容は常にescapeします。LaTeXは``latexmath``、表示形式は``inline``または
-``block``です。Inline数式は`code`、block数式は``pre``内の``code``として出力します。利用側は要素名や
+``block``です。Inline数式は``code``、block数式は``pre``内の``code``として出力します。利用側は要素名や
 親子関係を推測せず、この二つの属性とescape済みのtext contentを数式描画adapterへ渡せます。
 JSON／WASM protocolでは既存の言語enum値``latex``を維持し、``latexmath``はAsciiDoc構文とHTML属性の名前に
 限定します。
@@ -155,16 +155,16 @@ HTML、解析診断および描画診断の対応を検査できます。各case
 * table、quoteおよびlist
 * 安全でないURLの解析診断、描画診断および非active HTML fallback
 
-公開仕様は`stableContract`に列挙した意味上の値とHTML構造だけです。期待出力ファイル全体はAdocWeave内の
+公開仕様は``stableContract``に列挙した意味上の値とHTML構造だけです。期待出力ファイル全体はAdocWeave内の
 決定性とruntime間の一致を検査するgolden fileであり、JSONのkey順と空白、HTMLの属性順、字下げ、
 空白、末尾改行および未選択の投影fieldは利用側の安定APIではありません。利用側はこれらのbyte列を
 固定せず、必要な項目だけを選択して検査します。
 
 Source blockではtitle、language、option、linenums、開始行およびsource本文と、対応する安全なHTML構造を
-保証します。数式ではprojectionのlanguage `latex`、表示形式`inline`または`block`、source本文と、
+保証します。数式ではprojectionのlanguage ``latex``、表示形式``inline``または``block``、source本文と、
 HTMLの``data-math-language="latexmath"``および``data-math-display``を保証します。Tableのcell構造、
 quoteの追加presentationおよびlist itemを表す未選択のprojection fieldは現行の公開仕様に含めず、tableとlistの
-HTML断片、およびquoteの既存`blockPresentations`だけを保証します。
+HTML断片、およびquoteの既存``blockPresentations``だけを保証します。
 
 == golden fixtureの保守
 
