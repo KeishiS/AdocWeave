@@ -207,6 +207,7 @@ impl LocalTargetPolicy {
                     callback();
                 }
                 let selected = path_from_file_handle(&file, path)?;
+                let procfs_reports_deleted = procfs_reports_deleted_path(&selected);
                 let file_name = selected
                     .file_name()
                     .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
@@ -227,6 +228,9 @@ impl LocalTargetPolicy {
                     Err(LocalTargetError::Missing(_)) => {
                         prior_race_failure = Some(explicit_target_changed_error());
                         continue;
+                    }
+                    Err(LocalTargetError::NotFile(_)) if procfs_reports_deleted => {
+                        return Err(explicit_target_changed_error());
                     }
                     Err(error) => return Err(error),
                 };
@@ -768,6 +772,13 @@ fn explicit_target_changed_error() -> LocalTargetError {
 }
 
 #[cfg(target_os = "linux")]
+fn procfs_reports_deleted_path(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    path.as_os_str().as_bytes().ends_with(b" (deleted)")
+}
+
+#[cfg(target_os = "linux")]
 fn logical_path_from_opened_handle(
     logical_root: &Path,
     root_handle: &fs::File,
@@ -1009,6 +1020,12 @@ pub(crate) struct LocalTargetTextRollback {
     previous: Option<Result<String, LocalTargetError>>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LocalTargetCandidateRollback {
+    candidate: PathBuf,
+    previous: Option<Result<PathBuf, LocalTargetError>>,
+}
+
 /// UTF-8 local target returned by a bounded validation session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedLocalTarget {
@@ -1127,7 +1144,11 @@ impl LocalTargetSession {
         Ok(())
     }
 
-    fn candidate(&mut self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
+    pub(crate) fn candidate(
+        &mut self,
+        base: &Path,
+        target: &str,
+    ) -> Result<PathBuf, LocalTargetError> {
         let canonical_base = if let Some(result) = self.bases.get(base) {
             result.clone()?
         } else {
@@ -1146,16 +1167,6 @@ impl LocalTargetSession {
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
         self.read_candidate_utf8(&candidate)
-    }
-
-    pub(crate) fn read_utf8_with_capacity(
-        &mut self,
-        base: &Path,
-        target: &str,
-        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
-    ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        let candidate = self.candidate(base, target)?;
-        self.read_candidate_utf8_with_capacity(&candidate, false, true, || {}, capacity)
     }
 
     /// Opens and reads an already normalized path below this session's root.
@@ -1385,8 +1396,28 @@ impl LocalTargetSession {
         self.inspections.len()
     }
 
-    pub(crate) fn has_inspected_candidate(&self, candidate: &Path) -> bool {
-        self.inspections.contains_key(candidate)
+    pub(crate) fn candidate_rollback(&self, candidate: &Path) -> LocalTargetCandidateRollback {
+        LocalTargetCandidateRollback {
+            candidate: candidate.to_owned(),
+            previous: self.inspections.get(candidate).cloned(),
+        }
+    }
+
+    pub(crate) fn rollback_candidate(&mut self, rollback: LocalTargetCandidateRollback) {
+        let current = self.inspections.remove(&rollback.candidate);
+        match (current.is_some(), rollback.previous) {
+            (true, Some(previous)) => {
+                self.inspections.insert(rollback.candidate, previous);
+            }
+            (true, None) => {
+                self.requests = self.requests.saturating_sub(1);
+            }
+            (false, Some(previous)) => {
+                self.requests = self.requests.saturating_add(1);
+                self.inspections.insert(rollback.candidate, previous);
+            }
+            (false, None) => {}
+        }
     }
 
     pub(crate) fn release_candidate(&mut self, candidate: &Path) {
@@ -2005,7 +2036,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn explicit_utf8_preserves_open_confined_not_file() {
+    fn explicit_utf8_reports_unverifiable_for_a_deleted_suffix_directory_collision() {
         let root = TestDir::new();
         let selected = root.0.join("docs/guide.adoc");
         let suffix = root.0.join("docs/guide.adoc (deleted)");
@@ -2014,9 +2045,25 @@ mod tests {
             fs::remove_file(&selected).expect("unlink selected file");
             fs::create_dir(&suffix).expect("create suffix directory");
         })
-        .expect_err("confined verification must preserve not-file");
+        .expect_err("a procfs deletion race must not be reported as an authored directory");
 
-        assert_eq!(error, LocalTargetError::NotFile(suffix));
+        assert!(
+            matches!(error, LocalTargetError::Unverifiable(_)),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_preserves_not_file_for_an_authored_directory() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs");
+
+        let error = LocalTargetPolicy::load_explicit_utf8(&selected, 1024)
+            .expect_err("an explicitly selected directory is not a file");
+
+        assert_eq!(error, LocalTargetError::NotFile(selected));
     }
 
     #[test]
