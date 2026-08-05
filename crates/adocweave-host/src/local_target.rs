@@ -1995,6 +1995,7 @@ mod tests {
         assert!(session.read_candidate_utf8(&docs.join("a.adoc")).is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn dangling_leaf_symlink_escape_uses_the_shared_fixture() {
         use std::os::unix::fs::symlink;
