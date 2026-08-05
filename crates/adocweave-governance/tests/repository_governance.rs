@@ -617,7 +617,7 @@ fn roadmap_uses_unique_github_issue_urls() {
     // added to one and not the other; it cannot tell that an Issue is closed,
     // because a test may not reach GitHub. Update this list in the same change
     // that closes an Issue.
-    let expected = ["33", "34", "82", "83", "84", "86", "384"]
+    let expected = ["33", "34", "82", "83", "84", "86", "384", "438"]
         .into_iter()
         .map(str::to_owned)
         .collect();

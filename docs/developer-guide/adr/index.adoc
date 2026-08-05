@@ -21,3 +21,4 @@ ADRは、複数の機能に影響する長期的な設計判断と、その理�
 * xref:0016-source-backed-prose-projection.adoc[ADR 0016: 原文に対応する文章構造と文書校正の分離]
 * xref:0017-github-release-textlint-package.adoc[ADR 0017: GitHub Releaseでのtextlint Processorパッケージ配布]
 * xref:0018-textlint-txtast-backend.adoc[ADR 0018: textlint専用TxtAST backendへの責務集約]
+* xref:0019-workspace-scan-pruning.adoc[ADR 0019: 初期ワークスペース走査とリソース読込の分離]

@@ -236,6 +236,26 @@ impl LocalFilesystemSession {
     /// This split lets an adapter resolve the nearest project configuration
     /// before selecting the read budget used for each candidate.
     pub fn discover_adoc_paths(&self) -> Result<Vec<PathBuf>, ResourceError> {
+        self.discover_adoc_paths_with(|_, _| false)
+    }
+
+    /// Discovers `.adoc` candidates while pruning selected directories.
+    ///
+    /// The predicate receives the canonical scan root and a non-empty path
+    /// relative to that root. It is evaluated only for real directories after
+    /// symlinks have been rejected and before the directory contents are read.
+    pub fn discover_adoc_paths_with(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        self.discover_adoc_paths_with_limit(Self::MAX_SCAN_ENTRIES, exclude_directory)
+    }
+
+    fn discover_adoc_paths_with_limit(
+        &self,
+        scan_entry_limit: usize,
+        mut exclude_directory: impl FnMut(&Path, &Path) -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
         let mut paths = Vec::new();
         let mut scanned_entries = 0_usize;
         for root in &self.roots {
@@ -250,6 +270,12 @@ impl LocalFilesystemSession {
                     continue;
                 }
                 if metadata.is_dir() {
+                    if path != *root
+                        && let Ok(relative) = path.strip_prefix(root)
+                        && exclude_directory(root, relative)
+                    {
+                        continue;
+                    }
                     let mut children = Vec::new();
                     for child in fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
@@ -260,9 +286,9 @@ impl LocalFilesystemSession {
                             source: source.to_string(),
                         })?);
                         scanned_entries += 1;
-                        if scanned_entries > Self::MAX_SCAN_ENTRIES {
+                        if scanned_entries > scan_entry_limit {
                             return Err(ResourceError::ScanEntryLimit {
-                                limit: Self::MAX_SCAN_ENTRIES,
+                                limit: scan_entry_limit,
                             });
                         }
                     }
@@ -920,6 +946,52 @@ mod tests {
         assert_eq!(
             policy.session().expect("session").scan_utf8(path_source_id),
             Err(ResourceError::ByteLimit)
+        );
+    }
+
+    #[test]
+    fn directory_pruning_happens_before_the_scan_entry_limit() {
+        let root = TestDir::new("scan-pruning-limit");
+        let excluded = root.path().join("excluded");
+        fs::create_dir(&excluded).expect("excluded directory");
+        for name in ["one", "two", "three"] {
+            fs::write(excluded.join(name), "ignored").expect("excluded entry");
+        }
+        fs::write(root.path().join("kept.adoc"), "kept\n").expect("kept source");
+        let session = policy(root.path(), 100).session().expect("session");
+
+        assert_eq!(
+            session.discover_adoc_paths_with_limit(2, |_, _| false),
+            Err(ResourceError::ScanEntryLimit { limit: 2 })
+        );
+        assert_eq!(
+            session
+                .discover_adoc_paths_with_limit(2, |scan_root, relative| {
+                    assert_eq!(scan_root, root.path());
+                    relative == Path::new("excluded")
+                })
+                .expect("pruned discovery"),
+            [root.path().join("kept.adoc")]
+        );
+    }
+
+    #[test]
+    fn pruned_directory_itself_still_counts_toward_the_scan_limit() {
+        let root = TestDir::new("scan-pruned-directory-boundary");
+        fs::create_dir(root.path().join("excluded")).expect("excluded directory");
+        let session = policy(root.path(), 100).session().expect("session");
+
+        assert_eq!(
+            session.discover_adoc_paths_with_limit(0, |_, _| true),
+            Err(ResourceError::ScanEntryLimit { limit: 0 })
+        );
+        assert!(
+            session
+                .discover_adoc_paths_with_limit(1, |_, relative| {
+                    relative == Path::new("excluded")
+                })
+                .expect("boundary discovery")
+                .is_empty()
         );
     }
 

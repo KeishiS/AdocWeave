@@ -27,6 +27,8 @@ const SUPPORTED = new Set([
   "if",
   "items",
   "maximum",
+  "maxItems",
+  "maxLength",
   "minLength",
   "minimum",
   "not",
@@ -105,6 +107,9 @@ function validate(node, value, where = "") {
   if (rules.minLength !== undefined && value.length < rules.minLength) {
     failures.push(`${where}: minLength を下回ります`);
   }
+  if (rules.maxLength !== undefined && value.length > rules.maxLength) {
+    failures.push(`${where}: maxLength を超えます`);
+  }
   if (rules.minimum !== undefined && value < rules.minimum) {
     failures.push(`${where}: minimum を下回ります`);
   }
@@ -113,6 +118,9 @@ function validate(node, value, where = "") {
   }
   if (rules.uniqueItems && new Set(value.map(String)).size !== value.length) {
     failures.push(`${where}: 要素が重複しています`);
+  }
+  if (rules.maxItems !== undefined && value.length > rules.maxItems) {
+    failures.push(`${where}: maxItems を超えます`);
   }
   if (rules.items !== undefined && Array.isArray(value)) {
     value.forEach((item, index) => failures.push(...validate(rules.items, item, `${where}[${index}]`)));

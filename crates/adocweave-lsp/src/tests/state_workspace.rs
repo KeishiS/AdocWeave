@@ -1,6 +1,133 @@
 use super::*;
 
 #[test]
+fn initial_workspace_scan_prunes_configured_directories() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-scan-exclude-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("excluded directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+    )
+    .expect("configuration");
+    fs::write(root.join("root.adoc"), "= Root\n").expect("root document");
+    fs::write(excluded.join("unreadable.adoc"), [0xff]).expect("invalid UTF-8 document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
+
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Root\n");
+
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .expect("root document")
+            .workspace_analysis()
+            .is_some()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-excluded-include-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("excluded directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 1\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("configuration");
+    let source = "= Root\n\ninclude::generated/part.adoc[]\n";
+    fs::write(root.join("root.adoc"), source).expect("root document");
+    fs::write(excluded.join("part.adoc"), "included marker\n").expect("included document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(root.join("root.adoc")).expect("document URI");
+
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, source);
+
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .expect("root document")
+        .workspace_analysis()
+        .expect("workspace analysis");
+    assert!(analysis.analysis.source().contains("included marker"));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn explicitly_opened_document_remains_available_below_an_excluded_directory() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-excluded-open-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("excluded directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[workspace.scan]\nexclude = [\"generated\"]\n",
+    )
+    .expect("configuration");
+    let document_path = excluded.join("opened.adoc");
+    fs::write(&document_path, "= Disk\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(document_path).expect("document URI");
+
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Open overlay\n");
+
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .expect("open document")
+            .workspace_analysis()
+            .is_some()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn file_workspace_folder_analyzes_only_the_selected_document_as_a_root() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
