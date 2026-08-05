@@ -832,6 +832,26 @@ test("quality required check aggregates every canonical local unit", () => {
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       contract: inputs.contract.replace(
+        "          SEMVER_RESULT: ${{ needs.semver.result }}\n",
+        "",
+      ),
+    }),
+    /aggregate must receive the semver result/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: inputs.contract.replace(
+        '          test "$SEMVER_RESULT" = success\n',
+        "",
+      ),
+    }),
+    /aggregate must require semver success/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      contract: inputs.contract.replace(
         "nix develop .#ci -c cargo make quality-fast",
         "true # quality-fast",
       ),
@@ -872,6 +892,16 @@ test("quality required check aggregates every canonical local unit", () => {
 
 test("Makefile canonical gate graph is parsed and mutation-resistant", () => {
   const inputs = loadWorkflowPolicyInputs();
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      makefile: inputs.makefile.replace(
+        '  "semver-check",\n',
+        "",
+      ),
+    }),
+    /release-check dependencies must exactly match/,
+  );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,

@@ -189,6 +189,10 @@ cargo make dist-plan
 cargo make release-gate
 ----
 
+``release-gate``は公開前の完全な検査です。source、配布物および導入経路の検査に加えて、直前のstable tagとの
+公開Rust API差分とRelease Notesに記載した公開仕様を``semver-check``で照合します。GitHub Actionsのsource qualityも、
+変更pathに応じて実際の差分検査または対象外であることの記録を完了した``semver`` jobだけを成功として集約します。
+
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
 macOS deployment target、VSIX metadataおよび一時ディレクトリ削除の再試行条件をfixtureで検証します。
 このtaskはhost OSに依存せず、pull requestとlocalで同じtestを実行します。

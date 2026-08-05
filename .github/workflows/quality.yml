@@ -186,6 +186,7 @@ jobs:
           NIX_PACKAGE_REQUIRED: ${{ inputs.run_nix_package }}
           NIX_PACKAGE_RESULT: ${{ needs.nix-package.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          SEMVER_RESULT: ${{ needs.semver.result }}
           SOURCE_FAST_RESULT: ${{ needs.source-fast.result }}
         run: |
           test "$SOURCE_FAST_RESULT" = success
@@ -193,6 +194,7 @@ jobs:
           test "$ADAPTERS_RESULT" = success
           test "$DEPENDENCIES_RESULT" = success
           test "$FUZZ_RESULT" = success
+          test "$SEMVER_RESULT" = success
           if [ "$NIX_PACKAGE_REQUIRED" = true ]; then
             test "$NIX_PACKAGE_RESULT" = success
           else
