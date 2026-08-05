@@ -801,8 +801,9 @@ impl Workspace {
     /// the stricter starting-generation and configuration gate.
     pub fn finalize_draft(
         &self,
-        draft: WorkspaceAnalysisDraft,
+        draft: Box<WorkspaceAnalysisDraft>,
     ) -> Result<WorkspaceAnalysis, WorkspaceError> {
+        let draft = *draft;
         if !self.roots.contains(&draft.root) {
             return Err(WorkspaceError::new(
                 WorkspaceErrorCode::MissingResource,
@@ -1032,7 +1033,7 @@ enum WorkspaceResourceEvidence {
 #[non_exhaustive]
 pub enum WorkspaceAnalysisStep {
     /// Preprocessing, core analysis, and origin projection completed once.
-    Complete(WorkspaceAnalysisDraft),
+    Complete(Box<WorkspaceAnalysisDraft>),
     /// The host must answer one include request before processing can continue.
     NeedResource(Box<SuspendedWorkspaceAnalysis>),
     /// Processing failed without publishing a partial result.
@@ -1198,7 +1199,7 @@ impl WorkspaceAnalysisRun {
                             .map(|resource| (id, Arc::clone(&resource.text)))
                     })
                     .collect();
-                WorkspaceAnalysisStep::Complete(WorkspaceAnalysisDraft {
+                WorkspaceAnalysisStep::Complete(Box::new(WorkspaceAnalysisDraft {
                     base_generation: self.base_generation,
                     canonical_options: self.canonical_options,
                     root: self.root,
@@ -1213,7 +1214,7 @@ impl WorkspaceAnalysisRun {
                     found: self.found,
                     missing: self.missing,
                     include_journal,
-                })
+                }))
             }
             EffectivePreprocessStep::NeedResource(continuation) => {
                 let request = WorkspaceResourceRequest {
