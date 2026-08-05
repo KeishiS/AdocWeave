@@ -753,6 +753,25 @@ impl LanguageService {
         )
     }
 
+    /// Rebuilds a current document job when only its workspace input became
+    /// stale while another document loaded or changed a resource.
+    pub fn refresh_stale_workspace(&mut self, job: &AnalysisJob) -> Option<AnalysisJob> {
+        if !self.documents.job_is_current(job) {
+            return None;
+        }
+        let input = job.workspace.as_ref()?;
+        if self.workspace.input_is_current(input) {
+            return None;
+        }
+        let uri = job.uri.parse().ok()?;
+        let workspace = self.workspace.input(&uri);
+        let options = self.analysis_options_for(workspace.as_ref().ok());
+        let mut retry = self.documents.reconfigure(&job.uri, options)?;
+        retry.include_resolution_attempts = job.include_resolution_attempts.clone();
+        attach_workspace(&mut retry, workspace);
+        Some(retry)
+    }
+
     /// Loads one missing include requested by the current analysis and creates
     /// a replacement job against the resulting workspace generation.
     pub fn resolve_missing_include(
@@ -760,18 +779,28 @@ impl LanguageService {
         job: &AnalysisJob,
         target: &adocweave_workspace::ResourceId,
     ) -> Result<Option<AnalysisJob>, String> {
-        if !self.documents.job_is_current(job)
-            || job
-                .workspace
-                .as_ref()
-                .is_none_or(|input| !self.workspace.input_is_current(input))
-        {
+        if !self.documents.job_is_current(job) {
             return Ok(None);
         }
         let uri = job
             .uri
             .parse()
             .map_err(|error| format!("analysis root URI is invalid: {error}"))?;
+        if !job
+            .workspace
+            .as_ref()
+            .is_some_and(|input| self.workspace.input_is_current(input))
+        {
+            return Ok(None);
+        }
+        let mut attempts = job.include_resolution_attempts.clone();
+        let limit = job
+            .workspace
+            .as_ref()
+            .map_or(0, |input| input.options.max_includes as usize);
+        if attempts.len() >= limit || !attempts.insert(target.clone()) {
+            return Ok(None);
+        }
         if !self.workspace.load_missing_include(&uri, target)? {
             return Ok(None);
         }
@@ -780,6 +809,7 @@ impl LanguageService {
         let Some(mut retry) = self.documents.reconfigure(&job.uri, options) else {
             return Ok(None);
         };
+        retry.include_resolution_attempts = attempts;
         attach_workspace(&mut retry, workspace);
         Ok(Some(retry))
     }

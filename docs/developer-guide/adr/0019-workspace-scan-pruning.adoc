@@ -25,13 +25,17 @@ patternはOSに依存しない規則で検証し、ワークスペースのル�
 絶対パス、親ディレクトリへの移動およびOS固有の区切りは拒否します。
 
 除外規則はファイルシステムのアクセス権限ではありません。明示的に開いた文書、CLIへ直接渡した入力、
-file watcherが通知した文書およびinclude先には適用しません。初期走査で見つけた解析の起点を前処理し、
-includeに必要な文書がsnapshotにない場合だけ、従来のworkspace root、``resources.roots``、symlink検査および
-resource上限を使って読み込みます。読み込んだinclude先は解析の起点として登録しません。
+file watcherが通知した文書およびinclude先には適用しません。開いた解析の起点を前処理した結果、includeに
+必要な文書がsnapshotにない場合だけ、従来のworkspace root、``resources.roots``、symlink検査および
+resource上限を使って読み込みます。初期走査では未open文書を前処理せず、必要性は開いた文書の解析workerで
+判定します。読み込んだinclude先は解析の起点として登録しません。
 
 初期走査の後に編集で新しいincludeが追加された場合は、解析workerが返す不足resourceの論理IDを使います。
 main loopは解析対象の文書revisionとworkspace世代が現在も有効であることを確認し、不足resourceを同じ権限と
-上限で読み込んでから、新しい世代の解析jobを実行します。古い解析結果や許可範囲外の要求では読み込みません。
+上限で読み込んでから、通常の編集用待機時間を挟まず新しい解析jobを実行します。文書revisionが古い場合と
+許可範囲外の要求では読み込みません。別文書のresource追加でworkspace世代だけが古くなった場合は、現在の
+snapshotでjobを作り直し、複数のopen文書を同じ世代へ収束させます。同じ文書revisionでは取得を試みた論理IDを
+記録し、同じ対象を繰り返し読みません。
 
 workspace folderが入れ子の場合、外側のfolderの走査では内側のfolderを枝刈りし、内側のfolder自身の走査へ
 委ねます。各folderの走査方針を一つのroot相対名前空間へ限定し、重複走査による除外規則の迂回を防ぎます。

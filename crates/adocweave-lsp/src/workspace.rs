@@ -4,13 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use adocweave::CancellationCheck;
 #[cfg(test)]
 use adocweave::NeverCancel;
-use adocweave::preprocess::{
-    PreprocessErrorKind, PreprocessOptions, ProjectionLimits, ResourceDocument, ResourceSnapshot,
-    SafeMode, preprocess,
-};
-use adocweave::{CancellationCheck, SourceId};
+use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
 use adocweave_host::{
     FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
 };
@@ -362,7 +359,6 @@ impl WorkspaceResources {
             let mut project_plans = BTreeMap::new();
             let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> =
                 BTreeMap::new();
-            let mut analysis_root_paths = Vec::new();
             let mut next_disk_version = self.next_disk_version;
             for path in candidates {
                 if cancellation.is_cancelled() {
@@ -443,9 +439,6 @@ impl WorkspaceResources {
                     inner
                         .register_root(id.clone())
                         .map_err(|error| error.to_string())?;
-                    if directory_roots.iter().any(|root| path.starts_with(root)) {
-                        analysis_root_paths.push(path.clone());
-                    }
                 }
                 resource_projects.insert(id, scope);
             }
@@ -458,12 +451,6 @@ impl WorkspaceResources {
             self.resource_projects = resource_projects;
             self.retained_layers = retained_layers;
             self.next_disk_version = next_disk_version;
-            for path in analysis_root_paths {
-                let uri = Url::from_file_path(&path).map_err(|()| {
-                    format!("cannot convert workspace path to URI: {}", path.display())
-                })?;
-                self.preload_include_closure(&uri, cancellation)?;
-            }
             Ok(())
         })();
         if let Err(error) = load_result {
@@ -907,63 +894,6 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
-    fn preload_include_closure(
-        &mut self,
-        root: &Url,
-        cancellation: &dyn CancellationCheck,
-    ) -> Result<(), String> {
-        let root_id = uri_id(root)?;
-        let root_scope = self
-            .resource_projects
-            .get(&root_id)
-            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
-            .clone();
-        let config_snapshot = self.config_for_uri(root)?;
-        let project_config = config_snapshot.as_ref().map_or_else(
-            adocweave_config::ResolvedProjectConfig::default,
-            |snapshot| snapshot.config.clone(),
-        );
-        let mut options = project_config.preprocess.clone();
-        if config_snapshot.is_none() {
-            options.enable_includes = true;
-        }
-        if !options.enable_includes {
-            return Ok(());
-        }
-        options.base_uri = parent_uri(root);
-        options.safe_mode = SafeMode::Server;
-        options.allowed_schemes = BTreeSet::from(["file".to_owned()]);
-        options.source_id = Some(SourceId::new(root.to_string()));
-        let allowed_roots = configured_include_roots(&project_config, &self.roots)?;
-        let mut attempted = BTreeSet::new();
-        loop {
-            if cancellation.is_cancelled() {
-                return Err("workspace scan was cancelled".to_owned());
-            }
-            let root_text = self
-                .inner
-                .get(&root_id)
-                .ok_or_else(|| format!("workspace resource is missing: {root}"))?
-                .text()
-                .clone();
-            let snapshot = self.preprocess_snapshot(&root_id, &root_scope, &allowed_roots);
-            let error = match preprocess(&root_text, &snapshot, &options) {
-                Ok(_) => return Ok(()),
-                Err(error) if error.kind == PreprocessErrorKind::MissingResource => error,
-                Err(_) => return Ok(()),
-            };
-            let Some(target) = error.target else {
-                return Ok(());
-            };
-            if !attempted.insert(target.clone()) {
-                return Ok(());
-            }
-            if !self.try_insert_include_target(&root_scope, &allowed_roots, &target)? {
-                return Ok(());
-            }
-        }
-    }
-
     /// Loads one missing include requested by a current workspace analysis.
     ///
     /// The target is still checked against the root's effective include
@@ -973,6 +903,9 @@ impl WorkspaceResources {
         root: &Url,
         target: &ResourceId,
     ) -> Result<bool, String> {
+        if self.roots.is_empty() {
+            return Ok(false);
+        }
         let root_id = uri_id(root)?;
         let root_scope = self
             .resource_projects
@@ -1032,42 +965,6 @@ impl WorkspaceResources {
         );
         self.insert_include_resource(target_uri, canonical, scope, plan)?;
         Ok(true)
-    }
-
-    fn preprocess_snapshot(
-        &self,
-        root_id: &ResourceId,
-        root_scope: &ProjectScopeId,
-        allowed_roots: &[PathBuf],
-    ) -> ResourceSnapshot {
-        self.inner
-            .snapshot()
-            .resources()
-            .filter(|(id, _)| *id != root_id)
-            .filter(|(id, _)| {
-                let same_scope = self.resource_projects.get(*id).is_some_and(|scope| {
-                    scope.workspace_root == root_scope.workspace_root
-                        && (root_scope.config_path.is_some() || scope == root_scope)
-                });
-                same_scope
-                    && (allowed_roots.is_empty()
-                        || Url::parse(id.as_str())
-                            .ok()
-                            .and_then(|uri| uri.to_file_path().ok())
-                            .is_some_and(|path| {
-                                allowed_roots.iter().any(|root| path.starts_with(root))
-                            }))
-            })
-            .map(|(id, resource)| {
-                (
-                    id.to_string(),
-                    ResourceDocument {
-                        source_id: SourceId::new(id.to_string()),
-                        source: Arc::clone(resource.text()),
-                    },
-                )
-            })
-            .collect()
     }
 
     fn insert_include_resource(
@@ -1551,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_exclusion_keeps_included_resource_out_of_the_analysis_root_set() {
+    fn scan_exclusion_defers_include_loading_without_promoting_the_resource_to_a_root() {
         let root = TestDirectory::new();
         let generated = root.0.join("nested/generated");
         std::fs::create_dir_all(&generated).expect("generated directory");
@@ -1579,8 +1476,30 @@ mod tests {
             resources.inner.roots(),
             &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
         );
-        assert!(resources.get(&included_uri).is_some());
-        let input = resources.input(&source_uri).expect("workspace input");
+        assert!(resources.get(&included_uri).is_none());
+        let initial = resources.input(&source_uri).expect("workspace input");
+        let error = initial
+            .analyze(
+                &adocweave::AnalysisOptions::default(),
+                &adocweave::CancellationToken::new(),
+            )
+            .expect_err("include is loaded only when an open document requests it");
+        let target = error
+            .requested_resource()
+            .expect("structured missing resource")
+            .clone();
+        assert!(
+            resources
+                .load_missing_include(&source_uri, &target)
+                .expect("load include")
+        );
+        assert_eq!(
+            resources.inner.roots(),
+            &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
+        );
+        let input = resources
+            .input(&source_uri)
+            .expect("updated workspace input");
         let analysis = input
             .analyze(
                 &adocweave::AnalysisOptions::default(),
