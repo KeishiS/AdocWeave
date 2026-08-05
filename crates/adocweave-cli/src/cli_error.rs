@@ -183,13 +183,6 @@ pub(crate) fn format_error(error: commands::format::Error) -> CliError {
 
 pub(crate) fn preview_error(error: commands::preview::Error) -> CliError {
     match error {
-        commands::preview::Error::Read {
-            source_name,
-            source,
-        } => CliError::Read {
-            source_name,
-            source,
-        },
         commands::preview::Error::Analysis(source) => CliError::Analysis(source),
         commands::preview::Error::Include(source) => CliError::Include(source),
         commands::preview::Error::Html(source) => html_policy_error(source),

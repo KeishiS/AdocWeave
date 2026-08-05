@@ -13,6 +13,6 @@ pub use local_resource::{
     LocalFilesystemSession, LogicalSourceId, ResourceBudget, ResourceError,
 };
 pub use local_target::{
-    FilesystemRaceResistance, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession,
+    FilesystemRaceResistance, LoadedLocalBytes, LoadedLocalTarget, LocalTargetError,
+    LocalTargetPolicy, LocalTargetSession,
 };

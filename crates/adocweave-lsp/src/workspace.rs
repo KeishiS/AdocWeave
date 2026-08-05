@@ -93,6 +93,7 @@ pub struct WorkspaceResources {
     roots: Vec<PathBuf>,
     directory_roots: Vec<PathBuf>,
     single_file_roots: BTreeSet<PathBuf>,
+    filesystem_policy: Option<LocalFilesystemPolicy>,
     filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
     project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
     resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
@@ -252,6 +253,16 @@ impl WorkspaceResources {
         limits: WorkspaceLimits,
         cancellation: &dyn CancellationCheck,
     ) -> Result<(), String> {
+        self.load_roots_with_limits_after_authority(roots, limits, cancellation, || {})
+    }
+
+    fn load_roots_with_limits_after_authority(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+        cancellation: &dyn CancellationCheck,
+        after_authority: impl FnOnce(),
+    ) -> Result<(), String> {
         self.last_load_failed_closed = false;
         // A reload is the only way the roots or a project file can change, so it
         // is also the only point at which a remembered configuration can go
@@ -303,15 +314,31 @@ impl WorkspaceResources {
         paths.dedup();
         let preserve_previous = std::cell::Cell::new(false);
         let load_result = (|| {
+            let authority = (!paths.is_empty())
+                .then(|| {
+                    LocalFilesystemPolicy::new(
+                        paths.clone(),
+                        adocweave_host::FilesystemReadLimits::default(),
+                    )
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            after_authority();
             let scan_settings = directory_roots
                 .iter()
                 .map(|root| {
-                    let snapshot =
-                        adocweave_config::discover_and_load(root, root).map_err(|error| {
-                            preserve_previous
-                                .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
-                            error.to_string()
-                        })?;
+                    let snapshot = adocweave_config::discover_and_load_with_policy(
+                        root,
+                        authority
+                            .as_ref()
+                            .and_then(|policy| policy.root_policy(root))
+                            .expect("directory root has a retained policy"),
+                    )
+                    .map_err(|error| {
+                        preserve_previous
+                            .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
+                        error.to_string()
+                    })?;
                     Ok((
                         root.clone(),
                         snapshot.map_or_else(
@@ -321,16 +348,15 @@ impl WorkspaceResources {
                     ))
                 })
                 .collect::<Result<BTreeMap<_, _>, String>>()?;
-            let discovery = (!directory_roots.is_empty())
-                .then(|| {
-                    LocalFilesystemPolicy::new(
-                        directory_roots.clone(),
+            let discovery = authority
+                .as_ref()
+                .filter(|_| !directory_roots.is_empty())
+                .map(|policy| {
+                    policy.session_for_roots(
+                        &directory_roots,
                         adocweave_host::FilesystemReadLimits::default(),
                     )
                 })
-                .transpose()
-                .map_err(|error| error.to_string())?
-                .map(|policy| policy.session())
                 .transpose()
                 .map_err(|error| error.to_string())?;
             let mut candidates = match discovery.as_ref() {
@@ -364,11 +390,10 @@ impl WorkspaceResources {
                 if cancellation.is_cancelled() {
                     return Err("workspace scan was cancelled".to_owned());
                 }
-                let config = match config_for_path_typed(&paths, &path) {
+                let config = match config_for_path_typed(&paths, authority.as_ref(), &path) {
                     Ok(config) => config,
                     Err(error) => {
-                        preserve_previous
-                            .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
+                        preserve_previous.set(error.preserves_previous());
                         return Err(error.to_string());
                     }
                 };
@@ -399,13 +424,14 @@ impl WorkspaceResources {
                 let filesystem = match filesystems.entry(scope.clone()) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        let session = LocalFilesystemPolicy::new(
-                            [scope.workspace_root.clone()],
-                            plan.filesystem_reads,
-                        )
-                        .map_err(|error| error.to_string())?
-                        .session()
-                        .map_err(|error| error.to_string())?;
+                        let session = authority
+                            .as_ref()
+                            .expect("a discovered candidate has filesystem authority")
+                            .session_for_roots(
+                                std::slice::from_ref(&scope.workspace_root),
+                                plan.filesystem_reads,
+                            )
+                            .map_err(|error| error.to_string())?;
                         entry.insert(Arc::new(Mutex::new(session)))
                     }
                 };
@@ -446,6 +472,7 @@ impl WorkspaceResources {
             self.roots = paths.clone();
             self.directory_roots = directory_roots;
             self.single_file_roots = single_file_roots;
+            self.filesystem_policy = authority;
             self.filesystems = filesystems;
             self.project_plans = project_plans;
             self.resource_projects = resource_projects;
@@ -468,6 +495,7 @@ impl WorkspaceResources {
         self.roots = roots;
         self.directory_roots.clear();
         self.single_file_roots.clear();
+        self.filesystem_policy = None;
         self.filesystems.clear();
         self.project_plans.clear();
         self.resource_projects.clear();
@@ -499,12 +527,20 @@ impl WorkspaceResources {
             .to_file_path()
             .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let id = uri_id(&uri)?;
-        let admitted_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !self.path_is_analysis_root(&path) {
+            return Ok(BTreeSet::new());
+        }
+        let admitted_path =
+            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path, true)?;
         if !self.path_is_analysis_root(&admitted_path) {
             return Ok(BTreeSet::new());
         }
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &admitted_path)
-            .map_err(|error| error.to_string())?;
+        let (scope, config) = scope_and_config_for_path_typed(
+            &self.roots,
+            self.filesystem_policy.as_ref(),
+            &admitted_path,
+        )
+        .map_err(|error| error.to_string())?;
         if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
             return self.remove_outside_authority(&id, &admitted_path);
         }
@@ -618,11 +654,15 @@ impl WorkspaceResources {
         let filesystem = if let Some(filesystem) = self.filesystems.get(scope) {
             Arc::clone(filesystem)
         } else {
-            let session =
-                LocalFilesystemPolicy::new([scope.workspace_root.clone()], plan.filesystem_reads)
-                    .map_err(|error| error.to_string())?
-                    .session()
-                    .map_err(|error| error.to_string())?;
+            let session = self
+                .filesystem_policy
+                .as_ref()
+                .ok_or_else(|| "workspace has no retained filesystem authority".to_owned())?
+                .session_for_roots(
+                    std::slice::from_ref(&scope.workspace_root),
+                    plan.filesystem_reads,
+                )
+                .map_err(|error| error.to_string())?;
             Arc::new(Mutex::new(session))
         };
         let (loaded, rollback) = filesystem
@@ -917,7 +957,11 @@ impl WorkspaceResources {
             adocweave_config::ResolvedProjectConfig::default,
             |snapshot| snapshot.config.clone(),
         );
-        let allowed_roots = configured_include_roots(&project_config, &self.roots)?;
+        let allowed_roots = configured_include_roots(
+            &project_config,
+            &self.roots,
+            self.filesystem_policy.as_ref(),
+        )?;
         self.try_insert_include_target(&root_scope, &allowed_roots, target.as_str())
     }
 
@@ -933,7 +977,12 @@ impl WorkspaceResources {
         let Ok(target_path) = target_uri.to_file_path() else {
             return Ok(false);
         };
-        let Ok(canonical) = target_path.canonicalize() else {
+        let Ok(canonical) = workspace_logical_file(
+            &self.roots,
+            self.filesystem_policy.as_ref(),
+            &target_path,
+            false,
+        ) else {
             return Ok(false);
         };
         let authority_roots = if allowed_roots.is_empty() {
@@ -951,8 +1000,12 @@ impl WorkspaceResources {
         if self.inner.get(&target_id).is_some() {
             return Ok(false);
         }
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &canonical)
-            .map_err(|error| error.to_string())?;
+        let (scope, config) = scope_and_config_for_path_typed(
+            &self.roots,
+            self.filesystem_policy.as_ref(),
+            &canonical,
+        )
+        .map_err(|error| error.to_string())?;
         if root_scope.config_path.is_none() && scope != *root_scope {
             return Ok(false);
         }
@@ -1034,7 +1087,11 @@ impl WorkspaceResources {
         options.safe_mode = SafeMode::Server;
         options.allowed_schemes = allowed_schemes;
         let allowed_roots = if options.enable_includes {
-            configured_include_roots(&project_config, &self.roots)?
+            configured_include_roots(
+                &project_config,
+                &self.roots,
+                self.filesystem_policy.as_ref(),
+            )?
         } else {
             Vec::new()
         };
@@ -1118,15 +1175,13 @@ impl WorkspaceResources {
     fn cached_config_for_path(
         &mut self,
         path: &Path,
-    ) -> Result<Option<adocweave_config::ConfigSnapshot>, adocweave_config::ConfigError> {
-        let Some(start) = existing_ancestor(path) else {
-            return Ok(None);
-        };
-        if let Some(cached) = self.config_cache.get(&start) {
+    ) -> Result<Option<adocweave_config::ConfigSnapshot>, ScopeConfigError> {
+        let cache_key = path.parent().unwrap_or(path).to_owned();
+        if let Some(cached) = self.config_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
-        let config = config_for_path_typed(&self.roots, path)?;
-        self.config_cache.insert(start, config.clone());
+        let config = config_for_path_typed(&self.roots, self.filesystem_policy.as_ref(), path)?;
+        self.config_cache.insert(cache_key, config.clone());
         Ok(config)
     }
 
@@ -1150,11 +1205,20 @@ impl WorkspaceResources {
         let path = uri.to_file_path().map_err(|()| {
             ScopeConfigError::Other(format!("workspace resource is not a file URI: {uri}"))
         })?;
-        let admission_path = path.canonicalize().unwrap_or_else(|_| path.clone());
-        if !self.path_is_analysis_root(&admission_path) {
+        if !self.path_is_analysis_root(&path) {
             return Ok(None);
         }
-        let (scope, config) = scope_and_config_for_path_typed(&self.roots, &admission_path)?;
+        let admission_path = if self.roots.is_empty() {
+            path.clone()
+        } else {
+            workspace_logical_file(&self.roots, self.filesystem_policy.as_ref(), &path, true)
+                .map_err(ScopeConfigError::Other)?
+        };
+        let (scope, config) = scope_and_config_for_path_typed(
+            &self.roots,
+            self.filesystem_policy.as_ref(),
+            &admission_path,
+        )?;
         if !resource_path_is_allowed(config.as_ref(), &admission_path) {
             return Ok(None);
         }
@@ -1213,45 +1277,72 @@ fn resource_path_is_allowed(
 fn configured_include_roots(
     config: &adocweave_config::ResolvedProjectConfig,
     workspace_roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
 ) -> Result<Vec<PathBuf>, String> {
     config
         .resources
         .roots
         .iter()
         .map(|root| {
-            let canonical = root
-                .canonicalize()
-                .map_err(|error| format!("cannot canonicalize configured root: {error}"))?;
-            if !workspace_roots
+            let boundary = workspace_roots
                 .iter()
-                .any(|workspace_root| canonical.starts_with(workspace_root))
-            {
-                return Err(format!(
-                    "configured root is outside the workspace: {}",
-                    root.display()
-                ));
-            }
-            Ok(canonical)
+                .filter(|workspace_root| root.starts_with(workspace_root))
+                .max_by_key(|workspace_root| workspace_root.components().count())
+                .ok_or_else(|| {
+                    format!(
+                        "configured root is outside the workspace: {}",
+                        root.display()
+                    )
+                })?;
+            let policy = filesystem_policy
+                .and_then(|filesystem| filesystem.root_policy(boundary))
+                .ok_or_else(|| "workspace root has no retained filesystem authority".to_owned())?;
+            policy
+                .inspect_directory_no_symlinks(root)
+                .map_err(|error| format!("cannot verify configured root: {error}"))
         })
         .collect()
 }
 
-/// Walks up to the nearest directory that exists.
-///
-/// A document being created does not exist on disk yet, and configuration
-/// discovery has to start somewhere real.
-fn existing_ancestor(path: &Path) -> Option<PathBuf> {
-    let mut start = path;
-    while !start.exists() {
-        start = start.parent()?;
+fn workspace_logical_file(
+    roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
+    path: &Path,
+    allow_missing: bool,
+) -> Result<PathBuf, String> {
+    let boundary = roots
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .ok_or_else(|| {
+            format!(
+                "workspace resource is outside every workspace root: {} (roots: {})",
+                path.display(),
+                roots
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    let policy = filesystem_policy
+        .and_then(|filesystem| filesystem.root_policy(boundary))
+        .ok_or_else(|| "workspace root has no retained filesystem authority".to_owned())?;
+    let logical = policy
+        .normalize_candidate(path)
+        .map_err(|error| error.to_string())?;
+    match policy.inspect_candidate(&logical) {
+        Ok(canonical) => Ok(canonical),
+        Err(adocweave_host::LocalTargetError::Missing(_)) if allow_missing => Ok(logical),
+        Err(error) => Err(error.to_string()),
     }
-    Some(start.to_owned())
 }
 
 fn config_for_path_typed(
     roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
     path: &Path,
-) -> Result<Option<adocweave_config::ConfigSnapshot>, adocweave_config::ConfigError> {
+) -> Result<Option<adocweave_config::ConfigSnapshot>, ScopeConfigError> {
     let boundary = roots
         .iter()
         .filter(|root| path.starts_with(root))
@@ -1259,18 +1350,19 @@ fn config_for_path_typed(
     let Some(boundary) = boundary else {
         return Ok(None);
     };
-    let mut start = path;
-    while !start.exists() {
-        let Some(parent) = start.parent() else {
-            return Ok(None);
-        };
-        start = parent;
-    }
-    adocweave_config::discover_and_load(start, boundary)
+    let policy = filesystem_policy
+        .and_then(|filesystem| filesystem.root_policy(boundary))
+        .ok_or_else(|| {
+            ScopeConfigError::Other(
+                "workspace root has no retained filesystem authority".to_owned(),
+            )
+        })?;
+    adocweave_config::discover_and_load_with_policy(path, policy).map_err(ScopeConfigError::Config)
 }
 
 fn scope_and_config_for_path_typed(
     roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
     path: &Path,
 ) -> Result<(ProjectScopeId, Option<adocweave_config::ConfigSnapshot>), ScopeConfigError> {
     let boundary = roots
@@ -1291,21 +1383,15 @@ fn scope_and_config_for_path_typed(
             "workspace resource is outside every workspace root".to_owned(),
         ));
     };
-    let mut start = path;
-    while !start.exists() {
-        let Some(parent) = start.parent() else {
-            return Ok((
-                ProjectScopeId {
-                    workspace_root: boundary.clone(),
-                    config_path: None,
-                },
-                None,
-            ));
-        };
-        start = parent;
-    }
-    let config =
-        adocweave_config::discover_and_load(start, boundary).map_err(ScopeConfigError::Config)?;
+    let policy = filesystem_policy
+        .and_then(|filesystem| filesystem.root_policy(boundary))
+        .ok_or_else(|| {
+            ScopeConfigError::Other(
+                "workspace root has no retained filesystem authority".to_owned(),
+            )
+        })?;
+    let config = adocweave_config::discover_and_load_with_policy(path, policy)
+        .map_err(ScopeConfigError::Config)?;
     Ok((
         ProjectScopeId {
             workspace_root: boundary.clone(),
@@ -1572,6 +1658,51 @@ mod tests {
         resources.load_roots(&roots).expect("load workspaces");
 
         assert_eq!(resources.inner.roots(), &expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn one_root_authority_covers_configuration_scan_and_document_read() {
+        let root = TestDirectory::new();
+        let document = root.0.join("root.adoc");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n",
+        )
+        .expect("trusted configuration");
+        std::fs::write(&document, "= Trusted\n").expect("trusted document");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&document).expect("document URI");
+        let displaced = root.0.with_extension("anchored-workspace");
+        let mut resources = WorkspaceResources::default();
+
+        let loaded = resources.load_roots_with_limits_after_authority(
+            std::slice::from_ref(&root_uri),
+            adapter_managed_workspace_limits(),
+            &NeverCancel,
+            || {
+                std::fs::rename(&root.0, &displaced).expect("displace trusted workspace");
+                std::fs::create_dir(&root.0).expect("replacement workspace");
+                std::fs::write(
+                    root.0.join(adocweave_config::FILE_NAME),
+                    "schema-version = 99\n",
+                )
+                .expect("replacement configuration");
+                std::fs::write(root.0.join("root.adoc"), "= Replacement\n")
+                    .expect("replacement document");
+            },
+        );
+
+        std::fs::remove_dir_all(&root.0).expect("remove replacement workspace");
+        std::fs::rename(&displaced, &root.0).expect("restore trusted workspace");
+        loaded.expect("load through retained authority");
+        assert_eq!(
+            resources
+                .resource_text(&document_uri)
+                .expect("trusted resource")
+                .as_ref(),
+            "= Trusted\n",
+        );
     }
 
     #[test]

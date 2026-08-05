@@ -893,7 +893,11 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         .iter()
         .find(|job| job.uri == retained_document.as_str())
         .expect("retained document reanalysis");
-    assert!(retained_job.workspace.is_some());
+    assert!(
+        retained_job.workspace.is_some(),
+        "retained workspace problem: {:?}",
+        retained_job.workspace_problem
+    );
     assert!(retained_job.workspace_problem.is_none());
     let removed_job = jobs
         .iter()

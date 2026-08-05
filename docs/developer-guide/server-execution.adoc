@@ -100,7 +100,8 @@ WASMの解析requestでincludeを展開する場合は、``preprocess.resources`
 ``discover_includes``は、完全でescapeされていないinclude directiveをI/Oなしで列挙します。この結果は条件分岐内を
 含む候補の集合であり、実際に使用するかどうかと安全性はプリプロセッサが判断します。
 
-Native側のディレクトリ列挙とファイル読込は``LocalFilesystemSession``を経由します。このsessionは許可したrootごとの
+Native側のディレクトリ列挙とファイル読込は``LocalFilesystemSession``を経由します。Linuxではpolicy作成時に
+各rootのディレクトリhandleを取得し、session作成時や走査中にrootのpathから開き直しません。このsessionは許可したrootごとの
 filesystem adapter、symlink判定および全rootで共有するファイル数・byte数の上限を所有します。初期走査では
 ``.adoc``の通常ファイル候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
 ``.adocweave.toml``を解決してから、その設定の読込上限を持つsessionで本文を読みます。呼出側はpathから
@@ -111,10 +112,19 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-Linuxでは、CLIのincludeとLanguage Serverのワークスペース走査・読込が同じhandle相対adapterを使用します。
+Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の探索と読込、およびLanguage Serverの
+ワークスペース走査・読込が同じhandle相対adapterを使用します。CLIは最初に作業ディレクトリのauthorityを確立し、
+そのhandleから入力ディレクトリと設定に記載されたrootを派生させます。command lineで明示したrootは、
+利用者が直接選んだ別のauthorityとして追加します。
+明示した``--config``が作業ディレクトリ外を指す場合は設定本文だけを独立したauthorityで読み、設定に記載された
+resource rootやstylesheetは作業ディレクトリのauthority内にある場合だけ利用します。live previewの依存関係監視も
+raw pathを開かず、workspace、設定由来stylesheetおよび明示したstylesheetに対応する保持済みauthorityから、
+pollごとに上限付きsessionを作って本文のhashを計算します。
 ``adocweave-workspace``はファイルシステムへアクセスせず、検証済みの論理IDと本文を取り込みます。
 macOSとWindowsでは``StaticSnapshotOnly``を返し、同時に書き換えられる
 ワークスペースをsecurity境界として扱いません。
+設定から派生するrootについては、macOSとWindowsでも静的状態のanchor外pathとsymlinkを拒否します。
+``LocalFilesystemPolicy``が保持するroot数は128件に制限し、本文の読込件数とは別にfile descriptorの消費を抑えます。
 Language Serverは初回走査とファイル変更通知で、解決したproject設定ごとのsessionを共有します。変更通知では
 本文キャッシュを使用せずに対象を再度openしますが、走査から継続するファイル数・byte数の上限は初期化しません。
 resourceを削除した場合は、そのprojectの読込課金と保持課金を解放します。
@@ -165,8 +175,9 @@ redirect、response size、content typeおよびnetwork addressの制限は利�
 Includeを無効にした場合はdirectiveを展開せず、スナップショットも参照しません。循環、絶対path、path traversal、
 制御文字および許可していないschemeを拒否します。
 
-CLI、Language Serverおよびワークスペース走査は、同一のpath検査、上限付きUTF-8読み取り、byte数集計および
-ファイルシステム競合耐性を使用します。各adapterで異なる読込処理やsymlink判定を設けません。
+CLI、Language Serverおよびワークスペース走査は、同一のpath検査、用途別の上限付き読込、byte数集計および
+ファイルシステム競合耐性を使用します。本文と設定はUTF-8として、stylesheetはbyte列として読みます。
+各adapterで異なるsymlink判定を設けません。
 CLIはproject設定を解決してからroot本文を上限付きで読み、rootを最初の解析snapshot resourceとして課金します。
 includeは同じplanの残り件数と残りbyte数だけを使用し、Language Serverと同じ
 ``AnalysisSnapshotBudget``でresource件数、各本文のbyte数および合計byte数を検査します。

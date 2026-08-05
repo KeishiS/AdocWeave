@@ -15,6 +15,12 @@ pub(crate) enum StylesheetArgument {
     Url(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StylesheetFileOrigin {
+    ProjectConfiguration,
+    CommandLine,
+}
+
 #[derive(Debug)]
 pub(crate) enum Error {
     Cancelled,
@@ -39,13 +45,14 @@ pub(crate) fn build(
     project: &adocweave_config::HtmlSettings,
     complete: bool,
     stylesheets: &[StylesheetArgument],
-    mut read: impl FnMut(&Path) -> io::Result<Vec<u8>>,
+    mut read: impl FnMut(StylesheetFileOrigin, &Path) -> io::Result<Vec<u8>>,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<RenderPolicy, Error> {
     let limits = StylesheetPolicy::default();
     let mut sources = Vec::new();
     for path in &project.stylesheet_files {
         sources.push(StylesheetSource::Inline(read_stylesheet(
+            StylesheetFileOrigin::ProjectConfiguration,
             path,
             limits.max_inline_bytes,
             &mut read,
@@ -64,6 +71,7 @@ pub(crate) fn build(
         match stylesheet {
             StylesheetArgument::File(path) => {
                 sources.push(StylesheetSource::Inline(read_stylesheet(
+                    StylesheetFileOrigin::CommandLine,
                     path,
                     limits.max_inline_bytes,
                     &mut read,
@@ -132,13 +140,14 @@ fn is_stylesheet_error(code: &str) -> bool {
 }
 
 fn read_stylesheet(
+    origin: StylesheetFileOrigin,
     path: &Path,
     max_inline_bytes: u32,
-    read: &mut impl FnMut(&Path) -> io::Result<Vec<u8>>,
+    read: &mut impl FnMut(StylesheetFileOrigin, &Path) -> io::Result<Vec<u8>>,
     is_cancelled: &mut impl FnMut() -> bool,
 ) -> Result<String, Error> {
     ensure_active(is_cancelled)?;
-    let bytes = read(path).map_err(|source| Error::Read {
+    let bytes = read(origin, path).map_err(|source| Error::Read {
         source_name: path.display().to_string(),
         source,
     })?;
@@ -198,7 +207,7 @@ mod tests {
             &project,
             false,
             &command,
-            |path| Ok(format!("/* {} */", path.display()).into_bytes()),
+            |_, path| Ok(format!("/* {} */", path.display()).into_bytes()),
             || false,
         )
         .expect("render policy");
@@ -230,7 +239,7 @@ mod tests {
             &project,
             false,
             &[],
-            |_| {
+            |_, _| {
                 read = true;
                 Ok(Vec::new())
             },
@@ -255,7 +264,7 @@ mod tests {
             &project,
             false,
             &[],
-            |_| {
+            |_, _| {
                 reads.set(reads.get() + 1);
                 cancelled.set(true);
                 Ok(b"body {}".to_vec())
@@ -278,7 +287,7 @@ mod tests {
             &project,
             false,
             &[],
-            |_| Err(io::Error::new(io::ErrorKind::NotFound, "missing")),
+            |_, _| Err(io::Error::new(io::ErrorKind::NotFound, "missing")),
             || false,
         )
         .expect_err("read error");
@@ -288,14 +297,20 @@ mod tests {
         ));
 
         let utf8_error =
-            build(&project, false, &[], |_| Ok(vec![0xff]), || false).expect_err("UTF-8 error");
+            build(&project, false, &[], |_, _| Ok(vec![0xff]), || false).expect_err("UTF-8 error");
         assert!(matches!(utf8_error, Error::InvalidUtf8 { valid_up_to: 0 }));
 
         let oversize = usize::try_from(StylesheetPolicy::default().max_inline_bytes)
             .expect("u32 fits usize")
             + 1;
-        let size_error = build(&project, false, &[], |_| Ok(vec![b'x'; oversize]), || false)
-            .expect_err("size error");
+        let size_error = build(
+            &project,
+            false,
+            &[],
+            |_, _| Ok(vec![b'x'; oversize]),
+            || false,
+        )
+        .expect_err("size error");
         assert!(matches!(size_error, Error::Stylesheet(message) if message.contains("exceeds")));
 
         let fragment = adocweave_config::HtmlSettings::default();
@@ -305,7 +320,7 @@ mod tests {
             &[StylesheetArgument::Url(
                 "https://example.com/style.css".to_owned(),
             )],
-            |_| unreachable!("URL does not read a file"),
+            |_, _| unreachable!("URL does not read a file"),
             || false,
         )
         .expect_err("fragment stylesheet");

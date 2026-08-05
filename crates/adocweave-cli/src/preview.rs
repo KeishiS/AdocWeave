@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr, TcpListener};
+#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +13,7 @@ use adocweave::CancellationToken;
 mod dependency;
 mod http;
 
-pub(crate) use dependency::{Fingerprint, read_dependency};
+pub(crate) use dependency::{Dependency, DependencyAuthority, Fingerprint};
 use http::{HttpSnapshot, HttpWorkers};
 
 const ACCEPT_RETRY_INTERVAL: Duration = Duration::from_millis(20);
@@ -30,7 +31,7 @@ pub struct Options {
 pub struct Build {
     pub html: String,
     pub diagnostics: String,
-    dependencies: BTreeMap<PathBuf, Fingerprint>,
+    dependencies: BTreeMap<Dependency, Fingerprint>,
     style_origins: BTreeSet<String>,
 }
 
@@ -38,7 +39,7 @@ impl Build {
     pub fn new(
         html: String,
         diagnostics: String,
-        dependencies: BTreeMap<PathBuf, Fingerprint>,
+        dependencies: BTreeMap<Dependency, Fingerprint>,
     ) -> Self {
         Self {
             html,
@@ -48,7 +49,7 @@ impl Build {
         }
     }
 
-    pub fn failure(message: String, dependencies: BTreeMap<PathBuf, Fingerprint>) -> Self {
+    pub fn failure(message: String, dependencies: BTreeMap<Dependency, Fingerprint>) -> Self {
         let diagnostics = failure_diagnostics(&message);
         Self::new(error_document(&message), diagnostics, dependencies)
     }
@@ -58,10 +59,11 @@ impl Build {
         self
     }
 
-    fn changed(&mut self) -> bool {
-        self.dependencies
-            .iter_mut()
-            .any(|(path, fingerprint)| fingerprint.changed(path, true))
+    fn changed(
+        &mut self,
+        snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
+    ) -> bool {
+        refresh_dependencies(&mut self.dependencies, snapshot)
     }
 }
 
@@ -95,7 +97,7 @@ impl std::error::Error for Error {}
 #[derive(Clone)]
 struct State {
     http: Arc<HttpSnapshot>,
-    dependencies: BTreeMap<PathBuf, Fingerprint>,
+    dependencies: BTreeMap<Dependency, Fingerprint>,
 }
 
 impl State {
@@ -111,26 +113,54 @@ impl State {
         }
     }
 
-    fn changed(&mut self, force_hash: bool) -> bool {
-        self.dependencies
-            .iter_mut()
-            .any(|(path, previous)| previous.changed(path, force_hash))
+    fn changed(
+        &mut self,
+        _force_hash: bool,
+        snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
+    ) -> bool {
+        refresh_dependencies(&mut self.dependencies, snapshot)
     }
 
-    fn refresh(&mut self) {
-        for (path, fingerprint) in &mut self.dependencies {
-            *fingerprint = Fingerprint::read(path);
-        }
+    fn refresh(
+        &mut self,
+        snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
+    ) {
+        let _ = refresh_dependencies(&mut self.dependencies, snapshot);
     }
 
-    fn replace_failure(&mut self, generation: u64, message: &str) {
+    fn replace_failure(
+        &mut self,
+        generation: u64,
+        message: &str,
+        snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
+    ) {
         self.http = Arc::new(self.http.failure(
             generation,
             error_document(message),
             failure_diagnostics(message),
         ));
-        self.refresh();
+        self.refresh(snapshot);
     }
+}
+
+fn refresh_dependencies(
+    dependencies: &mut BTreeMap<Dependency, Fingerprint>,
+    snapshot: &mut impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
+) -> bool {
+    let keys = dependencies.keys().cloned().collect::<Vec<_>>();
+    let mut latest = snapshot(&keys);
+    let changed = keys.iter().any(|dependency| {
+        latest
+            .get(dependency)
+            .is_none_or(|fingerprint| dependencies.get(dependency) != Some(fingerprint))
+    });
+    for dependency in keys {
+        let fingerprint = latest
+            .remove(&dependency)
+            .unwrap_or_else(|| Fingerprint::unavailable("snapshot-missing"));
+        dependencies.insert(dependency, fingerprint);
+    }
+    changed
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +221,7 @@ fn run_build<T: Send>(
 pub fn run(
     options: Options,
     mut build: impl FnMut(&CancellationToken) -> Result<Build, String> + Send,
+    mut snapshot: impl FnMut(&[Dependency]) -> BTreeMap<Dependency, Fingerprint>,
     shutdown: &AtomicBool,
 ) -> Result<(), Error> {
     let address = SocketAddr::new(options.bind, options.port);
@@ -223,12 +254,12 @@ pub fn run(
         let now = Instant::now();
         if dependency_poll
             .mode(now)
-            .is_some_and(|force_hash| state.changed(force_hash))
+            .is_some_and(|force_hash| state.changed(force_hash, &mut snapshot))
         {
             changed_at.get_or_insert(now);
         }
         if changed_at.is_some_and(|start| start.elapsed() >= options.debounce) {
-            state.refresh();
+            state.refresh(&mut snapshot);
             dependency_poll.reset(Instant::now());
             let cancellation = CancellationToken::new();
             let mut superseded = false;
@@ -238,7 +269,7 @@ pub fn run(
                 || {
                     let dependency_changed = dependency_poll
                         .mode(Instant::now())
-                        .is_some_and(|force_hash| state.changed(force_hash));
+                        .is_some_and(|force_hash| state.changed(force_hash, &mut snapshot));
                     if shutdown.load(Ordering::Acquire) || dependency_changed {
                         cancellation.cancel();
                         superseded = true;
@@ -255,14 +286,14 @@ pub fn run(
                     Ok(())
                 },
             )?;
-            if state.changed(true) {
+            if state.changed(true, &mut snapshot) {
                 superseded = true;
             }
             if shutdown.load(Ordering::Acquire) {
                 break;
             }
             if superseded {
-                state.refresh();
+                state.refresh(&mut snapshot);
                 dependency_poll.reset(Instant::now());
                 changed_at = Some(std::time::Instant::now());
                 continue;
@@ -270,8 +301,8 @@ pub fn run(
             let next_generation = state.http.generation().saturating_add(1);
             match result {
                 Ok(mut next) => {
-                    if next.changed() {
-                        state.refresh();
+                    if next.changed(&mut snapshot) {
+                        state.refresh(&mut snapshot);
                         dependency_poll.reset(Instant::now());
                         changed_at = Some(std::time::Instant::now());
                         continue;
@@ -279,7 +310,7 @@ pub fn run(
                     state = State::from_build(next_generation, next);
                 }
                 Err(message) => {
-                    state.replace_failure(next_generation, &message);
+                    state.replace_failure(next_generation, &message, &mut snapshot);
                 }
             }
             changed_at = None;
@@ -330,12 +361,29 @@ mod tests {
 
     use super::*;
 
-    fn snapshots(paths: impl IntoIterator<Item = PathBuf>) -> BTreeMap<PathBuf, Fingerprint> {
+    fn snapshot_dependencies(dependencies: &[Dependency]) -> BTreeMap<Dependency, Fingerprint> {
+        dependencies
+            .iter()
+            .cloned()
+            .map(|dependency| {
+                let fingerprint = fs::read(dependency.path()).map_or_else(
+                    |error| Fingerprint::unavailable(&error.kind().to_string()),
+                    |bytes| Fingerprint::from_loaded_bytes(&bytes),
+                );
+                (dependency, fingerprint)
+            })
+            .collect()
+    }
+
+    fn snapshots(paths: impl IntoIterator<Item = PathBuf>) -> BTreeMap<Dependency, Fingerprint> {
         paths
             .into_iter()
             .map(|path| {
-                let fingerprint = Fingerprint::read(&path);
-                (path, fingerprint)
+                let dependency = Dependency::workspace(path);
+                let fingerprint = snapshot_dependencies(std::slice::from_ref(&dependency))
+                    .remove(&dependency)
+                    .expect("dependency fingerprint");
+                (dependency, fingerprint)
             })
             .collect()
     }
@@ -414,6 +462,7 @@ mod tests {
                     cancelled_sender.send(()).expect("cancelled");
                     Err("cancelled".to_owned())
                 },
+                snapshot_dependencies,
                 &server_shutdown,
             )
         });
@@ -458,6 +507,7 @@ mod tests {
                         snapshots([server_dependency.clone()]),
                     ))
                 },
+                snapshot_dependencies,
                 &server_shutdown,
             )
         });
@@ -499,6 +549,7 @@ mod tests {
                 debounce: Duration::from_millis(20),
             },
             |_| unreachable!("binding fails before building"),
+            snapshot_dependencies,
             &shutdown,
         )
         .expect_err("bind must fail");
@@ -545,6 +596,7 @@ mod tests {
                         snapshots([server_dependency.clone()]),
                     ))
                 },
+                snapshot_dependencies,
                 &server_shutdown,
             )
         });
@@ -593,8 +645,8 @@ mod tests {
             fs::write(&discovered, "new").expect("post-build change");
             build
         };
-        assert!(first.changed());
-        assert!(second.changed());
+        assert!(first.changed(&mut snapshot_dependencies));
+        assert!(second.changed(&mut snapshot_dependencies));
         assert_eq!(builds.load(Ordering::Relaxed), 1);
     }
 }

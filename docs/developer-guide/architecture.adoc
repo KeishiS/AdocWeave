@@ -61,9 +61,11 @@ allocationまたは取り込みを始める前に上限を適用します。
 課金範囲はworkspace rootと最も近いproject設定の組で識別し、設定の新設や削除で範囲が変わる場合は、
 旧範囲の課金解放と新範囲への移行を一つの更新として確定します。
 
-Native adapterは``adocweave-host``の``LocalFilesystemSession``を共有します。Linuxではrootの
-ディレクトリハンドルを起点にfileを開いてから読み取り、path検査後に別のfileを開き直しません。
+Native adapterは``adocweave-host``の``LocalFilesystemPolicy``から用途別の``LocalFilesystemSession``を
+作ります。Linuxではpolicyが保持するrootのディレクトリhandleを起点にfileを開いてから読み取り、
+path検査後に別のfileを開き直しません。
 初期ディレクトリ列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
+policyが保持するroot数には128件の独立した上限を設けます。
 論理的なsource ID、不変な本文およびfilesystem provenanceは一つの読込結果として構築します。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
 
