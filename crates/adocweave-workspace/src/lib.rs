@@ -407,7 +407,21 @@ pub struct WorkspaceError {
 }
 
 /// Stable category for a host resource failure during workspace analysis.
+///
+/// Callers keep a wildcard arm so a later release can preserve newly added
+/// host failure categories without breaking existing matches.
+///
+/// ```compile_fail
+/// # use adocweave_workspace::WorkspaceHostResourceErrorKind;
+/// # fn classify(kind: WorkspaceHostResourceErrorKind) {
+/// match kind {
+///     WorkspaceHostResourceErrorKind::LoadFailed => {}
+///     WorkspaceHostResourceErrorKind::ResponseMismatch => {}
+/// }
+/// # }
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum WorkspaceHostResourceErrorKind {
     /// The host could not load the requested resource.
     LoadFailed,
