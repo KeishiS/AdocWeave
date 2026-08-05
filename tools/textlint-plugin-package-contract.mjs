@@ -14,6 +14,10 @@ function exactKeys(value, keys, where) {
 }
 function string(value, where) { if (typeof value !== "string" || value.length === 0) fail(`${where} must be a non-empty string`); }
 function integer(value, where) { if (!Number.isSafeInteger(value) || value <= 0) fail(`${where} must be a positive integer`); }
+function matches(value, pattern, where) {
+  string(value, where);
+  if (!pattern.test(value)) fail(`${where} has an invalid format`);
+}
 function safePath(value, where) {
   string(value, where);
   const parts = value.split("/");
@@ -27,12 +31,16 @@ export function validateTextlintPluginPackageContract(contract) {
   exactKeys(contract, ["$schema", "schemaVersion", "identity", "extensions", "compatibility", "files", "wasm", "archive", "e2eMatrix", "oneShot"], "root");
   if (contract.$schema !== "./textlint-plugin-package-contract.schema.json" || contract.schemaVersion !== 1) fail("unsupported schema");
   exactKeys(contract.identity, ["packageName", "pluginName", "private"], "identity");
-  string(contract.identity.packageName, "identity.packageName"); string(contract.identity.pluginName, "identity.pluginName");
+  matches(contract.identity.packageName, /^@[a-z0-9-]+\/[a-z0-9-]+$/, "identity.packageName");
+  matches(contract.identity.pluginName, /^@[a-z0-9-]+\/[a-z0-9-]+$/, "identity.pluginName");
   if (contract.identity.private !== true) fail("identity.private must be true");
   if (!Array.isArray(contract.extensions) || contract.extensions.length === 0 || new Set(contract.extensions).size !== contract.extensions.length) fail("extensions must be a non-empty unique array");
   for (const extension of contract.extensions) if (!/^\.[a-z0-9]+$/.test(extension)) fail(`invalid extension: ${extension}`);
   exactKeys(contract.compatibility, ["nodeEngine", "textlintVersion", "textlintTypesVersion"], "compatibility");
-  for (const key of Object.keys(contract.compatibility)) string(contract.compatibility[key], `compatibility.${key}`);
+  matches(contract.compatibility.nodeEngine, /^>=\d+\.\d+\.\d+ <\d+$/, "compatibility.nodeEngine");
+  for (const key of ["textlintVersion", "textlintTypesVersion"]) {
+    matches(contract.compatibility[key], /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, `compatibility.${key}`);
+  }
   if (!Array.isArray(contract.files) || contract.files.length === 0) fail("files must be non-empty");
   const paths = new Set(); const portablePaths = new Set(); const generators = new Set();
   for (const [index, entry] of contract.files.entries()) {
@@ -62,7 +70,9 @@ export function validateTextlintPluginPackageContract(contract) {
   const matrix = new Set();
   for (const [index, entry] of contract.e2eMatrix.entries()) { exactKeys(entry, ["runner", "node"], `e2eMatrix[${index}]`); string(entry.runner, `e2eMatrix[${index}].runner`); string(entry.node, `e2eMatrix[${index}].node`); const key = `${entry.runner}\0${entry.node}`; if (matrix.has(key)) fail("e2eMatrix has a duplicate entry"); matrix.add(key); }
   exactKeys(contract.oneShot, ["rulePackage", "ruleVersion", "preset"], "oneShot");
-  for (const key of Object.keys(contract.oneShot)) string(contract.oneShot[key], `oneShot.${key}`);
+  matches(contract.oneShot.rulePackage, /^(?:@[a-z0-9-]+\/)?[a-z0-9-]+$/, "oneShot.rulePackage");
+  matches(contract.oneShot.ruleVersion, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/, "oneShot.ruleVersion");
+  matches(contract.oneShot.preset, /^[a-z0-9-]+$/, "oneShot.preset");
   return contract;
 }
 

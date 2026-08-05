@@ -49,6 +49,24 @@ test("重複pathと不正な境界値を拒否する", () => {
   assert.throws(() => validateTextlintPluginPackageContract(memory), /WebAssembly pages/);
 });
 
+test("package名、対応版および単発実行設定の形式を限定する", () => {
+  const base = loadTextlintPluginPackageContract();
+  for (const mutate of [
+    (value) => { value.identity.packageName = "file:package.tgz"; },
+    (value) => { value.identity.pluginName = "--plugin"; },
+    (value) => { value.compatibility.nodeEngine = ">=20"; },
+    (value) => { value.compatibility.textlintVersion = "latest"; },
+    (value) => { value.compatibility.textlintTypesVersion = "^15.8.0"; },
+    (value) => { value.oneShot.rulePackage = "https://example.com/rule.tgz"; },
+    (value) => { value.oneShot.ruleVersion = "latest"; },
+    (value) => { value.oneShot.preset = "../preset"; },
+  ]) {
+    const mutant = clone(base);
+    mutate(mutant);
+    assert.throws(() => validateTextlintPluginPackageContract(mutant), /invalid format/);
+  }
+});
+
 test("契約pathの非canonical表現とportable衝突を拒否する", () => {
   const base = loadTextlintPluginPackageContract();
   for (const path of ["/absolute", "../parent", "a/./b", "a//b", "a/", String.raw`C:\\build`, String.raw`a\\b`, "cafe\u0301"]) {
@@ -76,3 +94,26 @@ test("WebAssembly構築上限をpackage contractから読み込む", async () =>
   assert.match(script, /loadTextlintPluginPackageContract\(\)\.wasm\.maximumMemoryBytes/);
   assert.doesNotMatch(script, /maximum_memory_bytes=268435456/);
 });
+
+test("公開利用手順のpackage名と対応版をpackage contractへ同期する", async () => {
+  const contract = loadTextlintPluginPackageContract();
+  const match = contract.compatibility.nodeEngine.match(/^>=(\d+\.\d+\.\d+) <(\d+)$/);
+  assert.ok(match);
+  const documents = await Promise.all([
+    readFile(new URL("../../docs/user-guide/release-installation.adoc", import.meta.url), "utf8"),
+    readFile(new URL("./README.adoc", import.meta.url), "utf8"),
+  ]);
+  for (const document of documents) {
+    assert.match(document, new RegExp(escapeRegExp(contract.identity.packageName)));
+    assert.match(document, new RegExp(`textlint@${escapeRegExp(contract.compatibility.textlintVersion)}`));
+    assert.match(document, new RegExp(`Node\\.js ${escapeRegExp(match[1])}以上${match[2]}未満`));
+    assert.match(
+      document,
+      new RegExp(`--package=${escapeRegExp(contract.oneShot.rulePackage)}@${escapeRegExp(contract.oneShot.ruleVersion)}`),
+    );
+  }
+});
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
