@@ -14,6 +14,7 @@ mod semantic_tokens;
 mod service;
 mod state;
 mod workspace;
+mod workspace_scan;
 
 pub use position::PositionEncoding;
 pub use service::{HostReferenceIndex, HostReferenceRequest, NoHostReferenceIndex};
