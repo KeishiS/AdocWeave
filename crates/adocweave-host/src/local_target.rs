@@ -167,14 +167,19 @@ impl LocalTargetPolicy {
             use rustix::fs::{Mode, OFlags, open};
 
             let mut after_open = Some(after_open);
+            let mut prior_verification_failure = None;
             for _ in 0..CONFINED_OPEN_ATTEMPTS {
-                let file = open(
+                let file = match open(
                     path,
                     OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
                     Mode::empty(),
-                )
-                .map(fs::File::from)
-                .map_err(|error| classify_errno(path, error))?;
+                ) {
+                    Ok(file) => fs::File::from(file),
+                    Err(error) => {
+                        return Err(prior_verification_failure
+                            .unwrap_or_else(|| classify_errno(path, error)));
+                    }
+                };
                 let metadata = file
                     .metadata()
                     .map_err(|source| classify_io(path.to_owned(), source))?;
@@ -192,10 +197,12 @@ impl LocalTargetPolicy {
                     .parent()
                     .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
                 let Ok(policy) = Self::new(parent) else {
+                    prior_verification_failure = Some(explicit_target_changed_error());
                     continue;
                 };
                 let candidate = policy.root.join(file_name);
                 let Ok(verified) = policy.open_confined(&candidate) else {
+                    prior_verification_failure = Some(explicit_target_changed_error());
                     continue;
                 };
                 let verified_metadata = verified
@@ -205,14 +212,13 @@ impl LocalTargetPolicy {
                 if metadata.dev() != verified_metadata.dev()
                     || metadata.ino() != verified_metadata.ino()
                 {
+                    prior_verification_failure = Some(explicit_target_changed_error());
                     continue;
                 }
                 let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
                 return Ok((policy, loaded));
             }
-            Err(LocalTargetError::Unverifiable(
-                "explicit local target changed while its authority was established".to_owned(),
-            ))
+            Err(prior_verification_failure.unwrap_or_else(explicit_target_changed_error))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -730,17 +736,38 @@ impl LocalTargetPolicy {
 }
 
 #[cfg(target_os = "linux")]
+fn explicit_target_changed_error() -> LocalTargetError {
+    LocalTargetError::Unverifiable(
+        "explicit local target changed while its authority was established".to_owned(),
+    )
+}
+
+#[cfg(target_os = "linux")]
 fn logical_path_from_opened_handle(
     logical_root: &Path,
     root_handle: &fs::File,
     opened: &fs::File,
     candidate: &Path,
 ) -> Result<PathBuf, LocalTargetError> {
+    logical_path_from_opened_handle_with(logical_root, root_handle, opened, candidate, || {}, || {})
+}
+
+#[cfg(target_os = "linux")]
+fn logical_path_from_opened_handle_with(
+    logical_root: &Path,
+    root_handle: &fs::File,
+    opened: &fs::File,
+    candidate: &Path,
+    after_root_path: impl FnOnce(),
+    before_identity_open: impl FnOnce(),
+) -> Result<PathBuf, LocalTargetError> {
     let root_path = path_from_fd(root_handle, candidate)?;
+    after_root_path();
     let opened_path = path_from_fd(opened, candidate)?;
     let relative = opened_path
         .strip_prefix(&root_path)
         .map_err(|_| LocalTargetError::Unverifiable(candidate.to_string_lossy().into_owned()))?;
+    before_identity_open();
     verify_opened_path_identity(root_handle, opened, relative, candidate)?;
     Ok(logical_root.join(relative))
 }
@@ -1131,7 +1158,7 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_bytes_with_capacity(candidate, capacity, true)
+        self.read_candidate_bytes_with_capacity(candidate, capacity, true, || {})
     }
 
     /// Opens and reads bounded bytes while rejecting every symbolic link.
@@ -1140,7 +1167,17 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_bytes_with_capacity(candidate, capacity, false)
+        self.read_candidate_bytes_with_capacity(candidate, capacity, false, || {})
+    }
+
+    #[cfg(test)]
+    fn read_candidate_bytes_after_open(
+        &mut self,
+        candidate: &Path,
+        after_open: impl FnOnce(),
+    ) -> Result<LoadedLocalBytes, LocalTargetError> {
+        let capacity = self.default_read_capacity();
+        self.read_candidate_bytes_with_capacity(candidate, capacity, true, after_open)
     }
 
     fn read_candidate_bytes_with_capacity(
@@ -1148,8 +1185,9 @@ impl LocalTargetSession {
         candidate: &Path,
         capacity: CandidateReadCapacity,
         follow_symlinks: bool,
+        after_open: impl FnOnce(),
     ) -> Result<LoadedLocalBytes, LocalTargetError> {
-        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, || {})?;
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
         if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded);
         }
@@ -1811,6 +1849,38 @@ mod tests {
         fs::rename(&displaced, &parent.0).expect("restore selected parent");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_load_preserves_unverifiable_after_an_opened_file_is_unlinked() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+        })
+        .expect_err("an unlinked explicit target cannot establish its authority");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_load_rejects_a_literal_deleted_suffix_inode_collision() {
+        let root = TestDir::new();
+        let selected = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, "literal suffix").expect("suffix source");
+
+        let error = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::remove_file(&selected).expect("unlink selected file");
+        })
+        .expect_err("the procfs suffix must not select another inode");
+
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+    }
+
     #[test]
     fn confined_directory_derivation_rejects_an_outside_directory() {
         let root = TestDir::new();
@@ -2209,6 +2279,42 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn openat2_fallback_verifies_rename_and_rejects_unlink() {
+        let renamed_root = TestDir::new();
+        let renamed_policy = LocalTargetPolicy::new(&renamed_root.0).expect("rename policy");
+        let mut renamed_session =
+            LocalTargetSession::new(renamed_policy, 1, FilesystemReadLimits::default());
+        let renamed_target = renamed_root.0.join("docs/guide.adoc");
+        let displaced = renamed_root.0.join("docs/original.adoc");
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(rustix::io::Errno::NOSYS)));
+        let renamed = renamed_session.read_utf8_after_open(
+            &renamed_root.0.join("docs"),
+            "guide.adoc",
+            || fs::rename(&renamed_target, &displaced).expect("rename opened target"),
+        );
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+        let renamed = renamed.expect("fallback verifies the renamed inode");
+        assert_eq!(renamed.canonical_path(), displaced);
+        assert_eq!(renamed.source(), "= Guide");
+
+        let unlinked_root = TestDir::new();
+        let unlinked_policy = LocalTargetPolicy::new(&unlinked_root.0).expect("unlink policy");
+        let mut unlinked_session =
+            LocalTargetSession::new(unlinked_policy, 1, FilesystemReadLimits::default());
+        let unlinked_target = unlinked_root.0.join("docs/guide.adoc");
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(rustix::io::Errno::NOSYS)));
+        let unlinked = unlinked_session.read_utf8_after_open(
+            &unlinked_root.0.join("docs"),
+            "guide.adoc",
+            || fs::remove_file(&unlinked_target).expect("unlink opened target"),
+        );
+        FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+        assert!(matches!(unlinked, Err(LocalTargetError::Unverifiable(_))));
+        assert_eq!(unlinked_session.read_files(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn procfs_failures_are_unverifiable_during_policy_creation() {
         let root = TestDir::new();
         for kind in [
@@ -2372,5 +2478,109 @@ mod tests {
         assert_eq!(loaded.canonical_path(), suffix);
         assert_eq!(loaded.source(), "literal suffix");
         assert_eq!(session.read_files, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn identity_reopen_rejects_a_leaf_swapped_after_procfs_resolution() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let target = root.0.join("docs/guide.adoc");
+        let displaced = root.0.join("docs/original.adoc");
+        let opened = fs::File::open(&target).expect("opened target");
+
+        let result = logical_path_from_opened_handle_with(
+            policy.root(),
+            policy.root_handle.as_ref(),
+            &opened,
+            &target,
+            || {},
+            || {
+                fs::rename(&target, &displaced).expect("rename resolved target");
+                fs::write(&target, "= Replacement").expect("replace resolved target");
+            },
+        );
+
+        assert!(matches!(result, Err(LocalTargetError::Unverifiable(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn root_rename_between_procfs_reads_fails_closed() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let target = root.0.join("docs/guide.adoc");
+        let opened = fs::File::open(&target).expect("opened target");
+        let displaced = root.0.with_extension("between-fd-reads");
+
+        let result = logical_path_from_opened_handle_with(
+            policy.root(),
+            policy.root_handle.as_ref(),
+            &opened,
+            &target,
+            || fs::rename(&root.0, &displaced).expect("rename root between fd reads"),
+            || {},
+        );
+
+        fs::rename(&displaced, &root.0).expect("restore root");
+        assert!(matches!(result, Err(LocalTargetError::Unverifiable(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn byte_read_unlink_does_not_consume_the_read_budget() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let suffix = root.0.join("docs/guide.adoc (deleted)");
+        fs::write(&suffix, b"suffix").expect("suffix bytes");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 2, FilesystemReadLimits::default());
+
+        let error = session
+            .read_candidate_bytes_after_open(&target, || {
+                fs::remove_file(&target).expect("unlink opened bytes");
+            })
+            .expect_err("unlinked bytes must fail before reading");
+        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+        assert_eq!(session.read_files(), 0);
+        assert_eq!(session.read_bytes, 0);
+
+        let loaded = session
+            .read_candidate_bytes(&suffix)
+            .expect("literal suffix bytes remain readable");
+        assert_eq!(loaded.canonical_path(), suffix);
+        assert_eq!(loaded.source(), b"suffix");
+        assert_eq!(session.read_files(), 1);
+        assert_eq!(session.read_bytes, 6);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn same_path_replacement_keeps_the_command_snapshot_until_reread() {
+        let root = TestDir::new();
+        let target = root.0.join("docs/guide.adoc");
+        let displaced = root.0.join("docs/first.adoc");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 3, FilesystemReadLimits::default());
+
+        let first = session
+            .read_candidate_utf8(&target)
+            .expect("initial snapshot");
+        fs::rename(&target, &displaced).expect("retain first inode");
+        fs::write(&target, "= Second").expect("second inode");
+        let cached = session
+            .read_candidate_utf8(&target)
+            .expect("cached command snapshot");
+
+        assert_eq!(first.source(), "= Guide");
+        assert_eq!(cached.source(), "= Guide");
+        assert_eq!(session.read_files(), 1);
+
+        let capacity = session.default_read_capacity();
+        let reread = session
+            .reread_candidate_utf8_with_capacity(&target, |_| capacity)
+            .expect("explicit reread");
+        assert_eq!(reread.source(), "= Second");
+        assert_eq!(session.read_files(), 2);
     }
 }
