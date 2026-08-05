@@ -152,6 +152,12 @@ lint_rule_catalog!(
         true
     ),
     (
+        MONOSPACE_BOUNDARY,
+        "monospace-boundary",
+        "制約付き等幅表記の境界違反",
+        false
+    ),
+    (
         UNCLOSED_INLINE,
         "unclosed-inline",
         "閉じられていないインライン構文",
@@ -1646,6 +1652,44 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "unclosed-inline")
+        );
+    }
+
+    #[test]
+    fn monospace_boundary_lint_recommends_unconstrained_delimiters_once() {
+        let source = concat!(
+            "ファイル`pbmc_processed.h5ad`を\n",
+            "AnnDataの`obs[\"predicted.celltype.l1\"]`を\n",
+            "（`code`）\n",
+            "日本語``code``日本語\n",
+            "[source]\n----\n日本語`code`日本語\n----\n",
+            "....\n日本語`code`日本語\n....\n",
+        );
+        let diagnostics = lint(source, &LintConfig::default()).expect("valid source");
+        let boundaries = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "monospace-boundary")
+            .collect::<Vec<_>>();
+
+        assert_eq!(boundaries.len(), 2, "{diagnostics:#?}");
+        assert!(boundaries.iter().all(|diagnostic| {
+            diagnostic.message
+                == "single-backtick monospace span violates constrained boundaries; use double backticks"
+                && diagnostic.fixes.is_empty()
+        }));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "unclosed-inline")
+        );
+        assert_eq!(
+            boundaries
+                .iter()
+                .map(|diagnostic| {
+                    &source[diagnostic.range.start().to_usize()..diagnostic.range.end().to_usize()]
+                })
+                .collect::<Vec<_>>(),
+            ["`pbmc_processed.h5ad`", "`obs[\"predicted.celltype.l1\"]`"]
         );
     }
 

@@ -115,7 +115,10 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
         .iter()
         .map(|diagnostic| diagnostic.code.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(codes, ["unclosed-inline", "unclosed-block"]);
+    assert_eq!(
+        codes,
+        ["monospace-boundary", "unclosed-inline", "unclosed-block"]
+    );
 }
 
 #[test]

@@ -4,7 +4,7 @@
 
 == 文脈
 
-VS Code拡張は`adocweave-lsp`を起動するadapterであり、意味解析を独自に実装しません。拡張とLanguage Serverを
+VS Code拡張は``adocweave-lsp``を起動するadapterであり、意味解析を独自に実装しません。拡張とLanguage Serverを
 別々のバージョン系列で配布すると、互換範囲、managed binaryの取得先および障害時の責任境界が増えます。
 一方、Visual Studio MarketplaceやOpen VSXへ公開すると、GitHub Releaseとは別の資格情報、審査および
 更新経路を保守する必要があります。

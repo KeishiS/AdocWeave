@@ -305,7 +305,7 @@ mod tests {
         );
         assert_eq!(
             stable_baseline.to_hex(),
-            "6c936da76c834aa09fd5673de72a6116d8c240e11462bd84682840fc1ac192a4"
+            "a92ea582d922fd0f2844f391a25c9711e69c7132fb94a44388cfd97bfc646fba"
         );
         assert_ne!(
             stable_baseline,
