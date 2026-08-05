@@ -3511,6 +3511,30 @@ mod tests {
     }
 
     #[test]
+    fn empty_column_specs_preserve_the_explicit_semantic_table_shape() {
+        let source = "[cols=\",,\",options=header]\n|===\n|ID |Check |Acceptance\n|REQ-001 |Automatic |Manual\n|===\n";
+        let parsed = parse(source).expect("parse");
+        let AstBlock::Delimited(block) = &parsed.ast.blocks()[0] else {
+            panic!("table block")
+        };
+        let DelimitedContent::Table(table) = &block.content else {
+            panic!("typed table")
+        };
+        assert_eq!(table.columns.len(), 3);
+        assert!(table.columns.iter().enumerate().all(|(index, column)| {
+            column.index == index as u32
+                && column.width.is_none()
+                && column.horizontal_alignment == crate::table::HorizontalAlignment::Left
+                && column.vertical_alignment == crate::table::VerticalAlignment::Top
+                && column.style == crate::table::TableCellStyle::Default
+        }));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].section, crate::table::TableSection::Header);
+        assert!(table.rows.iter().all(|row| row.cells.len() == 3));
+        assert_eq!(parsed.syntax.reconstruct(), source);
+    }
+
+    #[test]
     fn separated_table_formats_and_duplication_share_the_table_model() {
         let source = "[format=csv,options=header]\n|===\nname,description\nalpha,\"one, two\"\nbeta,\"line one\nline two\"\n|===\n\n[format=tsv]\n|===\na\tb\n|===\n\n|===\n3*|same\n|===\n";
         let parsed = parse(source).expect("parse");

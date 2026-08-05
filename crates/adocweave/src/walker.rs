@@ -783,6 +783,32 @@ mod tests {
     }
 
     #[test]
+    fn walk_preserves_rows_and_cells_from_empty_column_specs() {
+        let parsed = crate::parser::parse(
+            "[cols=\",,\",options=header]\n|===\n|ID |検証 |受入\n|REQ-001 |自動試験 |手動確認\n|===\n",
+        )
+        .expect("table");
+        let mut tables = 0;
+        let mut rows = 0;
+        let mut cells = Vec::new();
+        walk_ast(&parsed.ast, |node| match node {
+            SemanticNode::Table(table) => {
+                tables += 1;
+                assert_eq!(table.columns.len(), 3);
+            }
+            SemanticNode::TableRow(_) => rows += 1,
+            SemanticNode::TableCell(cell) => cells.push(cell.raw.as_str()),
+            _ => {}
+        });
+        assert_eq!(tables, 1);
+        assert_eq!(rows, 2);
+        assert_eq!(
+            cells,
+            ["ID", "検証", "受入", "REQ-001", "自動試験", "手動確認"]
+        );
+    }
+
+    #[test]
     fn walk_visits_nested_lists_continuations_and_inline_labels_once() {
         let analysis = crate::Engine::new(crate::AnalysisOptions::default())
             .analyze("* outer\n** https://example.test[*label*]\n+\n....\nbody\n....\n")

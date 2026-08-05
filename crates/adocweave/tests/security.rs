@@ -586,6 +586,29 @@ fn explicit_table_columns_are_rejected_before_repeat_materialization() {
 }
 
 #[test]
+fn empty_table_column_specs_count_toward_the_limit() {
+    assert!(matches!(
+        analyze_with_limits(
+            "\
+[cols=\",,\"]
+|===
+|one |two |three
+|===
+",
+            AnalysisLimits {
+                max_table_columns: 2,
+                ..AnalysisLimits::default()
+            },
+        ),
+        Err(ParseError::LimitExceeded {
+            resource: "table columns",
+            limit: 2,
+            actual: 3,
+        })
+    ));
+}
+
+#[test]
 fn duplicated_table_cells_reserve_the_node_budget_before_cloning_large_content() {
     let content = "x".repeat(256 * 1024);
     let source = format!("|===\n100000*|{content}\n|===\n");

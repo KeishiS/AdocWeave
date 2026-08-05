@@ -164,6 +164,10 @@ PSVで空行後も先頭cellのAsciiDoc内容が継続する場合と、quote内
 列数とします。それ以外は最もcell数の多いrecordから列数を推論します。確定したsectionはtable semanticの
 ``TableRow``だけが所有します。
 
+``cols``のcommaで区切った各column specは、空であっても一列として数えます。空のspecは幅、配置および
+styleを指定しない既定列です。したがって``cols=",,"``は既定列を三列定義し、空のspecも列数上限へ
+含めます。属性値全体が空の場合は明示列を持たず、入力から列数を推論します。
+
 表の解析は``ScannedTable``、``ConfiguredTable``、``LaidOutTable``の順に前段の値を消費します。
 scanは入力形式ごとのcell範囲を保持し、configurationは列、表示属性、headerおよびfooterを確定します。
 layoutはspanを物理rowへ一度だけ配置します。cell内容はlayout後に確定済みのstyleを使って解析するため、
