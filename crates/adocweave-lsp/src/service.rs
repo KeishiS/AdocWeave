@@ -218,6 +218,9 @@ pub(crate) struct LanguageService {
 pub(crate) struct WorkspaceFileChanges {
     pub(crate) jobs: Vec<AnalysisJob>,
     pub(crate) journal: Vec<lsp::FileEvent>,
+    /// Whether `journal` can reproduce every change from this notification
+    /// after an in-flight workspace snapshot is installed.
+    pub(crate) replay_complete: bool,
     pub(crate) recovery_required: bool,
 }
 
@@ -664,6 +667,7 @@ impl LanguageService {
             return WorkspaceFileChanges {
                 jobs: Vec::new(),
                 journal: Vec::new(),
+                replay_complete: false,
                 recovery_required: false,
             };
         }
@@ -679,6 +683,7 @@ impl LanguageService {
                     return WorkspaceFileChanges {
                         jobs: Vec::new(),
                         journal: Vec::new(),
+                        replay_complete: false,
                         recovery_required: true,
                     };
                 }
@@ -744,6 +749,7 @@ impl LanguageService {
         WorkspaceFileChanges {
             jobs,
             journal,
+            replay_complete: true,
             recovery_required: self.workspace_watch_errors_overflowed
                 || self.workspace_watch_recovery_required,
         }
