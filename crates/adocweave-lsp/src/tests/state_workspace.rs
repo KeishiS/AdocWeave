@@ -87,6 +87,305 @@ fn excluded_include_targets_are_loaded_without_becoming_analysis_roots() {
 }
 
 #[test]
+fn non_adoc_include_is_loaded_and_watched_without_becoming_an_analysis_root() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-text-include-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.txt");
+    let source = "include::part.txt[]\n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(&include_path, "first marker\n").expect("include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(&mut service, document_uri.as_str(), 1, source);
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.workspace_analysis())
+        .expect("workspace analysis");
+    assert!(analysis.analysis.source().contains("first marker"));
+    assert_eq!(service.workspace_analysis_count(), 2);
+
+    fs::write(&include_path, "second marker\n").expect("changed include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert_eq!(jobs.len(), 1);
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.workspace_analysis())
+        .expect("updated workspace analysis");
+    assert!(analysis.analysis.source().contains("second marker"));
+
+    fs::remove_file(&include_path).expect("remove include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 3}]
+    })));
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    fs::write(&include_path, [0xff]).expect("invalid recreated include");
+    let failed = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": include_uri, "type": 1}]
+    })));
+    assert_eq!(
+        failed.journal.len(),
+        1,
+        "a known non-adoc include failure must survive an in-flight scan"
+    );
+    fs::write(&include_path, "restored marker\n").expect("restore include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 1}]
+    })));
+    assert_eq!(jobs.len(), 1, "a known deleted include must remain watched");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.workspace_analysis())
+        .expect("restored workspace analysis");
+    assert!(analysis.analysis.source().contains("restored marker"));
+    assert_eq!(service.workspace_analysis_count(), 2);
+
+    assert!(
+        change(
+            &mut service,
+            document_uri.as_str(),
+            2,
+            json!([{"text": "without include\n"}]),
+        )
+        .expect("remove include reference")
+    );
+    assert_eq!(
+        service.workspace_analysis_count(),
+        1,
+        "an unreferenced include must release its retained resource"
+    );
+    fs::write(&include_path, "ignored marker\n").expect("change unreferenced include");
+    assert!(
+        service
+            .workspace_files_changed(typed(json!({
+                "changes": [{"uri": include_uri, "type": 2}]
+            })))
+            .is_empty(),
+        "an unreferenced non-adoc include must no longer be watched"
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn pending_non_adoc_include_recovers_from_a_workspace_problem() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-pending-text-include-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.txt");
+    let source = "include::part.txt[]\n";
+    fs::write(&document_path, source).expect("document");
+    fs::write(&include_path, "include::root.adoc[]\n").expect("cyclic include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    open(&mut service, document_uri.as_str(), 1, source);
+    assert!(
+        service
+            .documents
+            .get(document_uri.as_str())
+            .and_then(|document| document.workspace_analysis())
+            .is_none(),
+        "the circular include must remain a recoverable workspace problem"
+    );
+
+    fs::write(&include_path, "recovered marker\n").expect("repair include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert_eq!(jobs.len(), 1, "the pending include must reanalyze its root");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    let analysis = service
+        .documents
+        .get(document_uri.as_str())
+        .and_then(|document| document.workspace_analysis())
+        .expect("recovered workspace analysis");
+    assert!(analysis.analysis.source().contains("recovered marker"));
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn oversized_watched_file_batch_requests_a_quiet_full_scan() {
+    let mut service = LanguageService::default();
+    let changes = (0..=10_000)
+        .map(|index| {
+            json!({
+                "uri": format!("file:///tmp/adocweave-watch-limit/{index}.adoc"),
+                "type": 2
+            })
+        })
+        .collect::<Vec<_>>();
+    let outcome = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": changes
+    })));
+
+    assert!(outcome.recovery_required);
+    assert!(outcome.jobs.is_empty());
+    assert!(outcome.journal.is_empty());
+}
+
+#[test]
+fn oversized_watched_file_error_requests_a_quiet_full_scan() {
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": "file:///tmp",
+            "capabilities": {}
+        })),
+    );
+    let uri = format!("file:///tmp/{}{}.adoc", "a".repeat(70_000), "missing");
+    let outcome = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": uri, "type": 2}]
+    })));
+
+    assert!(outcome.recovery_required);
+    assert!(outcome.journal.len() <= 1);
+}
+
+#[test]
+fn failed_quiet_recovery_is_rearmed_by_the_next_watch_notification() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-watch-recovery-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let invalid_path = root.join("invalid.adoc");
+    fs::write(&invalid_path, [0xff]).expect("invalid document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let invalid_uri = lsp::Url::from_file_path(&invalid_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri.clone(),
+            "capabilities": {}
+        })),
+    );
+    let oversized_uri = format!(
+        "{}/{}.adoc",
+        root_uri.as_str().trim_end_matches('/'),
+        "a".repeat(70_000)
+    );
+    let overflow = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": oversized_uri, "type": 2}]
+    })));
+    assert!(overflow.recovery_required);
+
+    let failed_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let _ = service.apply_workspace_scan(failed_scan);
+    fs::write(&invalid_path, "recovered\n").expect("repair document");
+    let repaired = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": invalid_uri, "type": 2}]
+    })));
+    assert!(
+        repaired.recovery_required,
+        "a failed recovery must wait for and rearm on the next notification"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn failed_initial_scan_is_rearmed_by_the_next_watch_notification() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-initial-scan-recovery-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let invalid_path = root.join("invalid.adoc");
+    fs::write(&invalid_path, [0xff]).expect("invalid document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let invalid_uri = lsp::Url::from_file_path(&invalid_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+
+    fs::write(&invalid_path, "recovered\n").expect("repair document");
+    let repaired = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": [{"uri": invalid_uri, "type": 2}]
+    })));
+    assert!(
+        repaired.recovery_required,
+        "a failed initial scan must rearm after the repaired file changes"
+    );
+
+    let recovered_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let _ = service.apply_workspace_scan(recovered_scan);
+    let settled = service.workspace_files_changed_with_journal(typed(json!({
+        "changes": []
+    })));
+    assert!(
+        !settled.recovery_required,
+        "a successful full scan must clear the recovery request"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
 fn include_added_after_initial_scan_loads_an_excluded_target() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -893,7 +1192,11 @@ fn removing_a_workspace_folder_does_not_fail_the_retained_folder() {
         .iter()
         .find(|job| job.uri == retained_document.as_str())
         .expect("retained document reanalysis");
-    assert!(retained_job.workspace.is_some());
+    assert!(
+        retained_job.workspace.is_some(),
+        "retained workspace problem: {:?}",
+        retained_job.workspace_problem
+    );
     assert!(retained_job.workspace_problem.is_none());
     let removed_job = jobs
         .iter()
@@ -1308,6 +1611,163 @@ fn invalidated_project_configuration_clears_old_feature_views() {
         adopt(&mut service, job);
     }
     assert!(service.documents.snapshot(document_uri.as_str()).is_none());
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn watched_resource_failure_is_published_and_cleared_after_recovery() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-watch-recovery-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        "schema-version = 1\n[resources]\ninclude = true\nroots = [\".\"]\n",
+    )
+    .expect("configuration");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.adoc");
+    let unrelated_path = root.join("unrelated.adoc");
+    fs::write(&document_path, "include::part.adoc[]\n").expect("document");
+    fs::write(&include_path, "part\n").expect("include");
+    fs::write(&unrelated_path, "unrelated\n").expect("unrelated document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let unrelated_uri = lsp::Url::from_file_path(&unrelated_path).expect("unrelated URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+
+    fs::write(&include_path, [0xff]).expect("invalid include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert_eq!(jobs.len(), 1, "watch failure must be published");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("failure diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                )))
+    );
+
+    fs::write(&unrelated_path, "changed\n").expect("changed unrelated document");
+    for job in service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": unrelated_uri, "type": 2}]
+    }))) {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("unrelated change diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                ))),
+        "a successful notification for another URI must not clear the failure"
+    );
+
+    fs::write(&include_path, "restored\n").expect("restored include");
+    let jobs = service.workspace_files_changed(typed(json!({
+        "changes": [{"uri": include_uri, "type": 2}]
+    })));
+    assert_eq!(jobs.len(), 1, "watch recovery must clear the failure");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("recovered diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                )))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn watched_file_batch_applies_only_the_final_event_for_each_uri() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-watch-coalesce-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    let include_path = root.join("part.adoc");
+    fs::write(&document_path, "include::part.adoc[]\n").expect("document");
+    fs::write(&include_path, "part\n").expect("include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let include_uri = lsp::Url::from_file_path(&include_path).expect("include URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(
+        &mut service,
+        document_uri.as_str(),
+        1,
+        "include::part.adoc[]\n",
+    );
+
+    fs::remove_file(&include_path).expect("remove include");
+    for job in service.workspace_files_changed(typed(json!({
+        "changes": [
+            {"uri": include_uri, "type": 2},
+            {"uri": include_uri, "type": 3}
+        ]
+    }))) {
+        adopt(&mut service, job);
+    }
+
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                ))),
+        "the discarded changed event must not leave a watch read failure"
+    );
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -1732,4 +2192,140 @@ fn a_document_opened_during_the_scan_survives_applying_it() {
     );
 
     fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn a_scan_worker_failure_keeps_the_last_coherent_workspace_and_reports_it() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-scan-worker-failure-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, "= Root\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Root\n");
+    let previous = service
+        .workspace_resource(&document_uri)
+        .expect("workspace resource")
+        .clone();
+
+    let jobs = service.workspace_scan_failed("workspace scan worker failed: panic".to_owned());
+
+    assert_eq!(jobs.len(), 1, "the open document must publish the failure");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("retained workspace resource"),
+        previous,
+        "an internal worker failure must not replace the last coherent snapshot",
+    );
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+            && diagnostic.message.contains("workspace scan worker failed")
+    }));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn transient_scan_failure_is_published_and_cleared_after_recovery() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-scan-recovery-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let config = root.join(adocweave_config::FILE_NAME);
+    let document_path = root.join("root.adoc");
+    fs::write(&config, "schema-version = 1\n").expect("configuration");
+    fs::write(&document_path, "= Root\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Root\n");
+    let previous = service
+        .workspace_resource(&document_uri)
+        .expect("workspace resource")
+        .clone();
+
+    fs::remove_file(&config).expect("remove configuration");
+    fs::create_dir(&config).expect("unreadable configuration entry");
+    let failed = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(failed);
+
+    assert_eq!(
+        jobs.len(),
+        1,
+        "the retained snapshot failure must be published"
+    );
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("retained workspace resource"),
+        previous,
+    );
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("failure diagnostics")
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code
+                == Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                )))
+    );
+
+    fs::remove_dir(&config).expect("remove invalid configuration entry");
+    fs::write(&config, "schema-version = 1\n").expect("restored configuration");
+    let recovered = service.plan_workspace_scan(&adocweave::NeverCancel);
+    let jobs = service.apply_workspace_scan(recovered);
+    assert_eq!(jobs.len(), 1, "recovery must clear the published failure");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(
+        service
+            .diagnostics(&document_uri)
+            .expect("recovered diagnostics")
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code
+                != Some(lsp::NumberOrString::String(
+                    "workspace-resource-error".to_owned()
+                )))
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
 }

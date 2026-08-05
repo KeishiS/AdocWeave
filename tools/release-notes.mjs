@@ -59,6 +59,9 @@ const highlights = [
   "#453：複数のinclude先を同時に解決した場合も、最新のworkspace状態へ結果を収束させるようにしました。",
   "#456：``workspace.scan.exclude``のpattern数、文字数および照合処理を制限し、大きな入力でも処理量が無制限に増えないようにしました。",
   "#457：Language Serverの要求の取消をCPU workerへ伝え、応答を返す直前にも文書が変更されていないかを確認して、文書変更前の古い応答を返さないようにしました。",
+  `セキュリティ修正：v${PREVIOUS_RELEASE_VERSION}以前のLinux向けCLIとLanguage Serverでは、安全な読込先・出力先だと確認してから実際に使用するまでの間に同名pathが別のdirectoryへ置換されると、本文、include先、設定由来stylesheetまたは出力先を意図したroot外へ切り替えて読み書きする可能性がありました。v${RELEASE_NOTES_VERSION}では、読み書き対象ごとのdirectoryを検査時に固定し、処理中に同名pathが置換されても別の場所へ切り替えません。v${PREVIOUS_RELEASE_VERSION}以前を使用している場合はv${RELEASE_NOTES_VERSION}へ更新してください。`,
+  `安定性修正：公開前のv${RELEASE_NOTES_VERSION}開発版では、workspace走査中の通知履歴またはファイル監視による読込エラーが無制限に増え、通知が続くと走査が完了しない可能性がありました。v${RELEASE_NOTES_VERSION}では履歴とエラーに上限を設け、上限超過または走査失敗後は回復要求を保持します。その後に関連するファイル監視通知を受けた場合、通知が100 ms途切れてから全体走査を1件だけ実行します。公開済みの影響版はありません。`,
+  "live previewは依存する本文とstylesheetをraw pathから開き直さず、用途ごとに保持したfilesystem authorityから読み取って変更を検出するようにしました。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -131,6 +134,8 @@ const knownConstraints = [
   "引用の解決結果は文書全体の並べ替えを行いません。番号付きの引用styleで通し番号を振る場合は、利用側アプリが出現順を見て文字列を決めてください。出現順は公開projectionの`citations`から取得できます。",
   "単一ファイルのworkspaceでは、同じディレクトリの別のAsciiDocファイルとinclude先を自動では読み込みません。複数ファイルの解析にはディレクトリのworkspace folderが必要です。",
   "Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
+  "Linuxでfilesystemのhandle相対競合耐性を利用するには、``/proc/self/fd``を読み取れる実行環境が必要です。利用できない場合は、安全性の低いpath検査へ切り替えずにworkspaceの読込を拒否します。macOSとWindowsは、同時変更のない静的なfilesystem snapshotだけを前提とします。",
+  "一つのfilesystem policyが保持できるrootは128件までです。読込対象を増やす場合は、設定のrootを必要な上位directoryへまとめてください。",
   "``workspace.scan.exclude``はLanguage Serverの初期走査だけに適用します。CLI入力、明示的に開いた文書、file watcherの通知およびinclude先を拒否する設定ではありません。",
 ];
 

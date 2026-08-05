@@ -1,8 +1,13 @@
 //! Guarded in-place writes and user-visible file differences.
 
+#[cfg(any(test, not(target_os = "linux")))]
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+#[cfg(not(target_os = "linux"))]
+use std::io::Write;
+#[cfg(not(target_os = "linux"))]
+use std::path::Path;
+use std::path::PathBuf;
 
 use super::{CliError, ColorChoice};
 
@@ -10,11 +15,40 @@ pub(crate) struct PendingWrite {
     pub(crate) path: PathBuf,
     pub(crate) original: Vec<u8>,
     pub(crate) replacement: Vec<u8>,
+    pub(crate) policy: adocweave_host::LocalTargetPolicy,
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError> {
+    for write in &writes {
+        let unchanged = write
+            .policy
+            .candidate_contents_match(&write.path, &write.original)
+            .map_err(CliError::LocalTarget)?;
+        if !unchanged {
+            return Err(CliError::ConcurrentModification(write.path.clone()));
+        }
+    }
+    for write in writes {
+        let replaced = write
+            .policy
+            .replace_candidate_after_recheck(&write.path, &write.original, &write.replacement)
+            .map_err(CliError::LocalTarget)?;
+        if !replaced {
+            return Err(CliError::ConcurrentModification(write.path));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError> {
     let mut prepared = Vec::new();
     for write in writes {
+        write
+            .policy
+            .inspect_candidate_no_symlinks(&write.path)
+            .map_err(CliError::LocalTarget)?;
         let metadata = fs::symlink_metadata(&write.path).map_err(|source| CliError::Read {
             source_name: write.path.display().to_string(),
             source,
@@ -51,6 +85,7 @@ pub(crate) fn atomic_write_all(writes: Vec<PendingWrite>) -> Result<(), CliError
     Ok(())
 }
 
+#[cfg(not(target_os = "linux"))]
 fn ensure_unchanged(write: &PendingWrite) -> Result<(), CliError> {
     let current = fs::read(&write.path).map_err(|source| CliError::Read {
         source_name: write.path.display().to_string(),
@@ -63,7 +98,7 @@ fn ensure_unchanged(write: &PendingWrite) -> Result<(), CliError> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn sync_parent(path: &Path) -> Result<(), CliError> {
     if let Some(parent) = path.parent() {
         fs::File::open(parent)
@@ -137,10 +172,12 @@ mod tests {
         let root = temporary_directory("concurrent-write");
         let path = root.join("document.adoc");
         fs::write(&path, "original\n").expect("original");
+        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
         let pending = PendingWrite {
             path: path.clone(),
             original: b"original\n".to_vec(),
             replacement: b"formatted\n".to_vec(),
+            policy,
         };
         fs::write(&path, "concurrent\n").expect("concurrent update");
 
@@ -158,21 +195,64 @@ mod tests {
         let first = root.join("first.adoc");
         let missing = root.join("missing.adoc");
         fs::write(&first, "first\n").expect("first");
+        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
         let writes = vec![
             PendingWrite {
                 path: first.clone(),
                 original: b"first\n".to_vec(),
                 replacement: b"changed\n".to_vec(),
+                policy: policy.clone(),
             },
             PendingWrite {
                 path: missing,
                 original: Vec::new(),
                 replacement: b"created\n".to_vec(),
+                policy,
             },
         ];
 
         assert!(atomic_write_all(writes).is_err());
         assert_eq!(fs::read_to_string(&first).unwrap(), "first\n");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retained_write_cannot_be_redirected_by_root_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temporary_directory("retained-write-parent");
+        let root = parent.join("workspace");
+        let outside = parent.join("outside");
+        fs::create_dir(&root).expect("workspace");
+        fs::create_dir(&outside).expect("outside directory");
+        let path = root.join("document.adoc");
+        let outside_path = outside.join("document.adoc");
+        fs::write(&path, "original\n").expect("trusted input");
+        fs::write(&outside_path, "outside\n").expect("outside input");
+        let policy = adocweave_host::LocalTargetPolicy::new(&root).expect("write policy");
+        let displaced = parent.join("retained-workspace");
+        fs::rename(&root, &displaced).expect("displace workspace");
+        symlink(&outside, &root).expect("replacement symlink");
+
+        atomic_write_all(vec![PendingWrite {
+            path: path.clone(),
+            original: b"original\n".to_vec(),
+            replacement: b"formatted\n".to_vec(),
+            policy,
+        }])
+        .expect("retained write");
+
+        assert_eq!(
+            fs::read(displaced.join("document.adoc")).expect("retained result"),
+            b"formatted\n"
+        );
+        assert_eq!(
+            fs::read(&outside_path).expect("outside result"),
+            b"outside\n"
+        );
+        fs::remove_file(&root).expect("remove replacement symlink");
+        fs::rename(displaced, &root).expect("restore workspace");
+        fs::remove_dir_all(parent).expect("cleanup");
     }
 }

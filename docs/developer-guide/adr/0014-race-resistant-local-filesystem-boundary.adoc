@@ -25,13 +25,13 @@ path解決primitiveが異なるため、全platformで同じ競合耐性を標�
 
 * 同じ権限を持つprocessによる、取得済みのファイルhandleの内容変更
 * mount namespace、bind mount、network filesystemまたはkernelの侵害に対する防御
-* project root自体を攻撃者がrenameまたは置換できる環境でのpath名の同一性
 * 一回のcommandを越えたfilesystem snapshotの提供
 * OSが提供しない保証をportableなpath再検査で模倣すること
 
 == 決定
 
-Linux配布targetでは、project rootのディレクトリhandleを最初に取得し、そのhandleを起点とする解決とopenを
+Linux配布targetでは、filesystem policyを作る時点でproject rootのディレクトリhandleを取得し、sessionと
+workspace走査が終わるまで保持します。そのhandleを起点とする解決とopenを
 同じkernel操作または同じhandle系列で行います。第一選択は``openat2``とし、rootからの脱出、magic linkおよび
 解決途中のroot外移動を禁止するresolve flagを使用します。対象を開いた後のhandleに対して通常ファイルであることを
 検査し、上限付きでbyte列を読み取ります。利用可能なkernelで``openat2``を使用できない場合は、各path要素を
@@ -44,7 +44,7 @@ best effortとして提供します。portable adapterは信頼していない�
 みなしません。consumerはadapterのcapabilityを確認し、敵対的な同時変更を境界に含める場合は未対応platformで
 local target検査とinclude読込を無効にするか、書換え不能なsnapshotへ入力をコピーします。
 
-検査だけのlocal target、本文を読むinclude、Language Serverのworkspace読込およびworkspace走査は
+検査だけのlocal target、本文を読むinclude、project設定の探索と読込、Language Serverのworkspace読込およびworkspace走査は
 同じfilesystem adapterを使用します。本文を読む処理は、用途ごとに一つのsessionと処理上限を共有します。成功cacheは
 論理候補pathではなく、同じ解決操作で得たファイルのidentityと取得済み結果を保持します。失敗もcommand内だけで
 cacheし、次のcommandでは再検査します。Language Serverのfile変更通知では同じsessionと処理上限を維持したまま
@@ -52,6 +52,24 @@ cacheし、次のcommandでは再検査します。Language Serverのfile変更�
 handleを公開しません。
 
 ``LocalFilesystemSession``はrootごとのadapterと全rootで共有する処理上限を所有します。
+``LocalFilesystemPolicy``は正規化したpathだけでなく取得済みのroot handleも所有し、session作成時にpathから
+rootを開き直しません。用途ごとに選択したroot handle、対応するpathおよび読込上限は
+``LocalFilesystemAccess``へまとめ、呼出側が別のpolicyとroot path一覧を組み合わせられないようにします。
+Linuxのディレクトリ走査は保持したhandleから
+子ディレクトリを開いて列挙します。
+project設定は探索とUTF-8読込を一つのhandle相対sessionで行い、検査済みpathを別のfilesystem操作で開き直しません。
+CLIは作業ディレクトリのroot handleから、その範囲内の入力ディレクトリと設定由来のresource rootを派生させます。
+設定由来のstylesheetも同じroot handleから上限付きbyte列として読みます。command lineで明示したrootは、作業
+ディレクトリ内にある場合も利用者が直接選んだ独立したauthorityとして扱えます。作業ディレクトリ外を指す
+``--config``は設定本文だけを独立したauthorityで読み、その設定に記載されたpathへauthorityを引き継ぎません。
+設定由来のpathは作業ディレクトリのauthority内にある場合だけ利用します。
+live previewの依存関係は、workspace、設定由来stylesheet、command lineで指定したstylesheetのauthorityを
+識別子に含めます。監視時も各authorityから新しい上限付きsessionを作って本文を読み、raw pathからhash対象を
+開き直しません。
+Linuxの``format --write``と``check --fix``は、入力読込時に選んだauthorityから対象の親ディレクトリを開き、
+内容の再確認、一時ファイルの作成およびrenameを同じディレクトリhandleに対して実行します。
+``LocalFilesystemPolicy``が同時に保持するrootは128件までとします。この上限は本文の読込件数とは独立して適用し、
+設定や引数だけでprocessのfile descriptorを使い切ることを防ぎます。
 ``LoadedFilesystemSource``は``LogicalSourceId``と不変な本文を保持し、検査したfileのprovenanceを
 直接構築できないfieldに分離します。読込後にpathを再度openせず、論理ID、本文およびprovenanceを
 一回の読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
@@ -59,19 +77,29 @@ handleを公開しません。
 
 == 検証方針
 
-filesystem操作を注入できるadapter contract testで、各path要素の解決直後に祖先をsymlinkへ差し替える場合と、
+filesystem操作を注入できるadapter contract testで、policy作成後にrootのpathを別ディレクトリへのsymlinkへ
+差し替える場合、各path要素の解決直後に祖先をsymlinkへ差し替える場合と、
 検査直後に対象をrenameして別fileを置く場合を再現します。競合耐性を宣言するadapterはroot外のbyte列を返さず、
 元のhandleから取得したbyte列を返すか、安定した検証失敗を返す必要があります。root内symlink、root外symlink、
 dangling symlink、directory、通常fileおよびrenameを同じcontract suiteで検査します。
 
-Linuxでは実filesystemを使うsymlink／rename競合testも実行します。ただしscheduler依存の試行だけを正本にせず、
-注入可能な決定的testを必須とします。portable adapterのtestは静的状態でのroot境界と、capabilityが競合耐性を
-宣言しないことを固定します。
+Linuxでは実filesystemを使い、policy作成と対象読込の間で名前空間を差し替える決定的testも実行します。
+同じroot handleだけを参照することを、単一resource、policyから遅れて作るsession、workspace走査および
+project設定読込、CLIの本文読込および設定由来stylesheet読込で確認します。
+CLIの書込では、policy作成後にrootのpathをroot外へのsymlinkへ差し替えても、保持したディレクトリだけが
+更新されることを確認します。
+書込直前の内容比較とrenameは別操作であり、このAPIを使わないwriterに対するcompare-and-swapは保証しません。
+portable adapterのtestは静的状態でのroot境界と、capabilityが競合耐性を
+宣言しないことを固定します。設定から派生するrootは全platformでanchor外とsymlinkを拒否しますが、macOSと
+Windowsでは検査中の同時変更まで防いだとはみなしません。
 
 == 帰結
 
 Linux配布物では、検査と利用の間にpathを差し替えてroot外を読ませる競合をsecurity境界に含められます。
 古いLinux kernelではroot内symlinkを含む一部の入力を拒否する可能性がありますが、安全側に失敗します。
+``HandleRelative``を提供するLinux実装は、取得済みdescriptorの実体pathをauthority確立時の論理rootへ対応付けるため、
+``/proc/self/fd``を読み取れる実行環境を必要とします。procfsを利用できない環境ではpolicy作成に失敗し、
+``HandleRelative``を宣言したままpath検査へ切り替えることはありません。
 
 platform別adapter、OS errorの安定した分類および決定的な競合test用境界が必要になります。portable Rust APIは
 従来どおり広いplatformで利用できますが、capabilityを確認しないconsumerは敵対的な同時変更への耐性を
@@ -80,3 +108,5 @@ platform別adapter、OS errorの安定した分類および決定的な競合tes
 複数の許可rootは独立した境界として扱います。あるroot内のsymlinkが別の許可rootを指していても、
 最初に選んだrootのhandleから外へ移動する解決は拒否します。読込APIは絶対pathを要求し、相対pathから
 rootを暗黙に選びません。
+読込結果が返す``canonical_path``はpolicyを作成した時点の論理rootに対応するpathです。Linuxでrootのdirectory
+entryが後からrenameされた場合も、現在のprocess namespaceで再度``canonicalize``したpathへ置き換えません。

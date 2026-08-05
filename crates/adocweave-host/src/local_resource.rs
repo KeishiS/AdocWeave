@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
+#[cfg(not(target_os = "linux"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,6 +10,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy, LocalTargetSession,
 };
+
+/// Maximum number of directory authorities retained by one policy.
+///
+/// A Linux authority owns one file descriptor per root. This bound is kept
+/// separate from the number of files a session may read so configuration alone
+/// cannot exhaust the process file-descriptor table before any read begins.
+const MAX_FILESYSTEM_POLICY_ROOTS: usize = 128;
 
 /// Bounds applied while the host discovers and reads filesystem resources.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,7 +42,28 @@ impl Default for FilesystemReadLimits {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalFilesystemPolicy {
     roots: Vec<PathBuf>,
+    root_policies: Vec<LocalTargetPolicy>,
     limits: FilesystemReadLimits,
+}
+
+/// Immutable selection of retained filesystem roots and read limits.
+///
+/// The selected root handles, their path identities and limits travel as one
+/// value, so callers cannot accidentally pair roots from another authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalFilesystemAccess {
+    roots: Vec<PathBuf>,
+    root_policies: Vec<LocalTargetPolicy>,
+    limits: FilesystemReadLimits,
+}
+
+/// Filesystem roots derived from one retained anchor.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DerivedFilesystemRoots {
+    /// Roots which must remain below the retained `anchor`.
+    pub confined: Vec<PathBuf>,
+    /// Roots explicitly selected by the caller as independent authorities.
+    pub independent: Vec<PathBuf>,
 }
 
 /// Host-defined identity which is safe to expose in diagnostics and source maps.
@@ -127,25 +156,31 @@ impl LocalFilesystemPolicy {
         roots: impl IntoIterator<Item = PathBuf>,
         limits: FilesystemReadLimits,
     ) -> Result<Self, ResourceError> {
-        let mut roots = roots
-            .into_iter()
-            .map(|path| {
-                path.canonicalize()
-                    .map_err(|source| ResourceError::Inspect {
-                        path,
-                        source: source.to_string(),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        roots.sort();
-        roots.dedup();
-        if roots.is_empty() {
+        let mut unique = BTreeMap::new();
+        for path in roots {
+            let policy = LocalTargetPolicy::new(&path)
+                .map_err(|error| map_policy_root_error(path, error))?;
+            let root = policy.root().to_owned();
+            if !unique.contains_key(&root) && unique.len() >= MAX_FILESYSTEM_POLICY_ROOTS {
+                return Err(ResourceError::RootLimit {
+                    limit: MAX_FILESYSTEM_POLICY_ROOTS,
+                });
+            }
+            unique.entry(root).or_insert(policy);
+        }
+        let root_policies = unique.into_values().collect::<Vec<_>>();
+        if root_policies.is_empty() {
             return Err(ResourceError::NoRoots);
         }
-        if roots.iter().any(|root| !root.is_dir()) {
-            return Err(ResourceError::InvalidRoot);
-        }
-        Ok(Self { roots, limits })
+        let roots = root_policies
+            .iter()
+            .map(|policy| policy.root().to_owned())
+            .collect();
+        Ok(Self {
+            roots,
+            root_policies,
+            limits,
+        })
     }
 
     pub fn roots(&self) -> &[PathBuf] {
@@ -156,26 +191,169 @@ impl LocalFilesystemPolicy {
         self.limits
     }
 
-    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
-        let sessions = self
-            .roots
-            .iter()
+    /// Selects an immutable access set from roots this policy already retains.
+    pub fn access_existing(
+        &self,
+        roots: impl IntoIterator<Item = PathBuf>,
+        limits: FilesystemReadLimits,
+    ) -> Result<LocalFilesystemAccess, ResourceError> {
+        validate_derived_limits(self.limits, limits)?;
+        let mut policies = roots
+            .into_iter()
             .map(|root| {
-                LocalTargetPolicy::new(root)
-                    .map(|policy| {
-                        LocalTargetSession::new(
-                            policy,
-                            self.limits.max_files,
-                            FilesystemReadLimits {
-                                max_files: usize::MAX,
-                                max_total_bytes: u64::MAX,
-                                max_resource_bytes: self.limits.max_resource_bytes,
-                            },
-                        )
-                    })
-                    .map_err(ResourceError::from)
+                self.root_policy(&root)
+                    .cloned()
+                    .ok_or(ResourceError::OutsideRoots(root))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        policies.sort_by(|left, right| left.root().cmp(right.root()));
+        policies.dedup_by(|left, right| left.root() == right.root());
+        LocalFilesystemAccess::from_policies(policies, limits)
+    }
+
+    /// Extends the retained authority transactionally and returns one opaque
+    /// access set for the requested roots.
+    pub fn access_derived(
+        &mut self,
+        anchor: &Path,
+        roots: DerivedFilesystemRoots,
+        limits: FilesystemReadLimits,
+    ) -> Result<LocalFilesystemAccess, ResourceError> {
+        validate_derived_limits(self.limits, limits)?;
+        let anchor_policy = self
+            .root_policy(anchor)
+            .cloned()
+            .ok_or_else(|| ResourceError::OutsideRoots(anchor.to_owned()))?;
+        let mut pending = BTreeMap::new();
+        let mut selected = Vec::new();
+        for path in roots.confined {
+            let policy = if path == anchor {
+                anchor_policy.clone()
+            } else {
+                anchor_policy
+                    .derive_confined_directory(&path)
+                    .map_err(|error| map_policy_root_error(path, error))?
+            };
+            let root = policy.root().to_owned();
+            self.retain_pending_policy(&pending, &root)?;
+            pending.entry(root.clone()).or_insert(policy);
+            selected.push(root);
+        }
+        for path in roots.independent {
+            let policy = LocalTargetPolicy::new(&path)
+                .map_err(|error| map_policy_root_error(path, error))?;
+            let root = policy.root().to_owned();
+            self.retain_pending_policy(&pending, &root)?;
+            pending.entry(root.clone()).or_insert(policy);
+            selected.push(root);
+        }
+        self.insert_policies(pending.into_values());
+        self.access_existing(selected, limits)
+    }
+
+    fn retain_pending_policy(
+        &self,
+        pending: &BTreeMap<PathBuf, LocalTargetPolicy>,
+        root: &Path,
+    ) -> Result<(), ResourceError> {
+        if self.root_policy(root).is_none()
+            && !pending.contains_key(root)
+            && self.root_policies.len() + pending.len() >= MAX_FILESYSTEM_POLICY_ROOTS
+        {
+            return Err(ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            });
+        }
+        Ok(())
+    }
+
+    fn insert_policies(&mut self, policies: impl IntoIterator<Item = LocalTargetPolicy>) {
+        let mut unique = std::mem::take(&mut self.root_policies)
+            .into_iter()
+            .map(|policy| (policy.root().to_owned(), policy))
+            .collect::<BTreeMap<_, _>>();
+        for policy in policies {
+            let root = policy.root().to_owned();
+            unique.entry(root).or_insert(policy);
+        }
+        self.roots = unique.keys().cloned().collect();
+        self.root_policies = unique.into_values().collect();
+    }
+
+    /// Returns the retained authority for one exact canonical root.
+    pub fn root_policy(&self, root: &Path) -> Option<&LocalTargetPolicy> {
+        self.root_policies
+            .iter()
+            .find(|policy| policy.root() == root)
+    }
+
+    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
+        LocalFilesystemAccess::from_policies(self.root_policies.clone(), self.limits)?.session()
+    }
+}
+
+impl LocalFilesystemAccess {
+    fn from_policies(
+        mut root_policies: Vec<LocalTargetPolicy>,
+        limits: FilesystemReadLimits,
+    ) -> Result<Self, ResourceError> {
+        root_policies.sort_by(|left, right| left.root().cmp(right.root()));
+        root_policies.dedup_by(|left, right| left.root() == right.root());
+        if root_policies.is_empty() {
+            return Err(ResourceError::NoRoots);
+        }
+        if root_policies.len() > MAX_FILESYSTEM_POLICY_ROOTS {
+            return Err(ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            });
+        }
+        let roots = root_policies
+            .iter()
+            .map(|policy| policy.root().to_owned())
+            .collect();
+        Ok(Self {
+            roots,
+            root_policies,
+            limits,
+        })
+    }
+
+    /// Returns the logical paths paired with the retained root authorities.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Returns the limits applied independently to each new session.
+    pub const fn limits(&self) -> FilesystemReadLimits {
+        self.limits
+    }
+
+    /// Selects the deepest retained root containing `path`.
+    pub fn policy_for_path(&self, path: &Path) -> Option<&LocalTargetPolicy> {
+        self.root_policies
+            .iter()
+            .filter(|policy| path.starts_with(policy.root()))
+            .max_by_key(|policy| policy.root().components().count())
+    }
+
+    /// Creates a session with a fresh shared budget for these selected roots.
+    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
+        let sessions = self
+            .root_policies
+            .iter()
+            .cloned()
+            .map(|policy| {
+                LocalTargetSession::new(
+                    policy,
+                    self.limits.max_files,
+                    FilesystemReadLimits {
+                        max_files: usize::MAX,
+                        max_total_bytes: u64::MAX,
+                        max_resource_bytes: self.limits.max_resource_bytes,
+                    },
+                )
+            })
+            .collect();
         let session_id = NEXT_FILESYSTEM_SESSION_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, next_session_id)
             .map_err(|_| ResourceError::SessionIdentityExhausted)?;
@@ -188,6 +366,36 @@ impl LocalFilesystemPolicy {
             budget: ResourceBudget::default(),
             charged: BTreeMap::new(),
         })
+    }
+}
+
+fn validate_derived_limits(
+    policy: FilesystemReadLimits,
+    requested: FilesystemReadLimits,
+) -> Result<(), ResourceError> {
+    if requested.max_files > policy.max_files
+        || requested.max_total_bytes > policy.max_total_bytes
+        || requested.max_resource_bytes > policy.max_resource_bytes
+    {
+        return Err(ResourceError::Unverifiable(
+            "filesystem access limits exceed the authority limits".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn map_policy_root_error(path: PathBuf, error: LocalTargetError) -> ResourceError {
+    match error {
+        LocalTargetError::Missing(_) => ResourceError::Missing(path),
+        LocalTargetError::PermissionDenied(_) => ResourceError::PermissionDenied(path),
+        LocalTargetError::OutsideRoot(_) => ResourceError::OutsideRoots(path),
+        LocalTargetError::NotDirectory(_) | LocalTargetError::NotFile(_) => {
+            ResourceError::InvalidRoot
+        }
+        error => ResourceError::Inspect {
+            path,
+            source: error.to_string(),
+        },
     }
 }
 
@@ -204,6 +412,15 @@ impl LocalFilesystemSession {
 
     pub const fn limits(&self) -> FilesystemReadLimits {
         self.limits
+    }
+
+    /// Returns the retained authority for the deepest root containing `path`.
+    pub fn policy_for_path(&self, path: &Path) -> Option<&LocalTargetPolicy> {
+        self.sessions
+            .iter()
+            .map(LocalTargetSession::policy)
+            .filter(|policy| path.starts_with(policy.root()))
+            .max_by_key(|policy| policy.root().components().count())
     }
 
     /// Scans every configured root for regular `.adoc` files.
@@ -267,12 +484,98 @@ impl LocalFilesystemSession {
     fn discover_adoc_paths_with_limit(
         &self,
         scan_entry_limit: usize,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.discover_adoc_paths_with_limit_handle_relative(
+                scan_entry_limit,
+                exclude_directory,
+                is_cancelled,
+            )
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut exclude_directory = exclude_directory;
+            let mut is_cancelled = is_cancelled;
+            let mut paths = Vec::new();
+            let mut scanned_entries = 0_usize;
+            for root in &self.roots {
+                let mut pending = VecDeque::from([root.clone()]);
+                while let Some(path) = pending.pop_front() {
+                    if is_cancelled() {
+                        return Err(ResourceError::Unverifiable(
+                            "local filesystem scan was cancelled".to_owned(),
+                        ));
+                    }
+                    let metadata =
+                        fs::symlink_metadata(&path).map_err(|source| ResourceError::Inspect {
+                            path: path.clone(),
+                            source: source.to_string(),
+                        })?;
+                    if metadata.file_type().is_symlink() {
+                        continue;
+                    }
+                    if metadata.is_dir() {
+                        if path != *root
+                            && let Ok(relative) = path.strip_prefix(root)
+                            && exclude_directory(root, relative)
+                        {
+                            continue;
+                        }
+                        let mut children = Vec::new();
+                        for child in
+                            fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
+                                path: path.clone(),
+                                source: source.to_string(),
+                            })?
+                        {
+                            if is_cancelled() {
+                                return Err(ResourceError::Unverifiable(
+                                    "local filesystem scan was cancelled".to_owned(),
+                                ));
+                            }
+                            children.push(child.map_err(|source| ResourceError::Inspect {
+                                path: path.clone(),
+                                source: source.to_string(),
+                            })?);
+                            scanned_entries += 1;
+                            if scanned_entries > scan_entry_limit {
+                                return Err(ResourceError::ScanEntryLimit {
+                                    limit: scan_entry_limit,
+                                });
+                            }
+                        }
+                        children.sort_by_key(fs::DirEntry::file_name);
+                        pending.extend(children.into_iter().map(|entry| entry.path()));
+                    } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
+                        paths.push(path);
+                    }
+                }
+            }
+            paths.sort();
+            paths.dedup();
+            Ok(paths)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn discover_adoc_paths_with_limit_handle_relative(
+        &self,
+        scan_entry_limit: usize,
         mut exclude_directory: impl FnMut(&Path, &Path) -> bool,
         mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        use rustix::fs::{AtFlags, Dir, FileType, statat};
+
         let mut paths = Vec::new();
         let mut scanned_entries = 0_usize;
-        for root in &self.roots {
+        for (root, session) in self.roots.iter().zip(&self.sessions) {
+            let policy = session.policy();
             let mut pending = VecDeque::from([root.clone()]);
             while let Some(path) = pending.pop_front() {
                 if is_cancelled() {
@@ -280,46 +583,66 @@ impl LocalFilesystemSession {
                         "local filesystem scan was cancelled".to_owned(),
                     ));
                 }
-                let metadata =
-                    fs::symlink_metadata(&path).map_err(|source| ResourceError::Inspect {
+                if path != *root
+                    && let Ok(relative) = path.strip_prefix(root)
+                    && exclude_directory(root, relative)
+                {
+                    continue;
+                }
+                let directory = policy
+                    .open_directory_no_symlinks(&path)
+                    .map_err(ResourceError::from)?;
+                let mut entries =
+                    Dir::read_from(&directory).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
                         source: source.to_string(),
                     })?;
-                if metadata.file_type().is_symlink() {
-                    continue;
-                }
-                if metadata.is_dir() {
-                    if path != *root
-                        && let Ok(relative) = path.strip_prefix(root)
-                        && exclude_directory(root, relative)
-                    {
-                        continue;
-                    }
-                    let mut children = Vec::new();
-                    for child in fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
+                let mut children = Vec::<(OsString, FileType)>::new();
+                for child in &mut entries {
+                    let child = child.map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
                         source: source.to_string(),
-                    })? {
-                        if is_cancelled() {
-                            return Err(ResourceError::Unverifiable(
-                                "local filesystem scan was cancelled".to_owned(),
-                            ));
-                        }
-                        children.push(child.map_err(|source| ResourceError::Inspect {
-                            path: path.clone(),
-                            source: source.to_string(),
-                        })?);
-                        scanned_entries += 1;
-                        if scanned_entries > scan_entry_limit {
-                            return Err(ResourceError::ScanEntryLimit {
-                                limit: scan_entry_limit,
-                            });
-                        }
+                    })?;
+                    if is_cancelled() {
+                        return Err(ResourceError::Unverifiable(
+                            "local filesystem scan was cancelled".to_owned(),
+                        ));
                     }
-                    children.sort_by_key(fs::DirEntry::file_name);
-                    pending.extend(children.into_iter().map(|entry| entry.path()));
-                } else if path.extension().and_then(|value| value.to_str()) == Some("adoc") {
-                    paths.push(path);
+                    let name = child.file_name();
+                    if name.to_bytes() == b"." || name.to_bytes() == b".." {
+                        continue;
+                    }
+                    let name = OsString::from_vec(name.to_bytes().to_vec());
+                    let child_path = path.join(&name);
+                    let metadata =
+                        statat(&directory, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(|source| {
+                            ResourceError::Inspect {
+                                path: child_path,
+                                source: source.to_string(),
+                            }
+                        })?;
+                    let file_type = FileType::from_raw_mode(metadata.st_mode);
+                    children.push((name, file_type));
+                    scanned_entries = scanned_entries.saturating_add(1);
+                    if scanned_entries > scan_entry_limit {
+                        return Err(ResourceError::ScanEntryLimit {
+                            limit: scan_entry_limit,
+                        });
+                    }
+                }
+                children.sort_by(|left, right| left.0.cmp(&right.0));
+                for (name, file_type) in children {
+                    let child = path.join(name);
+                    if file_type == FileType::Symlink {
+                        continue;
+                    }
+                    if file_type == FileType::Directory {
+                        pending.push_back(child);
+                    } else if file_type == FileType::RegularFile
+                        && child.extension().and_then(|value| value.to_str()) == Some("adoc")
+                    {
+                        paths.push(child);
+                    }
                 }
             }
         }
@@ -526,7 +849,7 @@ impl LocalFilesystemSession {
         let limits = self.limits;
         let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.sessions[index]
-            .read_candidate_utf8_with_capacity(&candidate, false, after_open, |canonical| {
+            .read_candidate_utf8_with_capacity(&candidate, false, true, after_open, |canonical| {
                 shared_read_capacity(budget, charged, limits, canonical, &file_limit_denied)
             })
             .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
@@ -722,6 +1045,7 @@ pub enum ResourceError {
     Read { path: PathBuf, source: String },
     InvalidUtf8 { path: PathBuf, source: String },
     ResourceTooLarge(PathBuf),
+    RootLimit { limit: usize },
     FileLimit { limit: usize },
     ScanEntryLimit { limit: usize },
     ByteLimit,
@@ -773,6 +1097,9 @@ impl fmt::Display for ResourceError {
             ),
             Self::ResourceTooLarge(path) => {
                 write!(formatter, "local resource is too large: {}", path.display())
+            }
+            Self::RootLimit { limit } => {
+                write!(formatter, "local resource root limit exceeded: {limit}")
             }
             Self::FileLimit { limit } => {
                 write!(formatter, "local resource file limit exceeded: {limit}")
@@ -916,6 +1243,234 @@ mod tests {
             (session.budget().files(), session.budget().bytes()),
             (2, 13)
         );
+    }
+
+    #[test]
+    fn adding_roots_over_the_policy_limit_is_transactional() {
+        let parent = TestDir::new("root-policy-limit");
+        let initial = parent.path().join("root-000");
+        fs::create_dir(&initial).expect("initial root");
+        let mut policy = LocalFilesystemPolicy::new([initial], FilesystemReadLimits::default())
+            .expect("initial policy");
+        let anchor = policy.roots()[0].clone();
+        let mut additions = Vec::new();
+        for index in 1..MAX_FILESYSTEM_POLICY_ROOTS {
+            let root = parent.path().join(format!("root-{index:03}"));
+            fs::create_dir(&root).expect("additional root");
+            additions.push(root);
+        }
+        policy
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: Vec::new(),
+                    independent: additions,
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("fill policy root limit");
+        let before = policy.roots().to_vec();
+        let rejected = parent.path().join("root-over-limit");
+        fs::create_dir(&rejected).expect("rejected root");
+
+        assert_eq!(
+            policy
+                .access_derived(
+                    &anchor,
+                    DerivedFilesystemRoots {
+                        confined: Vec::new(),
+                        independent: vec![rejected.clone()],
+                    },
+                    FilesystemReadLimits::default(),
+                )
+                .expect_err("root limit"),
+            ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            }
+        );
+        assert_eq!(policy.roots(), before);
+        assert!(before.iter().all(|root| policy.root_policy(root).is_some()));
+        let duplicate = policy
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: Vec::new(),
+                    independent: vec![before[0].clone()],
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("duplicate root at the limit");
+        assert_eq!(duplicate.roots(), [before[0].clone()]);
+        assert_eq!(policy.roots(), before);
+        drop(policy);
+
+        let mut staged = LocalFilesystemPolicy::new(
+            before[..MAX_FILESYSTEM_POLICY_ROOTS - 1].iter().cloned(),
+            FilesystemReadLimits::default(),
+        )
+        .expect("policy below the limit");
+        let staged_before = staged.roots().to_vec();
+        let staged_anchor = staged_before[0].clone();
+        assert_eq!(
+            staged
+                .access_derived(
+                    &staged_anchor,
+                    DerivedFilesystemRoots {
+                        confined: Vec::new(),
+                        independent: vec![
+                            before[MAX_FILESYSTEM_POLICY_ROOTS - 1].clone(),
+                            rejected.clone(),
+                        ],
+                    },
+                    FilesystemReadLimits::default(),
+                )
+                .expect_err("staged roots exceed the limit"),
+            ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            }
+        );
+        assert_eq!(staged.roots(), staged_before);
+        assert!(
+            staged
+                .root_policy(&before[MAX_FILESYSTEM_POLICY_ROOTS - 1])
+                .is_none()
+        );
+        drop(staged);
+
+        assert_eq!(
+            LocalFilesystemPolicy::new(
+                before.into_iter().chain([rejected]),
+                FilesystemReadLimits::default(),
+            )
+            .expect_err("constructor root limit"),
+            ResourceError::RootLimit {
+                limit: MAX_FILESYSTEM_POLICY_ROOTS,
+            }
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn policy_session_keeps_the_root_opened_at_policy_construction() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("policy-root-swap");
+        let outside = TestDir::new("policy-root-swap-outside");
+        let candidate = root.path().join("root.adoc");
+        fs::write(&candidate, "inside").expect("inside source");
+        fs::write(outside.path().join("root.adoc"), "outside").expect("outside source");
+        let policy = policy(root.path(), 100);
+        let displaced = root.path().with_extension("anchored");
+        fs::rename(root.path(), &displaced).expect("displace trusted root");
+        symlink(outside.path(), root.path()).expect("replace root path");
+
+        let loaded = policy
+            .session()
+            .expect("session")
+            .read_utf8(source_id(), &candidate)
+            .expect("read from retained policy root");
+
+        assert_eq!(loaded.source(), "inside");
+        assert_ne!(loaded.source(), "outside");
+        fs::remove_file(root.path()).expect("remove replacement symlink");
+        fs::rename(displaced, root.path()).expect("restore trusted root");
+    }
+
+    #[test]
+    fn derived_session_cannot_expand_policy_limits() {
+        let root = TestDir::new("derived-session-limits");
+        let policy = policy(root.path(), 10);
+        let root_path = policy.roots()[0].clone();
+
+        for limits in [
+            FilesystemReadLimits {
+                max_files: 11,
+                max_total_bytes: 100,
+                max_resource_bytes: 10,
+            },
+            FilesystemReadLimits {
+                max_files: 10,
+                max_total_bytes: 101,
+                max_resource_bytes: 10,
+            },
+            FilesystemReadLimits {
+                max_files: 10,
+                max_total_bytes: 100,
+                max_resource_bytes: 11,
+            },
+        ] {
+            assert!(matches!(
+                policy.access_existing([root_path.clone()], limits),
+                Err(ResourceError::Unverifiable(reason))
+                    if reason == "filesystem access limits exceed the authority limits"
+            ));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn confined_root_derivation_keeps_the_anchor_namespace() {
+        let directory = TestDir::new("derived-root-authority");
+        let root = directory.path().join("workspace");
+        let nested = root.join("docs");
+        fs::create_dir_all(&nested).expect("trusted nested root");
+        fs::write(nested.join("document.adoc"), "trusted").expect("trusted document");
+        let mut policy =
+            LocalFilesystemPolicy::new([root.clone()], FilesystemReadLimits::default())
+                .expect("filesystem policy");
+        let anchor = policy.roots()[0].clone();
+
+        let moved = directory.path().join("moved-workspace");
+        fs::rename(&root, &moved).expect("move trusted workspace");
+        fs::create_dir_all(root.join("docs")).expect("replacement nested root");
+        fs::write(root.join("docs/document.adoc"), "replacement").expect("replacement document");
+
+        let access = policy
+            .access_derived(
+                &anchor,
+                DerivedFilesystemRoots {
+                    confined: vec![nested.clone()],
+                    independent: Vec::new(),
+                },
+                FilesystemReadLimits::default(),
+            )
+            .expect("derive nested authority");
+        let mut session = access.session().expect("derived session");
+        let loaded = session
+            .read_utf8(
+                LogicalSourceId::new("document").expect("source id"),
+                &nested.join("document.adoc"),
+            )
+            .expect("read through retained namespace");
+
+        assert_eq!(loaded.source(), "trusted");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scan_enumerates_the_retained_root_after_namespace_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("scan-root-swap");
+        let outside = TestDir::new("scan-root-swap-outside");
+        fs::write(root.path().join("inside.adoc"), "inside").expect("inside source");
+        fs::write(outside.path().join("outside.adoc"), "outside").expect("outside source");
+        let policy = policy(root.path(), 100);
+        let displaced = root.path().with_extension("anchored");
+        fs::rename(root.path(), &displaced).expect("displace trusted root");
+        symlink(outside.path(), root.path()).expect("replace root path");
+
+        let loaded = policy
+            .session()
+            .expect("session")
+            .scan_utf8(path_source_id)
+            .expect("scan retained root");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].source(), "inside");
+        assert_eq!(loaded[0].source_id().as_str(), "logical:inside.adoc");
+        fs::remove_file(root.path()).expect("remove replacement symlink");
+        fs::rename(displaced, root.path()).expect("restore trusted root");
     }
 
     #[cfg(unix)]
@@ -1593,6 +2148,23 @@ mod tests {
             ResourceError::from(LocalTargetError::PermissionDenied(denied.clone())),
             ResourceError::PermissionDenied(denied)
         );
+    }
+
+    #[test]
+    fn policy_constructor_preserves_public_root_error_categories() {
+        let root = TestDir::new("policy-constructor-errors");
+        let file = root.path().join("file.adoc");
+        let missing = root.path().join("missing");
+        fs::write(&file, "text").expect("regular file");
+
+        assert!(matches!(
+            LocalFilesystemPolicy::new([missing], FilesystemReadLimits::default()),
+            Err(ResourceError::Missing(_))
+        ));
+        assert!(matches!(
+            LocalFilesystemPolicy::new([file], FilesystemReadLimits::default()),
+            Err(ResourceError::InvalidRoot)
+        ));
     }
 
     #[cfg(unix)]

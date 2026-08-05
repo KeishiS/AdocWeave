@@ -5,7 +5,13 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_resource::FilesystemReadLimits;
 
@@ -16,6 +22,46 @@ use crate::local_resource::FilesystemReadLimits;
 /// changing directory into an unbounded wait.
 #[cfg(target_os = "linux")]
 const CONFINED_OPEN_ATTEMPTS: u32 = 8;
+
+#[cfg(target_os = "linux")]
+static NEXT_REPLACEMENT_FILE: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(target_os = "linux")]
+struct TemporaryReplacement {
+    path: PathBuf,
+    file: fs::File,
+    committed: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for TemporaryReplacement {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static FORCED_OPENAT2_ERROR: std::cell::Cell<Option<rustix::io::Errno>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+#[cfg(target_os = "linux")]
+fn confined_openat2(
+    root: &fs::File,
+    relative: &Path,
+    flags: rustix::fs::OFlags,
+    resolve: rustix::fs::ResolveFlags,
+) -> rustix::io::Result<rustix::fd::OwnedFd> {
+    #[cfg(test)]
+    if let Some(error) = FORCED_OPENAT2_ERROR.with(std::cell::Cell::get) {
+        return Err(error);
+    }
+    rustix::fs::openat2(root, relative, flags, rustix::fs::Mode::empty(), resolve)
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct CandidateReadCapacity {
@@ -38,10 +84,31 @@ pub enum FilesystemRaceResistance {
 /// The policy owns one canonical project root. It permits parent components
 /// only while the normalized path remains below that root, then resolves
 /// symlinks before accepting an existing regular file.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Equality compares this configured canonical root, not the identity of an
+/// operating-system handle acquired by two independently constructed values.
+#[derive(Clone)]
 pub struct LocalTargetPolicy {
     root: PathBuf,
+    #[cfg(target_os = "linux")]
+    root_handle: Arc<fs::File>,
 }
+
+impl fmt::Debug for LocalTargetPolicy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LocalTargetPolicy")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for LocalTargetPolicy {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+    }
+}
+
+impl Eq for LocalTargetPolicy {}
 
 #[cfg(target_os = "linux")]
 struct OpenedTarget {
@@ -51,13 +118,117 @@ struct OpenedTarget {
 
 impl LocalTargetPolicy {
     pub fn new(root: &Path) -> Result<Self, LocalTargetError> {
-        let canonical = root
-            .canonicalize()
-            .map_err(|source| classify_io(root.to_owned(), source))?;
-        if !canonical.is_dir() {
-            return Err(LocalTargetError::NotDirectory(canonical));
+        #[cfg(target_os = "linux")]
+        {
+            let (canonical, root_handle) = open_root_directory(root)?;
+            Ok(Self {
+                root: canonical,
+                root_handle: Arc::new(root_handle),
+            })
         }
-        Ok(Self { root: canonical })
+        #[cfg(not(target_os = "linux"))]
+        {
+            let canonical = root
+                .canonicalize()
+                .map_err(|source| classify_io(root.to_owned(), source))?;
+            if !canonical.is_dir() {
+                return Err(LocalTargetError::NotDirectory(canonical));
+            }
+            Ok(Self { root: canonical })
+        }
+    }
+
+    /// Loads one explicitly selected UTF-8 file and retains its parent
+    /// directory as the resulting authority.
+    ///
+    /// Symbolic links are accepted because the caller selected this path
+    /// directly. On Linux the opened file is matched to a second open through
+    /// the retained parent handle, so a concurrent parent replacement cannot
+    /// combine bytes from one namespace with authority from another.
+    pub fn load_explicit_utf8(
+        path: &Path,
+        max_bytes: u64,
+    ) -> Result<(Self, LoadedLocalTarget), LocalTargetError> {
+        Self::load_explicit_utf8_with(path, max_bytes, || {})
+    }
+
+    fn load_explicit_utf8_with(
+        path: &Path,
+        max_bytes: u64,
+        after_open: impl FnOnce(),
+    ) -> Result<(Self, LoadedLocalTarget), LocalTargetError> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            use rustix::fs::{Mode, OFlags, open};
+
+            let mut after_open = Some(after_open);
+            for _ in 0..CONFINED_OPEN_ATTEMPTS {
+                let file = open(
+                    path,
+                    OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map(fs::File::from)
+                .map_err(|error| classify_errno(path, error))?;
+                let metadata = file
+                    .metadata()
+                    .map_err(|source| classify_io(path.to_owned(), source))?;
+                if !metadata.is_file() {
+                    return Err(LocalTargetError::NotFile(path.to_owned()));
+                }
+                if let Some(callback) = after_open.take() {
+                    callback();
+                }
+                let selected = path_from_file_handle(&file, path)?;
+                let file_name = selected
+                    .file_name()
+                    .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
+                let parent = selected
+                    .parent()
+                    .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
+                let Ok(policy) = Self::new(parent) else {
+                    continue;
+                };
+                let candidate = policy.root.join(file_name);
+                let Ok(verified) = policy.open_confined(&candidate) else {
+                    continue;
+                };
+                let verified_metadata = verified
+                    .file
+                    .metadata()
+                    .map_err(|source| classify_io(candidate.clone(), source))?;
+                if metadata.dev() != verified_metadata.dev()
+                    || metadata.ino() != verified_metadata.ino()
+                {
+                    continue;
+                }
+                let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
+                return Ok((policy, loaded));
+            }
+            Err(LocalTargetError::Unverifiable(
+                "explicit local target changed while its authority was established".to_owned(),
+            ))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let selected = path
+                .canonicalize()
+                .map_err(|source| classify_io(path.to_owned(), source))?;
+            let file_name = selected
+                .file_name()
+                .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
+            let parent = selected
+                .parent()
+                .ok_or_else(|| LocalTargetError::Unverifiable(path.display().to_string()))?;
+            let policy = Self::new(parent)?;
+            after_open();
+            let candidate = policy.root.join(file_name);
+            let file = policy.open_confined(&candidate)?;
+            let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
+            Ok((policy, loaded))
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -75,6 +246,232 @@ impl LocalTargetPolicy {
         }
     }
 
+    /// Compares a regular file through its retained parent-directory handle.
+    ///
+    /// Linux resolves the target, temporary file and rename from the retained
+    /// parent-directory handle, so replacing an ancestor path cannot redirect
+    /// the read. `Ok(false)` reports a concurrent content change.
+    #[cfg(target_os = "linux")]
+    pub fn candidate_contents_match(
+        &self,
+        candidate: &Path,
+        expected: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        use std::os::fd::AsRawFd;
+
+        let candidate = self.normalize_candidate(candidate)?;
+        let parent = candidate.parent().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no parent directory".to_owned())
+        })?;
+        let file_name = candidate.file_name().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no file name".to_owned())
+        })?;
+        let directory = self.open_directory_no_symlinks(parent)?;
+        let target =
+            PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(file_name);
+        Ok(read_for_comparison(&target, expected.len(), &candidate)? == expected)
+    }
+
+    /// Rechecks a regular file immediately before replacing it atomically.
+    ///
+    /// Linux resolves the target, temporary file and rename from the retained
+    /// parent-directory handle, so replacing an ancestor path cannot redirect
+    /// the write. `Ok(false)` reports a content change observed by the final
+    /// recheck. The comparison and rename are separate operations, so this is
+    /// not a compare-and-swap against writers that ignore this API.
+    #[cfg(target_os = "linux")]
+    pub fn replace_candidate_after_recheck(
+        &self,
+        candidate: &Path,
+        original: &[u8],
+        replacement: &[u8],
+    ) -> Result<bool, LocalTargetError> {
+        use std::os::fd::AsRawFd;
+
+        let candidate = self.normalize_candidate(candidate)?;
+        let parent = candidate.parent().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no parent directory".to_owned())
+        })?;
+        let file_name = candidate.file_name().ok_or_else(|| {
+            LocalTargetError::Unverifiable("write target has no file name".to_owned())
+        })?;
+        let directory = self.open_directory_no_symlinks(parent)?;
+        let descriptor_root = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+        let target = descriptor_root.join(file_name);
+        let metadata = fs::symlink_metadata(&target)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(LocalTargetError::NotFile(candidate));
+        }
+        if read_for_comparison(&target, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+
+        let mut temporary = None;
+        for _ in 0..CONFINED_OPEN_ATTEMPTS {
+            let sequence = NEXT_REPLACEMENT_FILE.fetch_add(1, Ordering::Relaxed);
+            let path =
+                descriptor_root.join(format!(".adocweave-{}-{sequence}.tmp", std::process::id()));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    temporary = Some(TemporaryReplacement {
+                        path,
+                        file,
+                        committed: false,
+                    });
+                    break;
+                }
+                Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(source) => return Err(classify_io(candidate.clone(), source)),
+            }
+        }
+        let mut temporary = temporary.ok_or_else(|| {
+            LocalTargetError::Unverifiable(format!(
+                "could not create a unique temporary file for {}",
+                candidate.display()
+            ))
+        })?;
+        temporary
+            .file
+            .set_permissions(metadata.permissions())
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        temporary
+            .file
+            .write_all(replacement)
+            .and_then(|()| temporary.file.sync_all())
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        if read_for_comparison(&target, original.len(), &candidate)? != original {
+            return Ok(false);
+        }
+        fs::rename(&temporary.path, &target)
+            .map_err(|source| classify_io(candidate.clone(), source))?;
+        temporary.committed = true;
+        directory
+            .sync_all()
+            .map_err(|source| classify_io(candidate, source))?;
+        Ok(true)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn root_directory_handle(&self) -> Result<fs::File, LocalTargetError> {
+        use rustix::fs::{Mode, OFlags, openat};
+
+        openat(
+            self.root_handle.as_ref(),
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map(fs::File::from)
+        .map_err(|error| classify_errno(&self.root, error))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn open_directory_no_symlinks(
+        &self,
+        candidate: &Path,
+    ) -> Result<fs::File, LocalTargetError> {
+        use rustix::fd::OwnedFd;
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
+
+        let relative = candidate
+            .strip_prefix(&self.root)
+            .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+        if relative.as_os_str().is_empty() {
+            return self.root_directory_handle();
+        }
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let mut attempts = 0;
+        let directory = loop {
+            let outcome = confined_openat2(
+                self.root_handle.as_ref(),
+                relative,
+                flags,
+                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS | ResolveFlags::NO_SYMLINKS,
+            );
+            attempts += 1;
+            if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS
+            {
+                continue;
+            }
+            break outcome;
+        };
+        let directory = match directory {
+            Ok(directory) => directory,
+            Err(error)
+                if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL =>
+            {
+                let mut directory: OwnedFd = openat(
+                    self.root_handle.as_ref(),
+                    ".",
+                    OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map_err(|error| classify_errno(candidate, error))?;
+                let mut components = relative.components().peekable();
+                while let Some(component) = components.next() {
+                    let Component::Normal(name) = component else {
+                        return Err(LocalTargetError::Unverifiable(
+                            candidate.to_string_lossy().into_owned(),
+                        ));
+                    };
+                    let component_flags = if components.peek().is_some() {
+                        OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+                    } else {
+                        flags
+                    };
+                    directory = openat(&directory, name, component_flags, Mode::empty())
+                        .map_err(|error| classify_errno(candidate, error))?;
+                }
+                directory
+            }
+            Err(error) => return Err(classify_errno(candidate, error)),
+        };
+        Ok(fs::File::from(directory))
+    }
+
+    /// Derives a directory policy below this already opened root.
+    ///
+    /// The authored path must not contain a symbolic-link hop. Keeping the
+    /// candidate spelling while opening it relative to `root_handle` lets the
+    /// derived policy continue to name the same logical namespace after the
+    /// root's directory entry is concurrently replaced.
+    pub fn derive_confined_directory(&self, candidate: &Path) -> Result<Self, LocalTargetError> {
+        #[cfg(target_os = "linux")]
+        {
+            let relative = candidate
+                .strip_prefix(&self.root)
+                .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+            let logical_root = self.root.join(relative);
+            let root_handle = self.open_directory_no_symlinks(&logical_root)?;
+            Ok(Self {
+                root: logical_root,
+                root_handle: Arc::new(root_handle),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            candidate
+                .strip_prefix(&self.root)
+                .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+            reject_symlink_components(&self.root, candidate)?;
+            let canonical = candidate
+                .canonicalize()
+                .map_err(|source| classify_io(candidate.to_owned(), source))?;
+            if !canonical.starts_with(&self.root) {
+                return Err(LocalTargetError::OutsideRoot(canonical));
+            }
+            if !canonical.is_dir() {
+                return Err(LocalTargetError::NotDirectory(canonical));
+            }
+            Ok(Self { root: canonical })
+        }
+    }
+
     pub fn inspect(&self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
         self.inspect_candidate(&candidate)
@@ -84,20 +481,51 @@ impl LocalTargetPolicy {
     ///
     /// Callers may use the returned normalized path as a per-run cache key.
     pub fn candidate(&self, base: &Path, target: &str) -> Result<PathBuf, LocalTargetError> {
-        let base = base
-            .canonicalize()
-            .map_err(|source| classify_io(base.to_owned(), source))?;
-        self.candidate_from_canonical_base(&base, target)
+        let base = self.inspect_directory_no_symlinks(base)?;
+        self.candidate_from_verified_base(&base, target)
     }
 
-    fn candidate_from_canonical_base(
+    /// Normalizes an absolute logical path without consulting the current
+    /// process namespace.
+    ///
+    /// Parent components may move within this policy's root but never above
+    /// it. The result is suitable for handle-relative inspection, including
+    /// paths whose final component does not exist yet.
+    pub fn normalize_candidate(&self, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
+        let relative = candidate
+            .strip_prefix(&self.root)
+            .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+        let mut normalized = self.root.clone();
+        let mut depth = 0_usize;
+        for component in relative.components() {
+            match component {
+                Component::Normal(name) => {
+                    normalized.push(name);
+                    depth = depth.saturating_add(1);
+                }
+                Component::CurDir => {}
+                Component::ParentDir if depth > 0 => {
+                    normalized.pop();
+                    depth -= 1;
+                }
+                Component::ParentDir => {
+                    return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
+                }
+                Component::Prefix(_) | Component::RootDir => {
+                    return Err(LocalTargetError::Unverifiable(
+                        candidate.to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(normalized)
+    }
+
+    fn candidate_from_verified_base(
         &self,
         base: &Path,
         target: &str,
     ) -> Result<PathBuf, LocalTargetError> {
-        if !base.is_dir() {
-            return Err(LocalTargetError::NotDirectory(base.to_owned()));
-        }
         if !base.starts_with(&self.root) {
             return Err(LocalTargetError::OutsideRoot(base.to_owned()));
         }
@@ -111,6 +539,58 @@ impl LocalTargetPolicy {
             return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
         }
         Ok(self.open_confined(candidate)?.canonical_path)
+    }
+
+    /// Resolves a normalized regular file while rejecting every symbolic link.
+    pub fn inspect_candidate_no_symlinks(
+        &self,
+        candidate: &Path,
+    ) -> Result<PathBuf, LocalTargetError> {
+        #[cfg(target_os = "linux")]
+        {
+            if !candidate.starts_with(&self.root) {
+                return Err(LocalTargetError::OutsideRoot(candidate.to_owned()));
+            }
+            self.open_confined_with_symlinks(candidate, false)
+                .map(|opened| opened.canonical_path)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            reject_symlink_components(&self.root, candidate)?;
+            self.inspect_candidate(candidate)
+        }
+    }
+
+    /// Resolves an existing directory without crossing a symbolic link.
+    ///
+    /// On handle-relative platforms the returned path remains in the logical
+    /// namespace established when this policy was created.
+    pub fn inspect_directory_no_symlinks(
+        &self,
+        candidate: &Path,
+    ) -> Result<PathBuf, LocalTargetError> {
+        #[cfg(target_os = "linux")]
+        {
+            let relative = candidate
+                .strip_prefix(&self.root)
+                .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+            self.open_directory_no_symlinks(candidate)?;
+            Ok(self.root.join(relative))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            reject_symlink_components(&self.root, candidate)?;
+            let canonical = candidate
+                .canonicalize()
+                .map_err(|source| classify_io(candidate.to_owned(), source))?;
+            if !canonical.starts_with(&self.root) {
+                return Err(LocalTargetError::OutsideRoot(canonical));
+            }
+            if !canonical.is_dir() {
+                return Err(LocalTargetError::NotDirectory(canonical));
+            }
+            Ok(canonical)
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -140,17 +620,25 @@ impl LocalTargetPolicy {
 
     #[cfg(target_os = "linux")]
     fn open_confined(&self, candidate: &Path) -> Result<OpenedTarget, LocalTargetError> {
-        use std::os::fd::AsRawFd;
+        self.open_confined_with_symlinks(candidate, true)
+    }
 
+    #[cfg(target_os = "linux")]
+    fn open_confined_with_symlinks(
+        &self,
+        candidate: &Path,
+        follow_symlinks: bool,
+    ) -> Result<OpenedTarget, LocalTargetError> {
         use rustix::fd::OwnedFd;
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat, openat2};
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat};
 
         let relative = candidate
             .strip_prefix(&self.root)
             .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
-        let root =
-            fs::File::open(&self.root).map_err(|source| classify_io(self.root.clone(), source))?;
-        let flags = OFlags::RDONLY | OFlags::CLOEXEC;
+        let root = self.root_handle.as_ref();
+        // Opening a FIFO for reading can otherwise wait for a writer before we
+        // have a handle whose file type can be rejected.
+        let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC;
         // `RESOLVE_BENEATH` makes the kernel give up with `EAGAIN` when another
         // process renames or mounts something along this path while it is being
         // resolved. The lookup was neither denied nor granted, so the only
@@ -158,13 +646,11 @@ impl LocalTargetPolicy {
         // filesystem under constant churn fails instead of spinning.
         let mut attempts = 0;
         let file = loop {
-            let outcome = openat2(
-                &root,
-                relative,
-                flags,
-                Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS,
-            );
+            let mut resolve = ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS;
+            if !follow_symlinks {
+                resolve |= ResolveFlags::NO_SYMLINKS;
+            }
+            let outcome = confined_openat2(root, relative, flags, resolve);
             attempts += 1;
             if matches!(outcome, Err(rustix::io::Errno::AGAIN)) && attempts < CONFINED_OPEN_ATTEMPTS
             {
@@ -178,7 +664,7 @@ impl LocalTargetPolicy {
                 if error == rustix::io::Errno::NOSYS || error == rustix::io::Errno::INVAL =>
             {
                 let mut directory: OwnedFd = openat(
-                    &root,
+                    root,
                     ".",
                     OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                     Mode::empty(),
@@ -210,9 +696,12 @@ impl LocalTargetPolicy {
         {
             return Err(LocalTargetError::NotFile(candidate.to_owned()));
         }
-        let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
-        let canonical_path = fs::read_link(&descriptor_path)
-            .map_err(|source| classify_io(candidate.to_owned(), source))?;
+        let canonical_path = logical_path_from_opened_handle(
+            &self.root,
+            self.root_handle.as_ref(),
+            &file,
+            candidate,
+        )?;
         Ok(OpenedTarget {
             canonical_path,
             file,
@@ -224,6 +713,110 @@ impl LocalTargetPolicy {
         let canonical = self.inspect_candidate(candidate)?;
         fs::File::open(&canonical).map_err(|source| classify_io(canonical, source))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn logical_path_from_opened_handle(
+    logical_root: &Path,
+    root_handle: &fs::File,
+    opened: &fs::File,
+    candidate: &Path,
+) -> Result<PathBuf, LocalTargetError> {
+    use std::os::fd::AsRawFd;
+
+    let root_path = fs::read_link(format!("/proc/self/fd/{}", root_handle.as_raw_fd()))
+        .map_err(|source| classify_io(candidate.to_owned(), source))?;
+    let opened_path = fs::read_link(format!("/proc/self/fd/{}", opened.as_raw_fd()))
+        .map_err(|source| classify_io(candidate.to_owned(), source))?;
+    let relative = opened_path
+        .strip_prefix(&root_path)
+        .map_err(|_| LocalTargetError::Unverifiable(candidate.to_string_lossy().into_owned()))?;
+    Ok(logical_root.join(relative))
+}
+
+#[cfg(target_os = "linux")]
+fn path_from_file_handle(file: &fs::File, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
+    use std::os::fd::AsRawFd;
+
+    fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+        .map_err(|source| classify_io(candidate.to_owned(), source))
+}
+
+fn read_bounded_utf8(
+    file: fs::File,
+    canonical_path: PathBuf,
+    max_bytes: u64,
+) -> Result<LoadedLocalTarget, LocalTargetError> {
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|source| classify_io(canonical_path.clone(), source))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(LocalTargetError::ResourceTooLarge(canonical_path));
+    }
+    let source = String::from_utf8(bytes)
+        .map_err(|_| LocalTargetError::InvalidUtf8(canonical_path.clone()))?;
+    Ok(LoadedLocalTarget {
+        canonical_path,
+        source,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_for_comparison(
+    path: &Path,
+    expected_len: usize,
+    logical_path: &Path,
+) -> Result<Vec<u8>, LocalTargetError> {
+    use rustix::fs::{Mode, OFlags, open};
+
+    let file = open(
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(fs::File::from)
+    .map_err(|error| classify_errno(logical_path, error))?;
+    if !file
+        .metadata()
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?
+        .is_file()
+    {
+        return Err(LocalTargetError::NotFile(logical_path.to_owned()));
+    }
+    let limit = u64::try_from(expected_len)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut current = Vec::with_capacity(expected_len.saturating_add(1));
+    file.take(limit)
+        .read_to_end(&mut current)
+        .map_err(|source| classify_io(logical_path.to_owned(), source))?;
+    Ok(current)
+}
+
+#[cfg(target_os = "linux")]
+fn open_root_directory(root: &Path) -> Result<(PathBuf, fs::File), LocalTargetError> {
+    use std::os::fd::AsRawFd;
+
+    use rustix::fs::{Mode, OFlags, open};
+
+    let file = open(
+        root,
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(fs::File::from)
+    .map_err(|error| {
+        if error == rustix::io::Errno::NOTDIR {
+            LocalTargetError::NotDirectory(root.to_owned())
+        } else {
+            classify_errno(root, error)
+        }
+    })?;
+    let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    let canonical =
+        fs::read_link(descriptor_path).map_err(|source| classify_io(root.to_owned(), source))?;
+    Ok((canonical, file))
 }
 
 /// Per-command cache and unique-path budget shared by validation and readers.
@@ -247,6 +840,13 @@ pub struct LoadedLocalTarget {
     source: String,
 }
 
+/// Bounded local file bytes paired with their stable logical path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedLocalBytes {
+    canonical_path: PathBuf,
+    source: Vec<u8>,
+}
+
 impl LoadedLocalTarget {
     pub fn canonical_path(&self) -> &Path {
         &self.canonical_path
@@ -257,6 +857,23 @@ impl LoadedLocalTarget {
     }
 
     pub fn into_parts(self) -> (PathBuf, String) {
+        (self.canonical_path, self.source)
+    }
+}
+
+impl LoadedLocalBytes {
+    /// Returns the stable logical path used for this read.
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    /// Returns the bytes captured from the opened file.
+    pub fn source(&self) -> &[u8] {
+        &self.source
+    }
+
+    /// Splits the loaded value into its logical path and bytes.
+    pub fn into_parts(self) -> (PathBuf, Vec<u8>) {
         (self.canonical_path, self.source)
     }
 }
@@ -338,14 +955,12 @@ impl LocalTargetSession {
         let canonical_base = if let Some(result) = self.bases.get(base) {
             result.clone()?
         } else {
-            let result = base
-                .canonicalize()
-                .map_err(|source| classify_io(base.to_owned(), source));
+            let result = self.policy.inspect_directory_no_symlinks(base);
             self.bases.insert(base.to_owned(), result.clone());
             result?
         };
         self.policy
-            .candidate_from_canonical_base(&canonical_base, target)
+            .candidate_from_verified_base(&canonical_base, target)
     }
 
     pub fn read_utf8(
@@ -364,7 +979,7 @@ impl LocalTargetSession {
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
-        self.read_candidate_utf8_with_capacity(&candidate, false, || {}, capacity)
+        self.read_candidate_utf8_with_capacity(&candidate, false, true, || {}, capacity)
     }
 
     /// Opens and reads an already normalized path below this session's root.
@@ -376,7 +991,70 @@ impl LocalTargetSession {
         candidate: &Path,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let capacity = self.default_read_capacity();
-        self.read_candidate_utf8_with_capacity(candidate, true, || {}, |_| capacity)
+        self.read_candidate_utf8_with_capacity(candidate, true, true, || {}, |_| capacity)
+    }
+
+    /// Opens and reads a normalized path while rejecting every symbolic link.
+    ///
+    /// This is intended for files which define policy, where even a symbolic
+    /// link that remains below the root would make the selected authority
+    /// ambiguous.
+    pub fn read_candidate_utf8_no_symlinks(
+        &mut self,
+        candidate: &Path,
+    ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        let capacity = self.default_read_capacity();
+        self.read_candidate_utf8_with_capacity(candidate, true, false, || {}, |_| capacity)
+    }
+
+    /// Opens and reads bounded bytes from an already normalized path.
+    pub fn read_candidate_bytes(
+        &mut self,
+        candidate: &Path,
+    ) -> Result<LoadedLocalBytes, LocalTargetError> {
+        let capacity = self.default_read_capacity();
+        self.read_candidate_bytes_with_capacity(candidate, capacity, true)
+    }
+
+    /// Opens and reads bounded bytes while rejecting every symbolic link.
+    pub fn read_candidate_bytes_no_symlinks(
+        &mut self,
+        candidate: &Path,
+    ) -> Result<LoadedLocalBytes, LocalTargetError> {
+        let capacity = self.default_read_capacity();
+        self.read_candidate_bytes_with_capacity(candidate, capacity, false)
+    }
+
+    fn read_candidate_bytes_with_capacity(
+        &mut self,
+        candidate: &Path,
+        capacity: CandidateReadCapacity,
+        follow_symlinks: bool,
+    ) -> Result<LoadedLocalBytes, LocalTargetError> {
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
+        if !capacity.allow_file {
+            return Err(LocalTargetError::ReadLimitExceeded);
+        }
+        let read_limit = capacity
+            .max_resource_bytes
+            .min(capacity.max_total_bytes)
+            .saturating_add(1);
+        self.read_files += 1;
+        let mut bytes = Vec::new();
+        file.take(read_limit)
+            .read_to_end(&mut bytes)
+            .map_err(|source| classify_io(canonical.clone(), source))?;
+        self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
+        if bytes.len() as u64 > capacity.max_total_bytes {
+            return Err(LocalTargetError::ReadLimitExceeded);
+        }
+        if bytes.len() as u64 > capacity.max_resource_bytes {
+            return Err(LocalTargetError::ResourceTooLarge(canonical));
+        }
+        Ok(LoadedLocalBytes {
+            canonical_path: canonical,
+            source: bytes,
+        })
     }
 
     /// Reopens an already normalized path without reusing cached text.
@@ -385,7 +1063,7 @@ impl LocalTargetSession {
         candidate: &Path,
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        self.read_candidate_utf8_with_capacity(candidate, false, || {}, capacity)
+        self.read_candidate_utf8_with_capacity(candidate, false, true, || {}, capacity)
     }
 
     #[cfg(test)]
@@ -397,7 +1075,7 @@ impl LocalTargetSession {
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
         let candidate = self.candidate(base, target)?;
         let capacity = self.default_read_capacity();
-        self.read_candidate_utf8_with_capacity(&candidate, true, after_open, |_| capacity)
+        self.read_candidate_utf8_with_capacity(&candidate, true, true, after_open, |_| capacity)
     }
 
     fn default_read_capacity(&self) -> CandidateReadCapacity {
@@ -413,28 +1091,11 @@ impl LocalTargetSession {
         &mut self,
         candidate: &Path,
         reuse_cached_text: bool,
+        follow_symlinks: bool,
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
-        // The number of distinct paths a session may examine is a resource
-        // bound, so it holds on every platform. The two branches below differ
-        // only in how a path is resolved and opened.
-        self.charge_path_request(candidate)?;
-        #[cfg(target_os = "linux")]
-        let (canonical, file) = {
-            let opened = self.remember(candidate, self.policy.open_confined(candidate))?;
-            self.inspections
-                .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
-            (opened.canonical_path, opened.file)
-        };
-        #[cfg(not(target_os = "linux"))]
-        let (canonical, file) = {
-            let canonical = self.remember(candidate, self.policy.inspect_candidate(candidate))?;
-            self.inspections
-                .insert(candidate.to_owned(), Ok(canonical.clone()));
-            let file = self.policy.open_confined(&canonical)?;
-            (canonical, file)
-        };
+        let (canonical, file) = self.open_candidate(candidate, follow_symlinks)?;
         after_open();
         if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
             return result.clone().map(|source| LoadedLocalTarget {
@@ -474,6 +1135,38 @@ impl LocalTargetSession {
         })
     }
 
+    fn open_candidate(
+        &mut self,
+        candidate: &Path,
+        follow_symlinks: bool,
+    ) -> Result<(PathBuf, fs::File), LocalTargetError> {
+        // The number of distinct paths a session may examine is a resource
+        // bound on every platform. Only resolution and opening differ below.
+        self.charge_path_request(candidate)?;
+        #[cfg(target_os = "linux")]
+        {
+            let opened = self.remember(
+                candidate,
+                self.policy
+                    .open_confined_with_symlinks(candidate, follow_symlinks),
+            )?;
+            self.inspections
+                .insert(candidate.to_owned(), Ok(opened.canonical_path.clone()));
+            Ok((opened.canonical_path, opened.file))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if !follow_symlinks {
+                reject_symlink_components(&self.policy.root, candidate)?;
+            }
+            let canonical = self.remember(candidate, self.policy.inspect_candidate(candidate))?;
+            self.inspections
+                .insert(candidate.to_owned(), Ok(canonical.clone()));
+            let file = self.policy.open_confined(&canonical)?;
+            Ok((canonical, file))
+        }
+    }
+
     pub fn inspected_paths(&self) -> usize {
         self.inspections.len()
     }
@@ -496,10 +1189,38 @@ impl LocalTargetSession {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+fn reject_symlink_components(root: &Path, candidate: &Path) -> Result<(), LocalTargetError> {
+    let relative = candidate
+        .strip_prefix(root)
+        .map_err(|_| LocalTargetError::OutsideRoot(candidate.to_owned()))?;
+    let mut current = root.to_owned();
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err(LocalTargetError::Unverifiable(
+                candidate.to_string_lossy().into_owned(),
+            ));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(LocalTargetError::OutsideRoot(current));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(source) => return Err(classify_io(current, source)),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn classify_errno(path: &Path, source: rustix::io::Errno) -> LocalTargetError {
     if source == rustix::io::Errno::XDEV {
         return LocalTargetError::OutsideRoot(path.to_owned());
+    }
+    if source == rustix::io::Errno::NOTDIR {
+        return LocalTargetError::NotDirectory(path.to_owned());
     }
     classify_io(
         path.to_owned(),
@@ -823,6 +1544,23 @@ mod tests {
     }
 
     #[test]
+    fn logical_candidate_normalization_does_not_consult_missing_paths() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        assert_eq!(
+            policy
+                .normalize_candidate(&root.0.join("docs/missing/../guide.adoc"))
+                .expect("logical path"),
+            root.0.join("docs/guide.adoc")
+        );
+        assert!(matches!(
+            policy.normalize_candidate(&root.0.join("../outside.adoc")),
+            Err(LocalTargetError::OutsideRoot(_))
+        ));
+    }
+
+    #[test]
     fn missing_directory_and_lexical_escape_have_stable_codes() {
         let root = TestDir::new();
         let policy = LocalTargetPolicy::new(&root.0).expect("policy");
@@ -857,6 +1595,127 @@ mod tests {
                 "local-target-unverifiable"
             );
         }
+    }
+
+    #[test]
+    fn bounded_byte_reads_accept_non_utf8_and_enforce_the_resource_limit() {
+        let root = TestDir::new();
+        let binary = root.0.join("style.css");
+        fs::write(&binary, [0xff, 0x00]).expect("binary stylesheet");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut accepted = LocalTargetSession::new(
+            policy.clone(),
+            1,
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 2,
+                max_resource_bytes: 2,
+            },
+        );
+
+        let loaded = accepted
+            .read_candidate_bytes(&binary)
+            .expect("bounded bytes");
+        assert_eq!(loaded.source(), [0xff, 0x00]);
+
+        let mut rejected = LocalTargetSession::new(
+            policy,
+            1,
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 1,
+                max_resource_bytes: 1,
+            },
+        );
+        assert!(matches!(
+            rejected.read_candidate_bytes(&binary),
+            Err(LocalTargetError::ReadLimitExceeded) | Err(LocalTargetError::ResourceTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn policy_constructor_reports_a_regular_file_as_not_a_directory() {
+        let root = TestDir::new();
+        let file = root.0.join("docs/guide.adoc");
+
+        assert!(matches!(
+            LocalTargetPolicy::new(&file),
+            Err(LocalTargetError::NotDirectory(path)) if path == file
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_utf8_load_accepts_a_symbolic_link_and_retains_the_target_parent() {
+        use std::os::unix::fs::symlink;
+
+        let selected_parent = TestDir::new();
+        let target_parent = TestDir::new();
+        let target = target_parent.0.join("project.toml");
+        let selected = selected_parent.0.join("selected.toml");
+        fs::write(&target, "schema-version = 1\n").expect("target file");
+        symlink(&target, &selected).expect("selected symlink");
+
+        let (policy, loaded) =
+            LocalTargetPolicy::load_explicit_utf8(&selected, 1024).expect("explicit file");
+
+        assert_eq!(policy.root(), target_parent.0);
+        assert_eq!(loaded.canonical_path(), target);
+        assert_eq!(loaded.source(), "schema-version = 1\n");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_utf8_load_matches_bytes_to_the_retained_parent_authority() {
+        use std::os::unix::fs::symlink;
+
+        let parent = TestDir::new();
+        let outside = TestDir::new();
+        let selected = parent.0.join("project.toml");
+        fs::write(&selected, "schema-version = 1\n").expect("trusted file");
+        fs::write(outside.0.join("project.toml"), "schema-version = 99\n").expect("outside file");
+        let displaced = parent.0.with_extension("explicit-authority");
+
+        let (policy, loaded) = LocalTargetPolicy::load_explicit_utf8_with(&selected, 1024, || {
+            fs::rename(&parent.0, &displaced).expect("displace selected parent");
+            symlink(&outside.0, &parent.0).expect("replace selected parent");
+        })
+        .expect("stable explicit file");
+
+        assert_eq!(policy.root(), displaced);
+        assert_eq!(loaded.source(), "schema-version = 1\n");
+        assert_ne!(loaded.source(), "schema-version = 99\n");
+        fs::remove_file(&parent.0).expect("remove replacement symlink");
+        fs::rename(&displaced, &parent.0).expect("restore selected parent");
+    }
+
+    #[test]
+    fn confined_directory_derivation_rejects_an_outside_directory() {
+        let root = TestDir::new();
+        let outside = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        assert!(matches!(
+            policy.derive_confined_directory(&outside.0),
+            Err(LocalTargetError::OutsideRoot(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_directory_derivation_rejects_a_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let outside = TestDir::new();
+        symlink(&outside.0, root.0.join("linked-directory")).expect("directory symlink");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+
+        assert!(
+            policy
+                .derive_confined_directory(&root.0.join("linked-directory"))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1182,6 +2041,92 @@ mod tests {
 
         assert_eq!(loaded.source(), "= Guide");
         assert_ne!(loaded.source(), "= Outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn policy_keeps_the_original_root_handle_after_namespace_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        let outside = TestDir::new();
+        fs::write(outside.0.join("docs/guide.adoc"), "= Outside").expect("outside file");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+        let displaced = root.0.with_extension("anchored");
+        fs::rename(&root.0, &displaced).expect("displace trusted root");
+        symlink(&outside.0, &root.0).expect("replace root path");
+
+        let loaded = session
+            .read_candidate_utf8(&root.0.join("docs/guide.adoc"))
+            .expect("read through retained root handle");
+
+        assert_eq!(loaded.source(), "= Guide");
+        assert_ne!(loaded.source(), "= Outside");
+        fs::remove_file(&root.0).expect("remove replacement symlink");
+        fs::rename(displaced, &root.0).expect("restore trusted root");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn openat2_unavailable_errors_use_the_handle_relative_fallback() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        for error in [rustix::io::Errno::NOSYS, rustix::io::Errno::INVAL] {
+            FORCED_OPENAT2_ERROR.with(|forced| forced.set(Some(error)));
+            let mut session =
+                LocalTargetSession::new(policy.clone(), 1, FilesystemReadLimits::default());
+            let loaded = session
+                .read_utf8(&root.0.join("docs"), "guide.adoc")
+                .expect("fallback read");
+            FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
+            assert_eq!(loaded.source(), "= Guide");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn relative_base_keeps_the_original_root_namespace_after_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new();
+        fs::create_dir_all(root.0.join("docs/sub")).expect("trusted base");
+        fs::create_dir_all(root.0.join("docs/other")).expect("alternate trusted base");
+        fs::write(root.0.join("docs/sub/guide.adoc"), "= Trusted").expect("trusted target");
+        fs::write(root.0.join("docs/other/guide.adoc"), "= Redirected").expect("redirected target");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+        let displaced = root.0.with_extension("anchored-base");
+
+        fs::rename(&root.0, &displaced).expect("displace trusted root");
+        fs::create_dir_all(root.0.join("docs/other")).expect("replacement target directory");
+        symlink("other", root.0.join("docs/sub")).expect("redirect replacement base");
+
+        let loaded = session
+            .read_utf8(&root.0.join("docs/sub"), "guide.adoc")
+            .expect("read from retained base namespace");
+
+        assert_eq!(loaded.source(), "= Trusted");
+        assert_ne!(loaded.source(), "= Redirected");
+        fs::remove_dir_all(&root.0).expect("remove replacement root");
+        fs::rename(displaced, &root.0).expect("restore trusted root");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fifo_is_rejected_without_waiting_for_a_writer() {
+        use rustix::fs::{CWD, Mode, mkfifoat};
+
+        let root = TestDir::new();
+        let fifo = root.0.join("docs/input.adoc");
+        mkfifoat(CWD, &fifo, Mode::RUSR | Mode::WUSR).expect("FIFO");
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let mut session = LocalTargetSession::new(policy, 1, FilesystemReadLimits::default());
+
+        assert!(matches!(
+            session.read_candidate_utf8(&fifo),
+            Err(LocalTargetError::NotFile(path)) if path == fifo
+        ));
     }
 
     #[cfg(target_os = "linux")]

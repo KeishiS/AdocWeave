@@ -48,6 +48,27 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /入れ子になったworkspace folderの走査を分離/);
   assert.match(notes, /最新のworkspace状態へ結果を収束/);
   assert.match(notes, /文書変更前の古い応答を返さない/);
+  assert.match(
+    notes,
+    new RegExp(`v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}以前のLinux向けCLIとLanguage Server`),
+  );
+  assert.match(notes, /意図したroot外へ切り替えて読み書きする可能性/);
+  assert.match(notes, /読み書き対象ごとのdirectoryを検査時に固定/);
+  assert.match(
+    notes,
+    new RegExp(
+      `v${PREVIOUS_RELEASE_VERSION.replaceAll(".", "\\.")}以前を使用している場合はv${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}へ更新`,
+    ),
+  );
+  assert.match(
+    notes,
+    new RegExp(`公開前のv${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}開発版`),
+  );
+  assert.match(notes, /通知履歴またはファイル監視による読込エラーが無制限に増え/);
+  assert.match(notes, /上限超過または走査失敗後は回復要求を保持/);
+  assert.match(notes, /その後に関連するファイル監視通知を受けた場合/);
+  assert.match(notes, /通知が100 ms途切れてから全体走査を1件だけ実行/);
+  assert.match(notes, /公開済みの影響版はありません/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
@@ -60,8 +81,12 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /構造体リテラルまたは構造体のパターンで全フィールドを列挙/);
   assert.match(notes, /workspace: WorkspaceSettings::default/);
   assert.match(notes, /構造体のパターンには``workspace``を追加/);
+  assert.match(notes, /``ResourceError``へ、ファイルシステムのルート数が上限を超えた/);
+  assert.match(notes, /``ResourceError::RootLimit \{ limit \}``を処理する分岐/);
   assert.doesNotMatch(notes, /constructible_struct_adds_field/);
   assert.doesNotMatch(notes, /externally-constructible struct adds field/);
+  assert.doesNotMatch(notes, /enum_variant_added/);
+  assert.doesNotMatch(notes, /enum variant added on exhaustive enum/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /Language Serverのworkspace走査の除外設定は任意/);
   assert.match(notes, /\[workspace\.scan\]/);

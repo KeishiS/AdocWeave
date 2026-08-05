@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,10 @@ use adocweave::output::formatter::{FormatConfig, NewlineStyle};
 use adocweave::output::html::{HtmlDocumentMode, RenderPolicy};
 use adocweave::preprocess::PreprocessOptions;
 use adocweave::{AnalysisOptions, SyntaxMode};
-use adocweave_host::FilesystemReadLimits;
+use adocweave_host::{
+    FilesystemReadLimits, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession,
+};
 use adocweave_workspace::RetainedResourceLimits;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -162,50 +166,54 @@ pub struct ConfigSnapshot {
 impl ConfigSnapshot {
     /// Loads an explicitly selected project configuration.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let path = fs::canonicalize(path).map_err(|_| {
-            ConfigError::new(
-                ConfigErrorCode::ReadFailed,
-                "the project file cannot be resolved",
-            )
-        })?;
+        Self::load_explicit(path)
+    }
+
+    /// Loads an explicit configuration through `preferred` when it belongs to
+    /// that retained authority.
+    ///
+    /// An explicit symbolic link outside the preferred root remains accepted,
+    /// but its target receives a separate configuration-only authority.
+    pub fn load_with_preferred_policy(
+        path: &Path,
+        preferred: &LocalTargetPolicy,
+    ) -> Result<Self, ConfigError> {
+        let candidate = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            preferred.root().join(path)
+        };
+        match preferred.normalize_candidate(&candidate) {
+            Ok(candidate) => {
+                let mut session = config_session(preferred.clone(), 1);
+                match session.read_candidate_utf8(&candidate) {
+                    Ok(loaded) => Self::from_loaded(loaded),
+                    Err(LocalTargetError::OutsideRoot(_)) => Self::load_explicit(&candidate),
+                    Err(_) => Err(config_read_failed()),
+                }
+            }
+            Err(LocalTargetError::OutsideRoot(_)) => Self::load_explicit(&candidate),
+            Err(_) => Err(config_read_failed()),
+        }
+    }
+
+    fn load_explicit(path: &Path) -> Result<Self, ConfigError> {
+        let (_policy, loaded) = LocalTargetPolicy::load_explicit_utf8(path, MAX_PROJECT_FILE_BYTES)
+            .map_err(|_| config_read_failed())?;
+        Self::from_loaded(loaded)
+    }
+
+    fn from_loaded(loaded: LoadedLocalTarget) -> Result<Self, ConfigError> {
+        let path = loaded.canonical_path().to_owned();
         let directory = path.parent().ok_or_else(|| {
             ConfigError::new(
                 ConfigErrorCode::ReadFailed,
                 "the project file has no parent directory",
             )
         })?;
-        // Every other read AdocWeave performs is bounded. Without a bound here,
-        // a project file is the one path on which a large or endless file is
-        // read into memory in full.
-        let length = fs::metadata(&path)
-            .map_err(|_| {
-                ConfigError::new(
-                    ConfigErrorCode::ReadFailed,
-                    "the project file cannot be inspected",
-                )
-            })?
-            .len();
-        if length > MAX_PROJECT_FILE_BYTES {
-            return Err(ConfigError::new(
-                ConfigErrorCode::ReadFailed,
-                "the project file exceeds the maximum size",
-            ));
-        }
-        let source = fs::read_to_string(&path).map_err(|_| {
-            ConfigError::new(
-                ConfigErrorCode::ReadFailed,
-                "the project file cannot be read as UTF-8",
-            )
-        })?;
-        if source.len() as u64 > MAX_PROJECT_FILE_BYTES {
-            // The file grew between the two calls.
-            return Err(ConfigError::new(
-                ConfigErrorCode::ReadFailed,
-                "the project file exceeds the maximum size",
-            ));
-        }
+        let source = loaded.source();
         let content_sha256 = Sha256::digest(source.as_bytes()).into();
-        let config = ResolvedProjectConfig::parse(&source, directory)?;
+        let config = ResolvedProjectConfig::parse(source, directory)?;
         Ok(Self {
             path,
             content_sha256,
@@ -216,27 +224,116 @@ impl ConfigSnapshot {
 
 /// Finds the nearest project file without searching above `boundary`.
 ///
-/// Both paths must already exist. A file `start` searches from its parent.
+/// The boundary must exist. A missing `start` searches from its nearest
+/// existing parent, while an existing file starts from its parent.
 pub fn discover(start: &Path, boundary: &Path) -> Result<Option<PathBuf>, ConfigError> {
-    let boundary = fs::canonicalize(boundary).map_err(|_| {
+    let mut search = config_search(start, boundary)?;
+    loop {
+        let candidate = search.directory.join(FILE_NAME);
+        match search.policy.inspect_candidate_no_symlinks(&candidate) {
+            Ok(path) => return Ok(Some(path)),
+            Err(LocalTargetError::Missing(_)) => {}
+            Err(_) => return Err(config_read_failed()),
+        }
+        if search.directory == search.boundary {
+            return Ok(None);
+        }
+        if !search.directory.pop() {
+            return Ok(None);
+        }
+    }
+}
+
+fn discover_loaded_with(
+    start: &Path,
+    boundary: &Path,
+    after_policy: impl FnOnce(),
+) -> Result<Option<LoadedLocalTarget>, ConfigError> {
+    let policy = config_policy(boundary)?;
+    discover_loaded_from_policy_with(start, policy, after_policy)
+}
+
+fn discover_loaded_from_policy_with(
+    start: &Path,
+    policy: LocalTargetPolicy,
+    after_policy: impl FnOnce(),
+) -> Result<Option<LoadedLocalTarget>, ConfigError> {
+    let mut search = config_search_with_policy(start, policy)?;
+    let mut session = config_session(search.policy, search.max_paths);
+    after_policy();
+
+    loop {
+        let candidate = search.directory.join(FILE_NAME);
+        match session.read_candidate_utf8_no_symlinks(&candidate) {
+            Ok(loaded) => return Ok(Some(loaded)),
+            Err(LocalTargetError::Missing(_)) => {}
+            Err(_) => return Err(config_read_failed()),
+        }
+        if search.directory == search.boundary {
+            return Ok(None);
+        }
+        if !search.directory.pop() {
+            return Ok(None);
+        }
+    }
+}
+
+struct ConfigSearch {
+    policy: LocalTargetPolicy,
+    boundary: PathBuf,
+    directory: PathBuf,
+    max_paths: usize,
+}
+
+fn config_search(start: &Path, boundary: &Path) -> Result<ConfigSearch, ConfigError> {
+    config_search_with_policy(start, config_policy(boundary)?)
+}
+
+fn config_policy(boundary: &Path) -> Result<LocalTargetPolicy, ConfigError> {
+    LocalTargetPolicy::new(boundary).map_err(|_| {
         ConfigError::new(
             ConfigErrorCode::ReadFailed,
             "the search boundary cannot be resolved",
         )
-    })?;
-    let start = fs::canonicalize(start).map_err(|_| {
-        ConfigError::new(
-            ConfigErrorCode::ReadFailed,
-            "the search start cannot be resolved",
-        )
-    })?;
-    let mut directory = if start.is_dir() {
-        start
-    } else {
-        start
-            .parent()
-            .expect("a canonical file path has a parent")
-            .to_path_buf()
+    })
+}
+
+fn config_search_with_policy(
+    start: &Path,
+    policy: LocalTargetPolicy,
+) -> Result<ConfigSearch, ConfigError> {
+    let boundary = policy.root().to_owned();
+    let mut current = policy
+        .normalize_candidate(start)
+        .map_err(config_start_error)?;
+    let directory = loop {
+        if current == boundary {
+            break policy
+                .inspect_directory_no_symlinks(&current)
+                .map_err(config_start_error)?;
+        }
+        match policy.inspect_candidate(&current) {
+            Ok(file) => {
+                let parent = file
+                    .parent()
+                    .expect("a verified file path has a parent")
+                    .to_path_buf();
+                break policy
+                    .inspect_directory_no_symlinks(&parent)
+                    .map_err(config_start_error)?;
+            }
+            Err(LocalTargetError::NotFile(_)) => {
+                break policy
+                    .inspect_directory_no_symlinks(&current)
+                    .map_err(config_start_error)?;
+            }
+            Err(LocalTargetError::Missing(_)) => {
+                if !current.pop() {
+                    return Err(config_start_failed());
+                }
+            }
+            Err(error) => return Err(config_start_error(error)),
+        }
     };
     if !directory.starts_with(&boundary) {
         return Err(ConfigError::new(
@@ -245,36 +342,33 @@ pub fn discover(start: &Path, boundary: &Path) -> Result<Option<PathBuf>, Config
         ));
     }
 
-    loop {
-        let candidate = directory.join(FILE_NAME);
-        match fs::symlink_metadata(&candidate) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(ConfigError::new(
-                    ConfigErrorCode::ReadFailed,
-                    "the discovered project configuration cannot be a symbolic link",
-                ));
-            }
-            Ok(metadata) if metadata.is_file() => return Ok(Some(candidate)),
-            Ok(_) => {
-                return Err(ConfigError::new(
-                    ConfigErrorCode::ReadFailed,
-                    "the project configuration path is not a file",
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {
-                return Err(ConfigError::new(
-                    ConfigErrorCode::ReadFailed,
-                    "the project configuration path cannot be inspected",
-                ));
-            }
-        }
-        if directory == boundary {
-            return Ok(None);
-        }
-        if !directory.pop() {
-            return Ok(None);
-        }
+    let max_paths = directory
+        .strip_prefix(&boundary)
+        .map(|relative| relative.components().count().saturating_add(1))
+        .unwrap_or(1);
+    Ok(ConfigSearch {
+        policy,
+        boundary,
+        directory,
+        max_paths,
+    })
+}
+
+fn config_start_failed() -> ConfigError {
+    ConfigError::new(
+        ConfigErrorCode::ReadFailed,
+        "the search start cannot be resolved",
+    )
+}
+
+fn config_start_error(error: LocalTargetError) -> ConfigError {
+    if matches!(error, LocalTargetError::OutsideRoot(_)) {
+        ConfigError::new(
+            ConfigErrorCode::OutsideBoundary,
+            "the search start is outside the trusted boundary",
+        )
+    } else {
+        config_start_failed()
     }
 }
 
@@ -283,9 +377,43 @@ pub fn discover_and_load(
     start: &Path,
     boundary: &Path,
 ) -> Result<Option<ConfigSnapshot>, ConfigError> {
-    discover(start, boundary)?
-        .map(|path| ConfigSnapshot::load(&path))
+    discover_loaded_with(start, boundary, || {})?
+        .map(ConfigSnapshot::from_loaded)
         .transpose()
+}
+
+/// Discovers and loads a project configuration through an already opened root.
+///
+/// The policy's canonical root is the search boundary. Cloning the policy
+/// retains the same directory handle on platforms which provide
+/// handle-relative resolution, so configuration and document reads can share
+/// one authority even if the root path is concurrently replaced.
+pub fn discover_and_load_with_policy(
+    start: &Path,
+    policy: &LocalTargetPolicy,
+) -> Result<Option<ConfigSnapshot>, ConfigError> {
+    discover_loaded_from_policy_with(start, policy.clone(), || {})?
+        .map(ConfigSnapshot::from_loaded)
+        .transpose()
+}
+
+fn config_session(policy: LocalTargetPolicy, max_paths: usize) -> LocalTargetSession {
+    LocalTargetSession::new(
+        policy,
+        max_paths,
+        FilesystemReadLimits {
+            max_files: 1,
+            max_total_bytes: MAX_PROJECT_FILE_BYTES,
+            max_resource_bytes: MAX_PROJECT_FILE_BYTES,
+        },
+    )
+}
+
+fn config_read_failed() -> ConfigError {
+    ConfigError::new(
+        ConfigErrorCode::ReadFailed,
+        "the project file cannot be read safely",
+    )
 }
 
 /// Bounds applied to the effective resources of one analysis snapshot.
@@ -1569,6 +1697,21 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
     }
 
     #[test]
+    fn discovery_for_a_missing_document_starts_from_its_existing_parent() {
+        let root = TestDirectory::new();
+        fs::create_dir_all(root.0.join("docs/new")).expect("document parent");
+        fs::write(root.0.join(FILE_NAME), "schema-version = 1\n").expect("project config");
+        let policy = LocalTargetPolicy::new(&root.0).expect("boundary policy");
+
+        let snapshot =
+            discover_and_load_with_policy(&root.0.join("docs/new/unsaved.adoc"), &policy)
+                .expect("configuration discovery")
+                .expect("project configuration");
+
+        assert_eq!(snapshot.path, root.0.join(FILE_NAME));
+    }
+
+    #[test]
     fn discovery_rejects_starts_outside_boundary() {
         let root = TestDirectory::new();
         let other = TestDirectory::new();
@@ -1592,6 +1735,116 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
 
         let error = discover_and_load(&project.0, &project.0).expect_err("symlink rejected");
         assert_eq!(error.code, ConfigErrorCode::ReadFailed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_load_keeps_accepting_a_symbolic_linked_configuration() {
+        use std::os::unix::fs::symlink;
+
+        let project = TestDirectory::new();
+        let outside = TestDirectory::new();
+        let target = outside.0.join("config.toml");
+        let selected = project.0.join("selected.toml");
+        fs::write(&target, "schema-version = 1\n").expect("target configuration");
+        symlink(&target, &selected).expect("selected configuration symlink");
+
+        let snapshot = ConfigSnapshot::load(&selected).expect("explicit configuration");
+
+        assert_eq!(
+            snapshot.path,
+            target.canonicalize().expect("canonical target")
+        );
+        assert_eq!(snapshot.config.schema_version, SCHEMA_VERSION);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discovery_reads_from_the_boundary_handle_after_namespace_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let project = TestDirectory::new();
+        let outside = TestDirectory::new();
+        fs::write(project.0.join(FILE_NAME), "schema-version = 1\n").expect("trusted config");
+        fs::write(outside.0.join(FILE_NAME), "schema-version = 99\n").expect("outside config");
+        let displaced = project.0.with_extension("anchored");
+
+        let loaded = discover_loaded_with(&project.0, &project.0, || {
+            fs::rename(&project.0, &displaced).expect("displace project");
+            symlink(&outside.0, &project.0).expect("replace project path");
+        });
+
+        fs::remove_file(&project.0).expect("remove replacement symlink");
+        fs::rename(&displaced, &project.0).expect("restore project");
+        let loaded = loaded
+            .expect("confined discovery")
+            .expect("project configuration");
+        let snapshot = ConfigSnapshot::from_loaded(loaded).expect("trusted configuration");
+        assert_eq!(snapshot.config.schema_version, SCHEMA_VERSION);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discovery_start_keeps_the_boundary_namespace_after_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let project = TestDirectory::new();
+        fs::create_dir_all(project.0.join("docs/sub")).expect("trusted start directory");
+        fs::create_dir_all(project.0.join("docs/other")).expect("alternate trusted directory");
+        fs::write(project.0.join("docs/sub/index.adoc"), "= Trusted\n").expect("trusted start");
+        fs::write(
+            project.0.join("docs/sub").join(FILE_NAME),
+            "schema-version = 1\n",
+        )
+        .expect("trusted config");
+        fs::write(project.0.join("docs/other/index.adoc"), "= Redirected\n")
+            .expect("alternate start");
+        fs::write(
+            project.0.join("docs/other").join(FILE_NAME),
+            "schema-version = 99\n",
+        )
+        .expect("redirected config");
+        let policy = LocalTargetPolicy::new(&project.0).expect("boundary policy");
+        let displaced = project.0.with_extension("anchored-start");
+
+        fs::rename(&project.0, &displaced).expect("displace project");
+        fs::create_dir_all(project.0.join("docs/other")).expect("replacement directory");
+        fs::write(project.0.join("docs/other/index.adoc"), "= Replacement\n")
+            .expect("replacement start");
+        symlink("other", project.0.join("docs/sub")).expect("redirect replacement start");
+
+        let snapshot =
+            discover_and_load_with_policy(&project.0.join("docs/sub/index.adoc"), &policy)
+                .expect("confined discovery")
+                .expect("trusted configuration");
+
+        assert_eq!(snapshot.config.schema_version, SCHEMA_VERSION);
+        assert_eq!(snapshot.path, project.0.join("docs/sub").join(FILE_NAME));
+        fs::remove_dir_all(&project.0).expect("remove replacement project");
+        fs::rename(displaced, &project.0).expect("restore project");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn preferred_policy_keeps_explicit_config_in_the_original_namespace() {
+        use std::os::unix::fs::symlink;
+
+        let project = TestDirectory::new();
+        let outside = TestDirectory::new();
+        let config_path = project.0.join(FILE_NAME);
+        fs::write(&config_path, "schema-version = 1\n").expect("trusted config");
+        fs::write(outside.0.join(FILE_NAME), "schema-version = 99\n").expect("outside config");
+        let displaced = project.0.with_extension("anchored-explicit");
+        let policy = LocalTargetPolicy::new(&project.0).expect("workspace policy");
+
+        fs::rename(&project.0, &displaced).expect("displace project");
+        symlink(&outside.0, &project.0).expect("replace project path");
+        let loaded = ConfigSnapshot::load_with_preferred_policy(&config_path, &policy);
+
+        fs::remove_file(&project.0).expect("remove replacement symlink");
+        fs::rename(&displaced, &project.0).expect("restore project");
+        let snapshot = loaded.expect("trusted configuration");
+        assert_eq!(snapshot.config.schema_version, SCHEMA_VERSION);
     }
 
     #[test]

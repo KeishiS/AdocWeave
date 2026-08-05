@@ -9,7 +9,10 @@ use adocweave::{CancellationCheck, CancellationToken};
 use adocweave_workspace::WorkspaceAnalysis;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
-use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
+use async_lsp::lsp_types::{
+    DidChangeWatchedFilesParams, FileChangeType, FileEvent, PublishDiagnosticsParams, Url,
+    notification, request,
+};
 use async_lsp::panic::CatchUnwindLayer;
 use async_lsp::router::Router;
 use async_lsp::tracing::TracingLayer;
@@ -26,46 +29,265 @@ use crate::{HostReferenceIndex, NoHostReferenceIndex};
 
 const MAX_CONCURRENT_REQUESTS: usize = 16;
 const MAX_CONCURRENT_ANALYSES: usize = 2;
+const MAX_WATCH_JOURNAL_ENTRIES: usize = 10_000;
+const MAX_WATCH_JOURNAL_URI_BYTES: usize = 1024 * 1024;
+const WATCH_SCAN_RECOVERY_DEBOUNCE_MS: u64 = 100;
 
 pub(crate) struct Backend {
     client: ClientSocket,
     service: LanguageService,
     cpu_limit: Arc<Semaphore>,
     analysis_tasks: BTreeMap<String, AnalysisTask>,
-    workspace_scan: WorkspaceScanControl,
+    workspace_scans: WorkspaceScanCoordinator,
 }
 
 #[derive(Default)]
 struct WorkspaceScanControl {
     sequence: u64,
-    cancellation: Option<Arc<CancellationToken>>,
+    active: Option<ActiveWorkspaceScan>,
+    pending: bool,
+}
+
+struct ActiveWorkspaceScan {
+    sequence: u64,
+    cancellation: Arc<CancellationToken>,
+    accept_result: bool,
+    rejection: Option<String>,
+}
+
+struct WorkspaceScanStart {
+    sequence: u64,
+    cancellation: Arc<CancellationToken>,
+}
+
+struct WorkspaceScanCompletion {
+    accept_result: bool,
+    rejection: Option<String>,
+    next: Option<WorkspaceScanStart>,
 }
 
 impl WorkspaceScanControl {
-    fn begin(&mut self) -> (u64, Arc<CancellationToken>) {
-        self.invalidate();
-        let cancellation = Arc::new(CancellationToken::new());
-        self.cancellation = Some(Arc::clone(&cancellation));
-        (self.sequence, cancellation)
-    }
-
-    fn invalidate(&mut self) {
-        if let Some(cancellation) = self.cancellation.take() {
-            cancellation.cancel();
+    fn request_replacement(&mut self) -> Option<WorkspaceScanStart> {
+        if let Some(active) = &mut self.active {
+            active.accept_result = false;
+            active.rejection = None;
+            active.cancellation.cancel();
+            self.pending = true;
+            return None;
         }
+        Some(self.start())
+    }
+
+    fn reject_result(&mut self, reason: String) {
+        if let Some(active) = &mut self.active {
+            active.accept_result = false;
+            active.rejection.get_or_insert(reason);
+        }
+    }
+
+    fn accepts_active_result(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.accept_result)
+    }
+
+    fn complete(&mut self, sequence: u64) -> Option<WorkspaceScanCompletion> {
+        let active = self.active.take()?;
+        if active.sequence != sequence {
+            self.active = Some(active);
+            return None;
+        }
+        let start_next = std::mem::take(&mut self.pending);
+        let next = start_next.then(|| self.start());
+        Some(WorkspaceScanCompletion {
+            accept_result: active.accept_result,
+            rejection: active.rejection,
+            next,
+        })
+    }
+
+    fn cancel(&mut self) {
+        if let Some(active) = &mut self.active {
+            active.accept_result = false;
+            active.rejection = None;
+            active.cancellation.cancel();
+        }
+        self.pending = false;
+    }
+
+    fn start(&mut self) -> WorkspaceScanStart {
+        debug_assert!(self.active.is_none());
         self.sequence = self.sequence.saturating_add(1);
+        let cancellation = Arc::new(CancellationToken::new());
+        self.active = Some(ActiveWorkspaceScan {
+            sequence: self.sequence,
+            cancellation: Arc::clone(&cancellation),
+            accept_result: true,
+            rejection: None,
+        });
+        WorkspaceScanStart {
+            sequence: self.sequence,
+            cancellation,
+        }
+    }
+}
+
+#[derive(Default)]
+struct WatchedChangeJournal {
+    changes: BTreeMap<Url, FileChangeType>,
+    uri_bytes: usize,
+    overflowed: bool,
+}
+
+impl WatchedChangeJournal {
+    fn record(&mut self, changes: &[FileEvent]) -> bool {
+        self.record_with_limits(
+            changes,
+            MAX_WATCH_JOURNAL_ENTRIES,
+            MAX_WATCH_JOURNAL_URI_BYTES,
+        )
     }
 
-    const fn is_active(&self) -> bool {
-        self.cancellation.is_some()
-    }
-
-    fn accept(&mut self, sequence: u64) -> bool {
-        if sequence != self.sequence {
+    fn record_with_limits(
+        &mut self,
+        changes: &[FileEvent],
+        max_entries: usize,
+        max_uri_bytes: usize,
+    ) -> bool {
+        if self.overflowed {
             return false;
         }
-        self.cancellation = None;
+        for change in changes {
+            let is_new = !self.changes.contains_key(&change.uri);
+            let additional_bytes = if is_new { change.uri.as_str().len() } else { 0 };
+            if self.changes.len().saturating_add(usize::from(is_new)) > max_entries
+                || self.uri_bytes.saturating_add(additional_bytes) > max_uri_bytes
+            {
+                self.changes.clear();
+                self.uri_bytes = 0;
+                self.overflowed = true;
+                return false;
+            }
+            self.uri_bytes = self.uri_bytes.saturating_add(additional_bytes);
+            self.changes.insert(change.uri.clone(), change.typ);
+        }
         true
+    }
+
+    fn take(&mut self) -> Option<DidChangeWatchedFilesParams> {
+        if self.overflowed {
+            self.clear();
+            return None;
+        }
+        let changes = std::mem::take(&mut self.changes)
+            .into_iter()
+            .map(|(uri, typ)| FileEvent { uri, typ })
+            .collect::<Vec<_>>();
+        self.uri_bytes = 0;
+        (!changes.is_empty()).then_some(DidChangeWatchedFilesParams { changes })
+    }
+
+    fn clear(&mut self) {
+        self.changes.clear();
+        self.uri_bytes = 0;
+        self.overflowed = false;
+    }
+}
+
+#[derive(Default)]
+struct WorkspaceScanCoordinator {
+    control: WorkspaceScanControl,
+    watched_changes: WatchedChangeJournal,
+    recovery_generation: u64,
+    recovery_needed: bool,
+}
+
+impl WorkspaceScanCoordinator {
+    fn request_replacement(&mut self) -> Option<WorkspaceScanStart> {
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_needed = false;
+        self.watched_changes.clear();
+        self.control.request_replacement()
+    }
+
+    fn record_watched_changes(&mut self, changes: &[FileEvent]) -> Option<u64> {
+        if self.control.accepts_active_result() && !self.watched_changes.record(changes) {
+            // The journal can no longer reconstruct all changes made after the
+            // worker took its snapshot. Keep the incrementally updated service
+            // state and reject that snapshot instead of installing older
+            // contents over it. The worker is allowed to finish and reports a
+            // bounded failure instead of retrying forever under a notification
+            // stream that exceeds this safety limit.
+            self.control.reject_result(format!(
+                "workspace watch journal limit exceeded: at most {MAX_WATCH_JOURNAL_ENTRIES} entries and {MAX_WATCH_JOURNAL_URI_BYTES} URI bytes may change during one scan"
+            ));
+            self.recovery_needed = true;
+        }
+        if self.recovery_needed && !changes.is_empty() {
+            self.recovery_generation = self.recovery_generation.saturating_add(1);
+            Some(self.recovery_generation)
+        } else {
+            None
+        }
+    }
+
+    fn request_recovery(&mut self, generation: u64) -> Option<WorkspaceScanStart> {
+        if !self.recovery_needed || generation != self.recovery_generation {
+            return None;
+        }
+        self.recovery_needed = false;
+        self.watched_changes.clear();
+        if self.control.active.is_some() {
+            self.control.pending = true;
+            None
+        } else {
+            Some(self.control.start())
+        }
+    }
+
+    fn request_quiet_recovery(&mut self) -> u64 {
+        self.recovery_needed = true;
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_generation
+    }
+
+    fn complete(
+        &mut self,
+        service: &mut LanguageService,
+        scanned: WorkspaceScanned,
+    ) -> Option<WorkspaceScanTransition> {
+        let completion = self.control.complete(scanned.sequence)?;
+        let mut jobs = Vec::new();
+        if completion.accept_result {
+            match scanned.scan {
+                Ok(scan) => {
+                    jobs.extend(service.apply_workspace_scan(scan));
+                    if let Some(changes) = self.watched_changes.take() {
+                        jobs.extend(service.workspace_files_changed(changes));
+                    }
+                }
+                Err(error) => {
+                    self.watched_changes.clear();
+                    jobs.extend(service.workspace_scan_failed(error));
+                }
+            }
+        } else {
+            self.watched_changes.clear();
+            if let Some(error) = completion.rejection {
+                jobs.extend(service.workspace_scan_failed(error));
+            }
+        }
+        Some(WorkspaceScanTransition {
+            jobs,
+            next: completion.next,
+        })
+    }
+
+    fn cancel(&mut self) {
+        self.control.cancel();
+        self.watched_changes.clear();
+        self.recovery_generation = self.recovery_generation.saturating_add(1);
+        self.recovery_needed = false;
     }
 }
 
@@ -83,12 +305,21 @@ struct AnalysisCompleted {
 
 /// A workspace read that finished on a worker and is ready to install.
 ///
-/// `sequence` is the value the scan was scheduled with. A later scan makes an
-/// earlier one obsolete, and the earlier result is discarded rather than
-/// installed over the newer state.
+/// `sequence` identifies the single active worker. Cancelled results still emit
+/// this event so the main loop can start one coalesced replacement without
+/// allowing scan workers to overlap.
 struct WorkspaceScanned {
     sequence: u64,
-    scan: crate::service::WorkspaceScan,
+    scan: Result<crate::service::WorkspaceScan, String>,
+}
+
+struct WorkspaceScanRecovery {
+    generation: u64,
+}
+
+struct WorkspaceScanTransition {
+    jobs: Vec<AnalysisJob>,
+    next: Option<WorkspaceScanStart>,
 }
 
 impl Backend {
@@ -108,7 +339,7 @@ impl Backend {
             service: LanguageService::with_host_index(host_index),
             cpu_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)),
             analysis_tasks: BTreeMap::new(),
-            workspace_scan: WorkspaceScanControl::default(),
+            workspace_scans: WorkspaceScanCoordinator::default(),
         });
 
         router
@@ -170,15 +401,18 @@ impl Backend {
                 if project_configuration_changed {
                     state.schedule_workspace_scan();
                 } else {
-                    let scan_was_active = state.workspace_scan.is_active();
-                    if scan_was_active {
-                        state.invalidate_workspace_scan();
+                    let changes = state.service.workspace_files_changed_with_journal(params);
+                    let mut recovery_generation = state
+                        .workspace_scans
+                        .record_watched_changes(&changes.journal);
+                    if changes.recovery_required {
+                        recovery_generation = Some(state.workspace_scans.request_quiet_recovery());
                     }
-                    for job in state.service.workspace_files_changed(params) {
+                    if let Some(generation) = recovery_generation {
+                        state.schedule_workspace_scan_recovery(generation);
+                    }
+                    for job in changes.jobs {
                         state.schedule_analysis(job);
-                    }
-                    if scan_was_active {
-                        state.schedule_workspace_scan();
                     }
                 }
                 ControlFlow::Continue(())
@@ -308,11 +542,21 @@ impl Backend {
             })
             .event::<AnalysisCompleted>(|state, completed| state.analysis_completed(completed))
             .event::<WorkspaceScanned>(|state, scanned| {
-                if !state.workspace_scan.accept(scanned.sequence) {
+                let Some(transition) = state.workspace_scans.complete(&mut state.service, scanned)
+                else {
                     return ControlFlow::Continue(());
-                }
-                for job in state.service.apply_workspace_scan(scanned.scan) {
+                };
+                for job in transition.jobs {
                     state.schedule_analysis(job);
+                }
+                if let Some(next) = transition.next {
+                    state.spawn_workspace_scan(next);
+                }
+                ControlFlow::Continue(())
+            })
+            .event::<WorkspaceScanRecovery>(|state, recovery| {
+                if let Some(start) = state.workspace_scans.request_recovery(recovery.generation) {
+                    state.spawn_workspace_scan(start);
                 }
                 ControlFlow::Continue(())
             });
@@ -365,30 +609,46 @@ impl Backend {
     ///
     /// The walk takes time proportional to the workspace, so running it here
     /// would stop the event loop from answering anything until it finished.
-    /// Only the newest scan is installed; an older one that finishes later is
-    /// discarded rather than written over newer state.
+    /// A replacement request cancels the active worker but waits for its
+    /// completion event before starting the next worker.
     fn schedule_workspace_scan(&mut self) {
-        let (sequence, cancellation) = self.workspace_scan.begin();
+        let Some(start) = self.workspace_scans.request_replacement() else {
+            return;
+        };
+        self.spawn_workspace_scan(start);
+    }
+
+    fn spawn_workspace_scan(&self, start: WorkspaceScanStart) {
+        let WorkspaceScanStart {
+            sequence,
+            cancellation,
+        } = start;
         let service = self.service.clone();
         let client = self.client.clone();
         tokio::spawn(async move {
             let worker_cancellation = Arc::clone(&cancellation);
-            let Ok(scan) = tokio::task::spawn_blocking(move || {
+            let scan = tokio::task::spawn_blocking(move || {
                 service.plan_workspace_scan(worker_cancellation.as_ref())
             })
             .await
-            else {
-                return;
-            };
-            if cancellation.is_cancelled() {
-                return;
-            }
+            .map_err(|error| format!("workspace scan worker failed: {error}"));
             let _ = client.emit(WorkspaceScanned { sequence, scan });
         });
     }
 
+    fn schedule_workspace_scan_recovery(&self, generation: u64) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                WATCH_SCAN_RECOVERY_DEBOUNCE_MS,
+            ))
+            .await;
+            let _ = client.emit(WorkspaceScanRecovery { generation });
+        });
+    }
+
     fn invalidate_workspace_scan(&mut self) {
-        self.workspace_scan.invalidate();
+        self.workspace_scans.cancel();
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {
@@ -593,6 +853,20 @@ where
     T: Send + 'static,
     F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
 {
+    run_cpu_request_with_completion_hook(limit, document_cancellation, operation, || {}).await
+}
+
+async fn run_cpu_request_with_completion_hook<T, F, H>(
+    limit: Arc<Semaphore>,
+    document_cancellation: Option<Arc<CancellationToken>>,
+    operation: F,
+    after_worker: H,
+) -> Result<T, ResponseError>
+where
+    T: Send + 'static,
+    F: FnOnce(&QueryCancellation) -> QueryResult<T> + Send + 'static,
+    H: FnOnce(),
+{
     let request_cancellation = Arc::new(CancellationToken::new());
     let cancel_on_drop = CancelWorkerOnDrop(request_cancellation.clone());
     let permit = limit
@@ -615,6 +889,7 @@ where
         })()
     })
     .await;
+    after_worker();
     let response = finish_cpu_request(&cancellation, result);
     drop(cancel_on_drop);
     response
@@ -653,34 +928,322 @@ fn content_modified() -> ResponseError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use serde_json::json;
 
     use super::*;
 
-    #[test]
-    fn newer_workspace_scan_cancels_and_rejects_the_previous_result() {
-        let mut control = WorkspaceScanControl::default();
-        let (old_sequence, old_cancellation) = control.begin();
-        let (new_sequence, new_cancellation) = control.begin();
-
-        assert!(old_cancellation.is_cancelled());
-        assert!(!new_cancellation.is_cancelled());
-        assert!(!control.accept(old_sequence));
-        assert!(control.accept(new_sequence));
-        assert!(!control.is_active());
+    fn scan_race_service(prefix: &str) -> (std::path::PathBuf, Url, LanguageService) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("{prefix}-{unique}"));
+        fs::create_dir_all(&root).expect("workspace");
+        let document_path = root.join("root.adoc");
+        fs::write(&document_path, "= Before\n").expect("initial document");
+        let root_uri = Url::from_directory_path(&root).expect("root URI");
+        let document_uri = Url::from_file_path(&document_path).expect("document URI");
+        let params = serde_json::from_value(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        }))
+        .expect("initialize params");
+        let mut service = LanguageService::default();
+        service.initialize(&params);
+        let scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+        let _ = service.apply_workspace_scan(scan);
+        (root, document_uri, service)
     }
 
     #[test]
-    fn invalidating_a_workspace_scan_cancels_it_without_accepting_a_result() {
+    fn replacement_scans_are_coalesced_without_overlapping_workers() {
         let mut control = WorkspaceScanControl::default();
-        let (sequence, cancellation) = control.begin();
+        let old = control.request_replacement().expect("initial scan");
 
-        control.invalidate();
+        for _ in 0..100 {
+            assert!(control.request_replacement().is_none());
+        }
 
-        assert!(cancellation.is_cancelled());
-        assert!(!control.accept(sequence));
-        assert!(!control.is_active());
+        assert!(old.cancellation.is_cancelled());
+        assert!(!control.accepts_active_result());
+        let completion = control.complete(old.sequence).expect("old completion");
+        assert!(!completion.accept_result);
+        let new = completion.next.expect("one replacement");
+        assert!(!new.cancellation.is_cancelled());
+
+        let completion = control.complete(new.sequence).expect("new completion");
+        assert!(completion.accept_result);
+        assert!(completion.next.is_none());
+    }
+
+    #[test]
+    fn shutdown_cancels_the_active_scan_and_discards_pending_work() {
+        let mut control = WorkspaceScanControl::default();
+        let active = control.request_replacement().expect("initial scan");
+        assert!(control.request_replacement().is_none());
+
+        control.cancel();
+
+        assert!(active.cancellation.is_cancelled());
+        let completion = control.complete(active.sequence).expect("completion");
+        assert!(!completion.accept_result);
+        assert!(completion.next.is_none());
+    }
+
+    #[test]
+    fn stale_scan_completion_cannot_replace_the_active_scan() {
+        let mut control = WorkspaceScanControl::default();
+        let active = control.request_replacement().expect("initial scan");
+
+        assert!(control.complete(active.sequence + 1).is_none());
+        assert!(control.accepts_active_result());
+        assert!(
+            control
+                .complete(active.sequence)
+                .expect("active completion")
+                .accept_result
+        );
+    }
+
+    #[test]
+    fn watched_change_journal_coalesces_and_bounds_uris() {
+        let first = Url::parse("file:///workspace/first.adoc").expect("first URI");
+        let second = Url::parse("file:///workspace/second.adoc").expect("second URI");
+        let mut journal = WatchedChangeJournal::default();
+
+        assert!(journal.record_with_limits(
+            &[
+                FileEvent::new(first.clone(), FileChangeType::CREATED),
+                FileEvent::new(second.clone(), FileChangeType::CHANGED),
+                FileEvent::new(first.clone(), FileChangeType::DELETED),
+            ],
+            2,
+            first.as_str().len() + second.as_str().len(),
+        ));
+        let replay = journal.take().expect("replay");
+        assert_eq!(
+            replay.changes,
+            vec![
+                FileEvent::new(first.clone(), FileChangeType::DELETED),
+                FileEvent::new(second.clone(), FileChangeType::CHANGED),
+            ]
+        );
+
+        assert!(!journal.record_with_limits(
+            &[
+                FileEvent::new(first, FileChangeType::CHANGED),
+                FileEvent::new(second, FileChangeType::CHANGED),
+            ],
+            1,
+            usize::MAX,
+        ));
+        assert!(journal.take().is_none());
+        assert!(journal.changes.is_empty());
+    }
+
+    #[test]
+    fn journal_overflow_waits_for_quiet_before_restarting_the_worker() {
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("initial scan");
+        let uri = Url::parse("file:///workspace/root.adoc").expect("URI");
+
+        assert!(!coordinator.watched_changes.record_with_limits(
+            &[FileEvent::new(uri.clone(), FileChangeType::CHANGED)],
+            0,
+            usize::MAX,
+        ));
+        let recovery = coordinator
+            .record_watched_changes(&[FileEvent::new(uri, FileChangeType::CHANGED)])
+            .expect("recovery generation");
+
+        assert!(!active.cancellation.is_cancelled());
+        assert!(!coordinator.control.accepts_active_result());
+        assert!(coordinator.request_recovery(recovery).is_none());
+        assert!(!active.cancellation.is_cancelled());
+        let completion = coordinator
+            .control
+            .complete(active.sequence)
+            .expect("completion");
+        assert!(!completion.accept_result);
+        assert!(completion.next.is_some());
+        assert!(
+            completion
+                .rejection
+                .as_deref()
+                .is_some_and(|message| message.contains("watch journal limit exceeded"))
+        );
+    }
+
+    #[test]
+    fn accepted_scan_replays_watched_changes_after_installing_its_snapshot() {
+        let (root, document_uri, mut service) = scan_race_service("adocweave-scan-replay");
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("active scan");
+        let stale_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+        fs::write(document_uri.to_file_path().expect("path"), "= After\n")
+            .expect("changed document");
+        let changes = vec![FileEvent::new(
+            document_uri.clone(),
+            FileChangeType::CHANGED,
+        )];
+        let _ = coordinator.record_watched_changes(&changes);
+        let _ = service.workspace_files_changed(DidChangeWatchedFilesParams { changes });
+
+        let transition = coordinator
+            .complete(
+                &mut service,
+                WorkspaceScanned {
+                    sequence: active.sequence,
+                    scan: Ok(stale_scan),
+                },
+            )
+            .expect("scan completion");
+
+        assert!(transition.next.is_none());
+        assert_eq!(
+            service
+                .workspace_resource(&document_uri)
+                .expect("updated resource")
+                .as_ref(),
+            "= After\n",
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn journal_overflow_keeps_incremental_state_and_finishes_with_a_bounded_error() {
+        let (root, document_uri, mut service) = scan_race_service("adocweave-scan-overflow");
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("active scan");
+        let stale_scan = service.plan_workspace_scan(&adocweave::NeverCancel);
+        fs::write(document_uri.to_file_path().expect("path"), "= After\n")
+            .expect("changed document");
+        let changes = vec![FileEvent::new(
+            document_uri.clone(),
+            FileChangeType::CHANGED,
+        )];
+        assert!(
+            !coordinator
+                .watched_changes
+                .record_with_limits(&changes, 0, usize::MAX)
+        );
+        let first_recovery = coordinator
+            .record_watched_changes(&changes)
+            .expect("first recovery generation");
+        let _ = service.workspace_files_changed(DidChangeWatchedFilesParams { changes });
+
+        let transition = coordinator
+            .complete(
+                &mut service,
+                WorkspaceScanned {
+                    sequence: active.sequence,
+                    scan: Ok(stale_scan),
+                },
+            )
+            .expect("scan completion");
+
+        assert!(
+            transition.next.is_none(),
+            "recovery waits for the quiet timer"
+        );
+        assert_eq!(
+            service
+                .workspace_resource(&document_uri)
+                .expect("incremental resource")
+                .as_ref(),
+            "= After\n",
+            "the rejected snapshot must not replace the watched update",
+        );
+        let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+        assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("workspace watch journal limit exceeded")
+        }));
+        let final_recovery = coordinator
+            .record_watched_changes(&[FileEvent::new(document_uri, FileChangeType::CHANGED)])
+            .expect("updated recovery generation");
+        assert!(coordinator.request_recovery(first_recovery).is_none());
+        let recovery = coordinator
+            .request_recovery(final_recovery)
+            .expect("one recovery after notifications stop");
+        assert!(
+            !recovery.cancellation.is_cancelled(),
+            "the bounded recovery worker starts after the quiet period"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn accepted_worker_failure_is_reported_without_replacing_the_workspace() {
+        let (root, document_uri, mut service) = scan_race_service("adocweave-scan-join-error");
+        let previous = service
+            .workspace_resource(&document_uri)
+            .expect("workspace resource")
+            .clone();
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let active = coordinator.request_replacement().expect("active scan");
+
+        let transition = coordinator
+            .complete(
+                &mut service,
+                WorkspaceScanned {
+                    sequence: active.sequence,
+                    scan: Err("workspace scan worker failed: panic".to_owned()),
+                },
+            )
+            .expect("scan completion");
+
+        assert!(transition.next.is_none());
+        assert_eq!(
+            service
+                .workspace_resource(&document_uri)
+                .expect("retained resource"),
+            previous,
+        );
+        let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+        assert!(
+            diagnostics
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("workspace scan worker failed"))
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn rejected_worker_failure_starts_the_replacement_without_a_diagnostic() {
+        let (root, document_uri, mut service) =
+            scan_race_service("adocweave-rejected-scan-join-error");
+        let mut coordinator = WorkspaceScanCoordinator::default();
+        let old = coordinator.request_replacement().expect("active scan");
+        assert!(coordinator.request_replacement().is_none());
+
+        let transition = coordinator
+            .complete(
+                &mut service,
+                WorkspaceScanned {
+                    sequence: old.sequence,
+                    scan: Err("workspace scan worker failed: cancelled panic".to_owned()),
+                },
+            )
+            .expect("scan completion");
+
+        assert!(transition.jobs.is_empty());
+        assert!(transition.next.is_some());
+        let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+        assert!(
+            diagnostics
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.message.contains("workspace scan worker failed"))
+        );
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -781,6 +1344,26 @@ mod tests {
         assert_content_modified(Err::<(), _>(QueryError::Internal(
             "query failed".to_owned(),
         )));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn asynchronous_path_checks_document_change_after_worker_completion() {
+        async fn assert_content_modified(result: QueryResult<()>) {
+            let document_cancellation = Arc::new(CancellationToken::new());
+            let cancel_after_worker = document_cancellation.clone();
+            let error = run_cpu_request_with_completion_hook(
+                Arc::new(Semaphore::new(1)),
+                Some(document_cancellation),
+                move |_| result,
+                move || cancel_after_worker.cancel(),
+            )
+            .await
+            .expect_err("content modified");
+            assert_eq!(error.code, ErrorCode::CONTENT_MODIFIED);
+        }
+
+        assert_content_modified(Ok(())).await;
+        assert_content_modified(Err(QueryError::Internal("worker error".to_owned()))).await;
     }
 
     #[test]

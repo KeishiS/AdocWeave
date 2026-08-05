@@ -164,7 +164,6 @@ pub(crate) fn check_error(error: commands::check::Error) -> CliError {
         commands::check::Error::Analysis(source) => CliError::Analysis(source),
         commands::check::Error::Position(source) => CliError::Position(source),
         commands::check::Error::Include(source) => CliError::Include(source),
-        commands::check::Error::LocalTarget(source) => CliError::LocalTarget(source),
         commands::check::Error::FixConflict(source) => CliError::FixConflict(source),
         commands::check::Error::Serialize(message) => CliError::Serialize(message),
     }
@@ -183,13 +182,6 @@ pub(crate) fn format_error(error: commands::format::Error) -> CliError {
 
 pub(crate) fn preview_error(error: commands::preview::Error) -> CliError {
     match error {
-        commands::preview::Error::Read {
-            source_name,
-            source,
-        } => CliError::Read {
-            source_name,
-            source,
-        },
         commands::preview::Error::Analysis(source) => CliError::Analysis(source),
         commands::preview::Error::Include(source) => CliError::Include(source),
         commands::preview::Error::Html(source) => html_policy_error(source),

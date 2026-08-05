@@ -27,6 +27,11 @@ use crate::state::{
 use crate::workspace::WorkspaceResources;
 use crate::{SERVER_NAME, VERSION};
 
+const MAX_WORKSPACE_WATCH_ERRORS: usize = 128;
+const MAX_WORKSPACE_WATCH_ERROR_BYTES: usize = 64 * 1024;
+const MAX_WORKSPACE_WATCH_CHANGES: usize = 10_000;
+const MAX_WORKSPACE_WATCH_URI_BYTES: usize = 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ClientProfile {
     hover: HoverPresentation,
@@ -203,7 +208,17 @@ pub(crate) struct LanguageService {
     workspace: WorkspaceResources,
     workspace_roots: std::collections::BTreeMap<String, lsp::Url>,
     workspace_error: Option<String>,
+    workspace_watch_errors: std::collections::BTreeMap<String, String>,
+    workspace_watch_error_bytes: usize,
+    workspace_watch_errors_overflowed: bool,
+    workspace_watch_recovery_required: bool,
     workspace_input_error: Option<String>,
+}
+
+pub(crate) struct WorkspaceFileChanges {
+    pub(crate) jobs: Vec<AnalysisJob>,
+    pub(crate) journal: Vec<lsp::FileEvent>,
+    pub(crate) recovery_required: bool,
 }
 
 impl fmt::Debug for LanguageService {
@@ -230,6 +245,10 @@ impl Default for LanguageService {
             workspace: WorkspaceResources::default(),
             workspace_roots: std::collections::BTreeMap::new(),
             workspace_error: None,
+            workspace_watch_errors: std::collections::BTreeMap::new(),
+            workspace_watch_error_bytes: 0,
+            workspace_watch_errors_overflowed: false,
+            workspace_watch_recovery_required: false,
             workspace_input_error: None,
         }
     }
@@ -327,6 +346,7 @@ impl LanguageService {
             .map(|uri| (uri.to_string(), uri))
             .collect();
         self.workspace_error = None;
+        self.clear_workspace_watch_errors();
         lsp::InitializeResult {
             capabilities: lsp::ServerCapabilities {
                 position_encoding: Some(self.position_encoding.lsp()),
@@ -439,6 +459,13 @@ impl LanguageService {
             options,
         );
         attach_workspace(&mut job, workspace);
+        let mut affected = affected;
+        if let Ok(pruned) = self
+            .workspace
+            .begin_document_revision(&document.uri, job.request.revision.generation)
+        {
+            affected.extend(pruned);
+        }
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
         jobs
@@ -494,6 +521,13 @@ impl LanguageService {
             return Ok(Vec::new());
         };
         attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
+        let mut affected = affected;
+        affected.extend(
+            self.workspace.begin_document_revision(
+                &params.text_document.uri,
+                job.request.revision.generation,
+            )?,
+        );
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
         Ok(jobs)
@@ -543,32 +577,178 @@ impl LanguageService {
         &mut self,
         params: lsp::DidChangeWatchedFilesParams,
     ) -> Vec<AnalysisJob> {
+        self.workspace_files_changed_with_journal(params).jobs
+    }
+
+    fn clear_workspace_watch_errors(&mut self) -> bool {
+        let changed = !self.workspace_watch_errors.is_empty()
+            || self.workspace_watch_errors_overflowed
+            || self.workspace_watch_recovery_required;
+        self.workspace_watch_errors.clear();
+        self.workspace_watch_error_bytes = 0;
+        self.workspace_watch_errors_overflowed = false;
+        self.workspace_watch_recovery_required = false;
+        changed
+    }
+
+    fn clear_workspace_watch_error(&mut self, uri: &lsp::Url) -> bool {
+        let Some(error) = self.workspace_watch_errors.remove(uri.as_str()) else {
+            return false;
+        };
+        self.workspace_watch_error_bytes = self
+            .workspace_watch_error_bytes
+            .saturating_sub(uri.as_str().len().saturating_add(error.len()));
+        true
+    }
+
+    fn record_workspace_watch_error(&mut self, uri: &lsp::Url, error: String) -> bool {
+        if let Some(previous) = self.workspace_watch_errors.get_mut(uri.as_str()) {
+            if *previous == error {
+                return false;
+            }
+            let next_bytes = self
+                .workspace_watch_error_bytes
+                .saturating_sub(previous.len())
+                .saturating_add(error.len());
+            if next_bytes > MAX_WORKSPACE_WATCH_ERROR_BYTES {
+                self.workspace_watch_errors_overflowed = true;
+                return true;
+            }
+            self.workspace_watch_error_bytes = next_bytes;
+            *previous = error;
+            return true;
+        }
+        let additional_bytes = uri.as_str().len().saturating_add(error.len());
+        if self.workspace_watch_errors.len() >= MAX_WORKSPACE_WATCH_ERRORS
+            || self
+                .workspace_watch_error_bytes
+                .saturating_add(additional_bytes)
+                > MAX_WORKSPACE_WATCH_ERROR_BYTES
+        {
+            let changed = !self.workspace_watch_errors_overflowed;
+            self.workspace_watch_errors_overflowed = true;
+            return changed;
+        }
+        self.workspace_watch_error_bytes = self
+            .workspace_watch_error_bytes
+            .saturating_add(additional_bytes);
+        self.workspace_watch_errors.insert(uri.to_string(), error);
+        true
+    }
+
+    fn workspace_watch_error_message(&self) -> Option<String> {
+        if self.workspace_watch_errors.is_empty() && !self.workspace_watch_errors_overflowed {
+            return None;
+        }
+        let mut messages = self
+            .workspace_watch_errors
+            .iter()
+            .map(|(uri, error)| format!("{uri}: {error}"))
+            .collect::<Vec<_>>();
+        if self.workspace_watch_errors_overflowed {
+            messages.push(format!(
+                "additional workspace watch errors exceed the retained limit of {MAX_WORKSPACE_WATCH_ERRORS}"
+            ));
+        }
+        Some(messages.join("; "))
+    }
+
+    pub(crate) fn workspace_files_changed_with_journal(
+        &mut self,
+        params: lsp::DidChangeWatchedFilesParams,
+    ) -> WorkspaceFileChanges {
         if params.changes.iter().any(|change| {
             change.uri.path_segments().and_then(Iterator::last) == Some(adocweave_config::FILE_NAME)
         }) {
             // Project files are handled by the backend's asynchronous full
             // scan. Mixing an incremental resource reload with a new resource
             // plan would admit files under two different configurations.
-            return Vec::new();
+            return WorkspaceFileChanges {
+                jobs: Vec::new(),
+                journal: Vec::new(),
+                recovery_required: false,
+            };
         }
-        let mut affected = std::collections::BTreeSet::new();
+        let mut coalesced = std::collections::BTreeMap::<lsp::Url, lsp::FileChangeType>::new();
+        let mut uri_bytes = 0_usize;
         for change in params.changes {
+            if !coalesced.contains_key(&change.uri) {
+                if coalesced.len() >= MAX_WORKSPACE_WATCH_CHANGES
+                    || uri_bytes.saturating_add(change.uri.as_str().len())
+                        > MAX_WORKSPACE_WATCH_URI_BYTES
+                {
+                    self.workspace_watch_recovery_required = true;
+                    return WorkspaceFileChanges {
+                        jobs: Vec::new(),
+                        journal: Vec::new(),
+                        recovery_required: true,
+                    };
+                }
+                uri_bytes = uri_bytes.saturating_add(change.uri.as_str().len());
+            }
+            coalesced.insert(change.uri, change.typ);
+        }
+        let changes = coalesced
+            .into_iter()
+            .map(|(uri, typ)| lsp::FileEvent { uri, typ });
+        let mut affected = std::collections::BTreeSet::new();
+        let mut journal = Vec::new();
+        let mut watch_errors_changed = false;
+        for change in changes {
             if self.documents.get(change.uri.as_str()).is_some() {
+                watch_errors_changed |= self.clear_workspace_watch_error(&change.uri);
                 continue;
             }
+            let known_before = self.workspace.tracks_watched_resource(&change.uri);
             let changed = if change.typ == lsp::FileChangeType::DELETED {
                 self.workspace.remove_disk(&change.uri)
             } else {
-                self.workspace.reload_file(change.uri)
+                self.workspace.reload_file(change.uri.clone())
             };
             match changed {
-                Ok(changed) => affected.extend(changed),
-                Err(error) => self.workspace_error = Some(error),
+                Ok(changed) => {
+                    watch_errors_changed |= self.clear_workspace_watch_error(&change.uri);
+                    affected.extend(changed);
+                    if known_before || self.workspace.contains(&change.uri) {
+                        journal.push(change);
+                    }
+                }
+                Err(error) => {
+                    watch_errors_changed |= self.record_workspace_watch_error(&change.uri, error);
+                    if known_before || change.uri.path().ends_with(".adoc") {
+                        journal.push(change);
+                    }
+                }
             }
         }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, "", &mut jobs);
-        jobs
+        if watch_errors_changed {
+            let queued = jobs
+                .iter()
+                .map(|job| job.uri.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            for (uri, _, _) in self.documents.open_sources() {
+                if queued.contains(&uri) {
+                    continue;
+                }
+                let Ok(parsed) = uri.parse() else {
+                    continue;
+                };
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                if let Some(mut job) = self.documents.reconfigure(&uri, options) {
+                    attach_workspace(&mut job, workspace);
+                    jobs.push(job);
+                }
+            }
+        }
+        WorkspaceFileChanges {
+            jobs,
+            journal,
+            recovery_required: self.workspace_watch_errors_overflowed
+                || self.workspace_watch_recovery_required,
+        }
     }
 
     /// Reads the workspace roots without touching service state.
@@ -600,6 +780,25 @@ impl LanguageService {
         self.finish_reload(outcome, open_sources)
     }
 
+    /// Records an internal scan worker failure without replacing the last
+    /// coherent workspace snapshot.
+    pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
+        self.workspace_error = Some(error);
+        self.workspace_watch_recovery_required = true;
+        self.documents
+            .open_sources()
+            .into_iter()
+            .filter_map(|(uri, _, _)| {
+                let parsed = uri.parse().ok()?;
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let mut job = self.documents.reconfigure(&uri, options)?;
+                attach_workspace(&mut job, workspace);
+                Some(job)
+            })
+            .collect()
+    }
+
     /// Turns the result of a reload into the reanalyses it requires.
     fn finish_reload(
         &mut self,
@@ -609,20 +808,25 @@ impl LanguageService {
         if let Err(error) = outcome {
             let failed_closed = self.workspace.last_load_failed_closed();
             self.workspace_error = Some(error.clone());
-            if !failed_closed {
-                return Vec::new();
-            }
+            self.workspace_watch_recovery_required = true;
             return open_sources
                 .into_iter()
                 .filter_map(|(uri, _, _)| {
-                    let options = self.analysis_options_for(None);
+                    let workspace = if failed_closed {
+                        Err(error.clone())
+                    } else {
+                        let parsed = uri.parse().ok()?;
+                        self.workspace.input(&parsed)
+                    };
+                    let options = self.analysis_options_for(workspace.as_ref().ok());
                     let mut job = self.documents.reconfigure(&uri, options)?;
-                    attach_workspace(&mut job, Err(error.clone()));
+                    attach_workspace(&mut job, workspace);
                     Some(job)
                 })
                 .collect();
         }
         self.workspace_error = None;
+        self.clear_workspace_watch_errors();
         open_sources
             .into_iter()
             .filter_map(|(uri, _, _)| {
@@ -678,27 +882,17 @@ impl LanguageService {
                     method: "workspace/didChangeWatchedFiles".to_owned(),
                     register_options: Some(
                         serde_json::to_value(lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![
-                                lsp::FileSystemWatcher {
-                                    glob_pattern: lsp::GlobPattern::String("**/*.adoc".to_owned()),
-                                    kind: Some(
-                                        lsp::WatchKind::Create
-                                            | lsp::WatchKind::Change
-                                            | lsp::WatchKind::Delete,
-                                    ),
-                                },
-                                lsp::FileSystemWatcher {
-                                    glob_pattern: lsp::GlobPattern::String(format!(
-                                        "**/{}",
-                                        adocweave_config::FILE_NAME
-                                    )),
-                                    kind: Some(
-                                        lsp::WatchKind::Create
-                                            | lsp::WatchKind::Change
-                                            | lsp::WatchKind::Delete,
-                                    ),
-                                },
-                            ],
+                            watchers: vec![lsp::FileSystemWatcher {
+                                // Includes may use any extension. The handler
+                                // reads only known dependencies or new `.adoc`
+                                // roots, so unrelated notifications stay I/O-free.
+                                glob_pattern: lsp::GlobPattern::String("**/*".to_owned()),
+                                kind: Some(
+                                    lsp::WatchKind::Create
+                                        | lsp::WatchKind::Change
+                                        | lsp::WatchKind::Delete,
+                                ),
+                            }],
                         })
                         .expect("watched file registration is serializable"),
                     ),
@@ -735,7 +929,13 @@ impl LanguageService {
         {
             return Adoption::Stale;
         }
-        if self.workspace.accept(&analysis).is_err() {
+        let root = job
+            .workspace
+            .as_ref()
+            .expect("current workspace analysis has an input")
+            .root
+            .clone();
+        if self.workspace.accept_for_root(&root, &analysis).is_err() {
             return Adoption::Stale;
         }
         let resource_versions = analysis
@@ -802,14 +1002,25 @@ impl LanguageService {
         if attempts.len() >= limit || !attempts.insert(target.clone()) {
             return Ok(None);
         }
-        if !self.workspace.load_missing_include(&uri, target)? {
+        let pending_generation = job.request.revision.generation;
+        if !self
+            .workspace
+            .load_missing_include(&uri, target, pending_generation)?
+        {
             return Ok(None);
         }
         let workspace = self.workspace.input(&uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         let Some(mut retry) = self.documents.reconfigure(&job.uri, options) else {
+            self.workspace
+                .discard_pending_include_dependencies(&uri, pending_generation)?;
             return Ok(None);
         };
+        self.workspace.retag_pending_include_dependencies(
+            &uri,
+            pending_generation,
+            retry.request.revision.generation,
+        )?;
         retry.include_resolution_attempts = attempts;
         attach_workspace(&mut retry, workspace);
         Ok(Some(retry))
@@ -833,10 +1044,14 @@ impl LanguageService {
 
     pub fn close(&mut self, uri: &lsp::Url) -> (bool, Vec<AnalysisJob>) {
         let closed = self.documents.close(uri.as_str());
-        let affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
+        let mut affected = self.workspace.close_open(uri).unwrap_or_else(|error| {
             self.workspace_error = Some(error);
             std::collections::BTreeSet::new()
         });
+        match self.workspace.forget_include_dependencies(uri) {
+            Ok(pruned) => affected.extend(pruned),
+            Err(error) => self.workspace_error = Some(error),
+        }
         let mut jobs = Vec::new();
         self.append_dependent_jobs(&affected, uri.as_str(), &mut jobs);
         (closed, jobs)
@@ -895,6 +1110,7 @@ impl LanguageService {
     }
 
     pub fn diagnostics(&self, uri: &lsp::Url) -> Result<lsp::PublishDiagnosticsParams, String> {
+        let workspace_watch_error = self.workspace_watch_error_message();
         let document = self.documents.get(uri.as_str());
         let resource = self.workspace.get(uri);
         let source = document
@@ -905,6 +1121,7 @@ impl LanguageService {
                 uri.clone(),
                 self.workspace_error
                     .as_deref()
+                    .or(workspace_watch_error.as_deref())
                     .or(self.workspace_input_error.as_deref())
                     .map(crate::diagnostics::workspace_error)
                     .into_iter()
@@ -942,6 +1159,9 @@ impl LanguageService {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if let Some(error) = &self.workspace_error {
+            diagnostics.push(crate::diagnostics::workspace_error(error));
+        }
+        if let Some(error) = &workspace_watch_error {
             diagnostics.push(crate::diagnostics::workspace_error(error));
         }
         if let Some(error) = &self.workspace_input_error {

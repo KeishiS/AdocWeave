@@ -28,15 +28,14 @@ pub(crate) enum Error {
     Analysis(ParseError),
     Position(adocweave::text::PositionError),
     Include(local_include::LocalIncludeError),
-    LocalTarget(adocweave_host::LocalTargetError),
     FixConflict(diagnostic::EditConflict),
     Serialize(String),
 }
 
 pub(crate) struct LocalContext<'context> {
     pub(crate) base: &'context Path,
-    pub(crate) root: &'context Path,
     pub(crate) source_id: &'context str,
+    pub(crate) session: adocweave_host::LocalTargetSession,
 }
 
 fn analysis_options(
@@ -97,7 +96,6 @@ pub(crate) fn process(
     source_id: &str,
     base_analysis_options: &AnalysisOptions,
     preprocess_options: &adocweave::preprocess::PreprocessOptions,
-    resource_limits: adocweave_host::FilesystemReadLimits,
     local: Option<LocalContext<'_>>,
 ) -> Result<CheckOutcome, Error> {
     let source = decode_input(input)?;
@@ -107,7 +105,7 @@ pub(crate) fn process(
     ))
     .analyze(source)
     .map_err(Error::Analysis)?;
-    let mut host = if let Some(local) = local {
+    let mut host = if let Some(mut local) = local {
         let mut targets = analysis.local_targets();
         let snapshot =
             std::iter::empty::<(String, adocweave::preprocess::ResourceDocument)>().collect();
@@ -130,15 +128,13 @@ pub(crate) fn process(
             .map(|include| include.target_range)
             .collect::<Vec<_>>();
         targets.extend(includes.iter().filter_map(|include| include.local_target()));
-        let mut diagnostics = local_target::validate(
+        let mut diagnostics = local_target::validate_with_session(
             &targets,
             local.base,
-            local.root,
             local.source_id,
             source,
-            resource_limits,
-        )
-        .map_err(Error::LocalTarget)?;
+            &mut local.session,
+        );
         diagnostics.retain(|diagnostic| {
             diagnostic.code != "local-target-missing"
                 || !optional_ranges.contains(&diagnostic.range)
@@ -573,7 +569,6 @@ mod tests {
             "manual.adoc",
             &AnalysisOptions::default(),
             &adocweave::preprocess::PreprocessOptions::default(),
-            adocweave_host::FilesystemReadLimits::default(),
             None,
         )
         .expect("check outcome");
@@ -615,7 +610,6 @@ mod tests {
             "<stdin>",
             &AnalysisOptions::default(),
             &adocweave::preprocess::PreprocessOptions::default(),
-            adocweave_host::FilesystemReadLimits::default(),
             None,
         );
 

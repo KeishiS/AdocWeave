@@ -1071,6 +1071,15 @@ impl WorkspaceAnalysis {
         &self.root
     }
 
+    /// Returns every resource referenced by the analyzed dependency graph.
+    pub fn dependencies(&self) -> BTreeSet<ResourceId> {
+        self.dependencies
+            .values()
+            .flat_map(BTreeSet::iter)
+            .cloned()
+            .collect()
+    }
+
     /// Returns source identities present in directives or diagnostic origins.
     pub fn source_ids(&self) -> BTreeSet<ResourceId> {
         let mut ids = BTreeSet::new();

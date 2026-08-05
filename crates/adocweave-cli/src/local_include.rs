@@ -371,13 +371,21 @@ pub(crate) fn prepare_with_session(
     preprocess_options: &PreprocessOptions,
     filesystem: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
-    let allowed_roots = allowed_roots
+    let base_policy = filesystem
+        .policy_for_path(base_dir)
+        .ok_or_else(|| LocalIncludeError::OutsideRoot(base_dir.to_owned()))?
+        .derive_confined_directory(base_dir)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
+    let base_dir = base_policy.root().to_owned();
+    let allowed_policies = allowed_roots
         .iter()
         .map(|path| {
-            path.canonicalize()
-                .map_err(|source| LocalIncludeError::InvalidRoot {
-                    path: path.clone(),
-                    source,
+            filesystem
+                .policy_for_path(path)
+                .ok_or_else(|| LocalIncludeError::OutsideRoot(path.clone()))?
+                .derive_confined_directory(path)
+                .map_err(|error| {
+                    LocalIncludeError::Analysis(format!("invalid include root: {error}"))
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -385,7 +393,7 @@ pub(crate) fn prepare_with_session(
     let mut source_bases = BTreeMap::new();
     if let Some(source_id) = &source_id {
         sources.insert(source_id.clone(), Arc::from(source));
-        source_bases.insert(source_id.clone(), base_dir.to_owned());
+        source_bases.insert(source_id.clone(), base_dir.clone());
     }
     let mut preprocess_options = preprocess_options.clone();
     preprocess_options.source_id = source_id.clone().map(SourceId::new);
@@ -397,11 +405,17 @@ pub(crate) fn prepare_with_session(
     };
     let (projection, include_errors) =
         preprocess_with(source, preprocess_options, projection, |_, target| {
-            let path = base_dir.join(target);
-            if !allowed_roots.is_empty() && !allowed_roots.iter().any(|root| path.starts_with(root))
-            {
-                return Err(LocalIncludeError::OutsideRoot(path));
-            }
+            let candidate = base_dir.join(target);
+            let path = if allowed_policies.is_empty() {
+                base_policy
+                    .normalize_candidate(&candidate)
+                    .map_err(|_| LocalIncludeError::OutsideRoot(candidate.clone()))?
+            } else {
+                allowed_policies
+                    .iter()
+                    .find_map(|policy| policy.normalize_candidate(&candidate).ok())
+                    .ok_or_else(|| LocalIncludeError::OutsideRoot(candidate.clone()))?
+            };
             let resource_id = include_source_id(target);
             let loaded = filesystem
                 .read_utf8(
@@ -483,17 +497,14 @@ pub(crate) fn prepare_local_tracking_with_existing_session(
     observer: &mut dyn DependencyObserver,
     filesystem_session: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
-    let base_dir = base_dir
-        .canonicalize()
-        .map_err(|source| LocalIncludeError::InvalidBase {
-            path: base_dir.to_owned(),
-            source,
-        })?;
-    let policy = LocalTargetPolicy::new(project_root)
+    let policy = filesystem_session
+        .policy_for_path(project_root)
+        .ok_or_else(|| LocalIncludeError::OutsideRoot(project_root.to_owned()))?
+        .derive_confined_directory(project_root)
         .map_err(|error| LocalIncludeError::Analysis(format!("invalid project root: {error}")))?;
-    if !base_dir.starts_with(policy.root()) {
-        return Err(LocalIncludeError::OutsideRoot(base_dir));
-    }
+    let base_dir = policy
+        .inspect_directory_no_symlinks(base_dir)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
     let root = policy.root().to_owned();
     prepare_local_tracking_with_session(
         source,
@@ -521,20 +532,18 @@ pub(crate) fn prepare_local_tracking(
     preprocess_options: &PreprocessOptions,
     observer: &mut dyn DependencyObserver,
 ) -> Result<PreparedInput, LocalIncludeError> {
-    let base_dir = base_dir
-        .canonicalize()
-        .map_err(|source| LocalIncludeError::InvalidBase {
-            path: base_dir.to_owned(),
-            source,
-        })?;
-    let policy = LocalTargetPolicy::new(project_root)
-        .map_err(|error| LocalIncludeError::Analysis(format!("invalid project root: {error}")))?;
-    if !base_dir.starts_with(policy.root()) {
-        return Err(LocalIncludeError::OutsideRoot(base_dir));
-    }
-    let root = policy.root().to_owned();
-    let mut filesystem_session = LocalFilesystemPolicy::new([root.clone()], limits)
-        .and_then(|policy| policy.session())
+    let filesystem_policy = LocalFilesystemPolicy::new([project_root.to_owned()], limits)
+        .map_err(LocalIncludeError::Host)?;
+    let root = filesystem_policy.roots()[0].clone();
+    let policy = filesystem_policy
+        .root_policy(&root)
+        .expect("filesystem policy retains its root")
+        .clone();
+    let base_dir = policy
+        .inspect_directory_no_symlinks(base_dir)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid include base: {error}")))?;
+    let mut filesystem_session = filesystem_policy
+        .session()
         .map_err(LocalIncludeError::Host)?;
     prepare_local_tracking_with_session(
         source,
@@ -562,7 +571,6 @@ fn prepare_local_tracking_with_session(
     filesystem_session: &mut LocalFilesystemSession,
 ) -> Result<PreparedInput, LocalIncludeError> {
     let limits = filesystem_session.limits();
-    let session = LocalTargetSession::new(policy, limits.max_files, limits);
     let base_key = logical_key(
         base_dir
             .strip_prefix(root)
@@ -570,13 +578,10 @@ fn prepare_local_tracking_with_session(
     );
 
     let sources = BTreeMap::from([(source_id.clone(), Arc::from(source))]);
-    let source_base =
-        source_base
-            .canonicalize()
-            .map_err(|source| LocalIncludeError::InvalidBase {
-                path: source_base.to_owned(),
-                source,
-            })?;
+    let source_base = policy
+        .inspect_directory_no_symlinks(source_base)
+        .map_err(|error| LocalIncludeError::Analysis(format!("invalid source base: {error}")))?;
+    let session = LocalTargetSession::new(policy, limits.max_files, limits);
     let source_bases = BTreeMap::from([(source_id.clone(), source_base)]);
     let include_bases = BTreeMap::from([(source_id.clone(), base_dir.to_owned())]);
     let mut preprocess_options = preprocess_options.clone();
@@ -675,12 +680,6 @@ fn dependency_candidates(root: &Path, target: &str) -> BTreeSet<PathBuf> {
         };
         current.push(component);
         paths.insert(current.clone());
-        match current.symlink_metadata() {
-            Ok(metadata) if metadata.file_type().is_symlink() => break,
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-            Err(_) => break,
-        }
     }
     paths
 }
@@ -777,10 +776,83 @@ mod tests {
         let root = TestDirectory::new();
         assert_eq!(
             dependency_candidates(&root.0, "chapters/new.adoc"),
-            BTreeSet::from([root.0.clone(), root.0.join("chapters")])
+            BTreeSet::from([
+                root.0.clone(),
+                root.0.join("chapters"),
+                root.0.join("chapters/new.adoc")
+            ])
         );
         assert!(dependency_candidates(&root.0, "../secret.adoc").is_empty());
         assert!(dependency_candidates(&root.0, "/etc/passwd").is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn existing_session_keeps_local_validation_namespace_after_root_replacement() {
+        let parent = TestDirectory::new();
+        let root = parent.0.join("workspace");
+        fs::create_dir(&root).expect("workspace");
+        fs::write(root.join("root.adoc"), "image::asset.png[]\n").expect("document");
+        let mut filesystem = session(&root);
+        let displaced = parent.0.join("retained-workspace");
+        fs::rename(&root, &displaced).expect("displace workspace");
+        fs::create_dir(&root).expect("replacement workspace");
+        fs::write(root.join("asset.png"), "outside").expect("replacement target");
+
+        let mut prepared = prepare_local_with_session(
+            "image::asset.png[]\n",
+            root.join("root.adoc").to_string_lossy().into_owned(),
+            &root,
+            &root,
+            &root,
+            &PreprocessOptions::default(),
+            &mut filesystem,
+        )
+        .expect("prepared input");
+        let error = prepared
+            .validation
+            .as_mut()
+            .expect("validation context")
+            .session_mut()
+            .inspect(&root, "asset.png")
+            .expect_err("replacement target must remain outside the retained namespace");
+        assert!(matches!(error, LocalTargetError::Missing(_)));
+        fs::remove_dir_all(&root).expect("remove replacement workspace");
+        fs::rename(displaced, &root).expect("restore workspace");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn existing_session_does_not_expand_an_allowed_root_after_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let parent = TestDirectory::new();
+        let workspace = parent.0.join("workspace");
+        let allowed = workspace.join("public");
+        fs::create_dir_all(&allowed).expect("allowed root");
+        fs::write(workspace.join("secret.adoc"), "secret\n").expect("secret");
+        let mut filesystem = LocalFilesystemPolicy::new(
+            [workspace.clone(), allowed.clone()],
+            FilesystemReadLimits::default(),
+        )
+        .and_then(|policy| policy.session())
+        .expect("session");
+        let retained = workspace.join("retained-public");
+        fs::rename(&allowed, &retained).expect("retain original allowed root");
+        symlink(&workspace, &allowed).expect("replace allowed root");
+
+        let result = prepare_with_session(
+            "include::secret.adoc[]\n",
+            Some(workspace.join("root.adoc").to_string_lossy().into_owned()),
+            &workspace,
+            std::slice::from_ref(&allowed),
+            &PreprocessOptions::default(),
+            &mut filesystem,
+        );
+        let Err(error) = result else {
+            panic!("replacement must not broaden the retained allowed root");
+        };
+        assert!(matches!(error, LocalIncludeError::OutsideRoot(_)));
     }
 
     #[test]
@@ -910,6 +982,6 @@ mod tests {
         let dependencies = dependency_candidates(&root.0, "current/part.adoc");
         assert!(dependencies.contains(&root.0));
         assert!(dependencies.contains(&root.0.join("current")));
-        assert!(!dependencies.contains(&root.0.join("current/part.adoc")));
+        assert!(dependencies.contains(&root.0.join("current/part.adoc")));
     }
 }
