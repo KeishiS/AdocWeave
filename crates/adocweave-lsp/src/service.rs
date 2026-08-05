@@ -600,6 +600,24 @@ impl LanguageService {
         self.finish_reload(outcome, open_sources)
     }
 
+    /// Records an internal scan worker failure without replacing the last
+    /// coherent workspace snapshot.
+    pub fn workspace_scan_failed(&mut self, error: String) -> Vec<AnalysisJob> {
+        self.workspace_error = Some(error);
+        self.documents
+            .open_sources()
+            .into_iter()
+            .filter_map(|(uri, _, _)| {
+                let parsed = uri.parse().ok()?;
+                let workspace = self.workspace.input(&parsed);
+                let options = self.analysis_options_for(workspace.as_ref().ok());
+                let mut job = self.documents.reconfigure(&uri, options)?;
+                attach_workspace(&mut job, workspace);
+                Some(job)
+            })
+            .collect()
+    }
+
     /// Turns the result of a reload into the reanalyses it requires.
     fn finish_reload(
         &mut self,

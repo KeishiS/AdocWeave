@@ -1737,3 +1737,56 @@ fn a_document_opened_during_the_scan_survives_applying_it() {
 
     fs::remove_dir_all(&root).expect("cleanup");
 }
+
+#[test]
+fn a_scan_worker_failure_keeps_the_last_coherent_workspace_and_reports_it() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-scan-worker-failure-{unique}"));
+    fs::create_dir_all(&root).expect("workspace");
+    let document_path = root.join("root.adoc");
+    fs::write(&document_path, "= Root\n").expect("document");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let document_uri = lsp::Url::from_file_path(&document_path).expect("document URI");
+
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    open(&mut service, document_uri.as_str(), 1, "= Root\n");
+    let previous = service
+        .workspace_resource(&document_uri)
+        .expect("workspace resource")
+        .clone();
+
+    let jobs = service.workspace_scan_failed("workspace scan worker failed: panic".to_owned());
+
+    assert_eq!(jobs.len(), 1, "the open document must publish the failure");
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert_eq!(
+        service
+            .workspace_resource(&document_uri)
+            .expect("retained workspace resource"),
+        previous,
+        "an internal worker failure must not replace the last coherent snapshot",
+    );
+    let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
+    assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code
+            == Some(lsp::NumberOrString::String(
+                "workspace-resource-error".to_owned(),
+            ))
+            && diagnostic.message.contains("workspace scan worker failed")
+    }));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
