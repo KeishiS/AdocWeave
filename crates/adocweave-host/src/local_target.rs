@@ -47,6 +47,9 @@ thread_local! {
     static FORCED_OPENAT2_ERROR: std::cell::Cell<Option<rustix::io::Errno>> = const {
         std::cell::Cell::new(None)
     };
+    static FORCED_FD_PATH_ERROR: std::cell::Cell<Option<std::io::ErrorKind>> = const {
+        std::cell::Cell::new(None)
+    };
 }
 
 #[cfg(target_os = "linux")]
@@ -722,12 +725,8 @@ fn logical_path_from_opened_handle(
     opened: &fs::File,
     candidate: &Path,
 ) -> Result<PathBuf, LocalTargetError> {
-    use std::os::fd::AsRawFd;
-
-    let root_path = fs::read_link(format!("/proc/self/fd/{}", root_handle.as_raw_fd()))
-        .map_err(|source| classify_io(candidate.to_owned(), source))?;
-    let opened_path = fs::read_link(format!("/proc/self/fd/{}", opened.as_raw_fd()))
-        .map_err(|source| classify_io(candidate.to_owned(), source))?;
+    let root_path = path_from_fd(root_handle, candidate)?;
+    let opened_path = path_from_fd(opened, candidate)?;
     let relative = opened_path
         .strip_prefix(&root_path)
         .map_err(|_| LocalTargetError::Unverifiable(candidate.to_string_lossy().into_owned()))?;
@@ -736,10 +735,28 @@ fn logical_path_from_opened_handle(
 
 #[cfg(target_os = "linux")]
 fn path_from_file_handle(file: &fs::File, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
+    path_from_fd(file, candidate)
+}
+
+#[cfg(target_os = "linux")]
+fn path_from_fd(file: &fs::File, candidate: &Path) -> Result<PathBuf, LocalTargetError> {
     use std::os::fd::AsRawFd;
 
+    #[cfg(test)]
+    if let Some(kind) = FORCED_FD_PATH_ERROR.with(std::cell::Cell::get) {
+        return Err(fd_path_error(candidate, std::io::Error::from(kind)));
+    }
+
     fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
-        .map_err(|source| classify_io(candidate.to_owned(), source))
+        .map_err(|source| fd_path_error(candidate, source))
+}
+
+#[cfg(target_os = "linux")]
+fn fd_path_error(candidate: &Path, source: std::io::Error) -> LocalTargetError {
+    LocalTargetError::Unverifiable(format!(
+        "cannot resolve the opened local target through /proc/self/fd for {}: {source}",
+        candidate.display()
+    ))
 }
 
 fn read_bounded_utf8(
@@ -796,8 +813,6 @@ fn read_for_comparison(
 
 #[cfg(target_os = "linux")]
 fn open_root_directory(root: &Path) -> Result<(PathBuf, fs::File), LocalTargetError> {
-    use std::os::fd::AsRawFd;
-
     use rustix::fs::{Mode, OFlags, open};
 
     let file = open(
@@ -813,9 +828,7 @@ fn open_root_directory(root: &Path) -> Result<(PathBuf, fs::File), LocalTargetEr
             classify_errno(root, error)
         }
     })?;
-    let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
-    let canonical =
-        fs::read_link(descriptor_path).map_err(|source| classify_io(root.to_owned(), source))?;
+    let canonical = path_from_fd(&file, root)?;
     Ok((canonical, file))
 }
 
@@ -2081,6 +2094,46 @@ mod tests {
                 .expect("fallback read");
             FORCED_OPENAT2_ERROR.with(|forced| forced.set(None));
             assert_eq!(loaded.source(), "= Guide");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn procfs_failures_are_unverifiable_during_policy_creation() {
+        let root = TestDir::new();
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            FORCED_FD_PATH_ERROR.with(|forced| forced.set(Some(kind)));
+            let error = LocalTargetPolicy::new(&root.0).expect_err("procfs failure");
+            FORCED_FD_PATH_ERROR.with(|forced| forced.set(None));
+
+            assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+            assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+            assert!(error.to_string().contains("/proc/self/fd"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn procfs_failures_are_unverifiable_after_policy_creation() {
+        let root = TestDir::new();
+        let policy = LocalTargetPolicy::new(&root.0).expect("policy");
+        let target = root.0.join("docs/guide.adoc");
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            FORCED_FD_PATH_ERROR.with(|forced| forced.set(Some(kind)));
+            let error = policy
+                .inspect_candidate(&target)
+                .expect_err("procfs failure");
+            FORCED_FD_PATH_ERROR.with(|forced| forced.set(None));
+
+            assert!(matches!(error, LocalTargetError::Unverifiable(_)));
+            assert_eq!(error.diagnostic_code(), "local-target-unverifiable");
+            assert!(error.to_string().contains("/proc/self/fd"));
         }
     }
 
