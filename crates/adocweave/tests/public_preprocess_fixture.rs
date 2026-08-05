@@ -3,10 +3,11 @@ use std::sync::Arc;
 use adocweave::SourceId;
 use adocweave::preprocess::{
     DirectiveKind, PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions,
-    ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceSnapshot, SourceMapping,
-    preprocess, preprocess_and_analyze_with, preprocess_with,
+    PreprocessStep, ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup,
+    ResourceLookupResult, ResourceResponse, ResourceSnapshot, SourceMapping, preprocess,
+    preprocess_and_analyze_with, preprocess_resumable, preprocess_with,
 };
-use adocweave::{AnalysisOptions, CancellationToken, Engine};
+use adocweave::{AnalysisOptions, CancellationToken, Engine, NeverCancel};
 use serde_json::Value;
 
 fn public_fixture() -> Value {
@@ -240,4 +241,38 @@ fn cancellable_preprocess_and_projection_apis_are_public() {
         ),
         Err(adocweave::preprocess::PreprocessedAnalysisError::Cancelled)
     ));
+}
+
+#[test]
+fn resumable_preprocess_contract_is_public_without_exposing_continuation_state() {
+    struct Deferred;
+
+    impl ResourceLookup for Deferred {
+        fn lookup(&self, _target: &str) -> ResourceLookupResult {
+            ResourceLookupResult::Deferred
+        }
+    }
+
+    let PreprocessStep::NeedResource(suspended) = preprocess_resumable(
+        "include::part.adoc[]\n",
+        &PreprocessOptions::default(),
+        &Deferred,
+        &NeverCancel,
+    ) else {
+        panic!("deferred lookup must suspend preprocessing");
+    };
+    assert_eq!(suspended.request().target(), "part.adoc");
+    assert!(!suspended.request().is_optional());
+    let step = suspended.resume(
+        ResourceResponse::Found(ResourceDocument {
+            source_id: SourceId::new("part"),
+            source: Arc::from("included\n"),
+        }),
+        &Deferred,
+        &NeverCancel,
+    );
+    let PreprocessStep::Complete(document) = step else {
+        panic!("one supplied resource must complete preprocessing");
+    };
+    assert_eq!(document.source, "included\n");
 }

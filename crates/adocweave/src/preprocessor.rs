@@ -26,6 +26,11 @@ pub use projection::{
     ProjectedResource, ProjectionError, ProjectionFailure, ProjectionLimits,
 };
 
+#[cfg(test)]
+thread_local! {
+    static RESUMABLE_INCLUDE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SafeMode {
     Unsafe,
@@ -61,6 +66,34 @@ impl FromIterator<(String, ResourceDocument)> for ResourceSnapshot {
         Self {
             resources: resources.into_iter().collect(),
         }
+    }
+}
+
+/// Result of consulting a host-owned resource collection.
+///
+/// `Deferred` distinguishes a resource that a host may still acquire from a
+/// resource whose absence is authoritative for this preprocessing run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceLookupResult {
+    /// The resource is ready for deterministic preprocessing.
+    Ready(ResourceDocument),
+    /// The host has established that the resource does not exist.
+    Missing,
+    /// The host must acquire or otherwise resolve the resource before work can continue.
+    Deferred,
+}
+
+/// Read-only resource boundary used by resumable preprocessing.
+pub trait ResourceLookup {
+    /// Looks up one validated, resolved snapshot key.
+    fn lookup(&self, target: &str) -> ResourceLookupResult;
+}
+
+impl ResourceLookup for ResourceSnapshot {
+    fn lookup(&self, target: &str) -> ResourceLookupResult {
+        self.get(target)
+            .cloned()
+            .map_or(ResourceLookupResult::Missing, ResourceLookupResult::Ready)
     }
 }
 
@@ -580,14 +613,123 @@ pub fn preprocess_with(
     inputs: PreprocessInputs<'_>,
 ) -> Result<PreprocessedDocument, PreprocessFailure> {
     let cancellation = inputs.cancellation();
-    if cancellation.is_cancelled() {
-        return Err(PreprocessFailure::Cancelled);
+    match preprocess_resumable(source, options, snapshot, cancellation) {
+        PreprocessStep::Complete(document) => Ok(document),
+        PreprocessStep::Failed(error) => Err(PreprocessFailure::Error(error)),
+        PreprocessStep::Cancelled => Err(PreprocessFailure::Cancelled),
+        PreprocessStep::NeedResource(_) => {
+            unreachable!("ResourceSnapshot reports authoritative absence")
+        }
     }
-    let mut context = Context {
-        snapshot,
-        options,
-        cancellation,
-        checkpoint: CancellationCheckpoint::new(cancellation),
+}
+
+/// One resource requested by a suspended preprocessing run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceRequest {
+    target: String,
+    optional: bool,
+    source_id: Option<SourceId>,
+    range: TextRange,
+}
+
+impl ResourceRequest {
+    /// Returns the resolved snapshot key.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Returns whether the include declared the resource optional.
+    pub const fn is_optional(&self) -> bool {
+        self.optional
+    }
+
+    /// Returns the source containing the include directive.
+    pub fn source_id(&self) -> Option<&SourceId> {
+        self.source_id.as_ref()
+    }
+
+    /// Returns the source range of the include directive.
+    pub const fn range(&self) -> TextRange {
+        self.range
+    }
+}
+
+/// Authoritative answer supplied when suspended preprocessing resumes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceResponse {
+    /// The requested UTF-8 resource is available.
+    Found(ResourceDocument),
+    /// The host established that the requested resource does not exist.
+    NotFound,
+}
+
+/// Result of starting or resuming preprocessing.
+pub enum PreprocessStep {
+    /// Preprocessing completed and produced one immutable document.
+    Complete(PreprocessedDocument),
+    /// Processing stopped before the first resource whose availability is deferred.
+    NeedResource(Box<SuspendedPreprocess>),
+    /// Processing failed with a deterministic preprocessing error.
+    Failed(PreprocessError),
+    /// Cooperative cancellation discarded all unpublished state.
+    Cancelled,
+}
+
+/// Opaque, single-use continuation for one deferred resource request.
+///
+/// The type intentionally does not implement `Clone`: exactly one response can
+/// advance the accumulated attributes, limits, include stack, and source map.
+pub struct SuspendedPreprocess {
+    machine: PreprocessMachine,
+    pending: PendingInclude,
+    request: ResourceRequest,
+}
+
+impl SuspendedPreprocess {
+    /// Returns the resource request that must be answered before resuming.
+    pub const fn request(&self) -> &ResourceRequest {
+        &self.request
+    }
+
+    /// Consumes this continuation and resumes from the suspended include.
+    pub fn resume(
+        mut self,
+        response: ResourceResponse,
+        resources: &(impl ResourceLookup + ?Sized),
+        cancellation: &dyn CancellationCheck,
+    ) -> PreprocessStep {
+        if cancellation.is_cancelled() {
+            return PreprocessStep::Cancelled;
+        }
+        let cached = match &response {
+            ResourceResponse::Found(document) => Some(document.clone()),
+            ResourceResponse::NotFound => None,
+        };
+        self.machine
+            .resolved
+            .insert(self.request.target.clone(), cached);
+        if let Err(failure) = self
+            .machine
+            .resolve_pending(self.pending, response, cancellation)
+        {
+            return failure.into_step();
+        }
+        self.machine.drive(resources, cancellation)
+    }
+}
+
+/// Starts preprocessing that may suspend when the lookup returns `Deferred`.
+pub fn preprocess_resumable(
+    source: &str,
+    options: &PreprocessOptions,
+    resources: &(impl ResourceLookup + ?Sized),
+    cancellation: &dyn CancellationCheck,
+) -> PreprocessStep {
+    if cancellation.is_cancelled() {
+        return PreprocessStep::Cancelled;
+    }
+    let mut machine = PreprocessMachine {
+        options: options.clone(),
         source_map: source_map::SourceMapBuilder::new(
             options.max_total_bytes,
             options.max_source_map_segments,
@@ -601,81 +743,139 @@ pub fn preprocess_with(
                 max_bytes: options.max_attribute_expansion_bytes,
             },
         ),
+        stack: Vec::new(),
+        resolved: BTreeMap::new(),
+        until_cancel_check: 0,
     };
-    context.expand(
-        source,
-        IncludeFrame::root(options.source_id.clone(), options.base_uri.as_deref()),
-    )?;
-    if cancellation.is_cancelled() {
-        return Err(PreprocessFailure::Cancelled);
-    }
-    let Context {
-        source_map,
-        directives,
-        notices,
-        mut checkpoint,
-        ..
-    } = context;
-    let document = source_map
-        .finish_cancellable(directives, notices, &mut checkpoint)
-        .map_err(|failure| match failure {
-            source_map::SourceMapFinishError::Cancelled => PreprocessFailure::Cancelled,
-            source_map::SourceMapFinishError::Invariant => {
-                PreprocessFailure::Error(PreprocessError {
-                    kind: PreprocessErrorKind::InternalInvariant,
-                    source_id: options.source_id.clone(),
-                    range: TextRange::new(TextSize::ZERO, TextSize::ZERO)
-                        .expect("zero range is ordered"),
-                    requested_target: None,
-                    target: None,
-                    message:
-                        "source map segments are unsorted, overlapping, or outside expanded source"
-                            .to_owned(),
-                })
-            }
-        })?;
-    if cancellation.is_cancelled() {
-        Err(PreprocessFailure::Cancelled)
-    } else {
-        Ok(document)
-    }
+    let lines = match machine.lines(source, cancellation) {
+        Ok(lines) => lines,
+        Err(failure) => return failure.into_step(),
+    };
+    let root = IncludeFrame::root(options.source_id.clone(), options.base_uri.as_deref());
+    let frame = match ExpansionCursor::new(lines, root) {
+        Ok(frame) => frame,
+        Err(error) => return PreprocessStep::Failed(error),
+    };
+    machine.stack.push(frame);
+    machine.drive(resources, cancellation)
 }
 
-struct Context<'a> {
-    snapshot: &'a ResourceSnapshot,
-    options: &'a PreprocessOptions,
-    cancellation: &'a dyn CancellationCheck,
-    checkpoint: CancellationCheckpoint<'a>,
+struct PreprocessMachine {
+    options: PreprocessOptions,
     source_map: source_map::SourceMapBuilder,
     directives: Vec<Directive>,
     notices: Vec<PreprocessNotice>,
     state: ExpansionState,
+    stack: Vec<ExpansionCursor>,
+    resolved: BTreeMap<String, Option<ResourceDocument>>,
+    until_cancel_check: usize,
 }
 
-impl Context<'_> {
-    fn expand(&mut self, source: &str, frame: IncludeFrame) -> Result<(), PreprocessFailure> {
+struct ExpansionCursor {
+    lines: Vec<SelectedLine>,
+    document: crate::source_document::SourceDocument,
+    frame: IncludeFrame,
+    next_line: usize,
+    conditions: Vec<bool>,
+    attribute_value_through: Option<usize>,
+}
+
+impl ExpansionCursor {
+    fn new(lines: Vec<SelectedLine>, frame: IncludeFrame) -> Result<Self, PreprocessError> {
+        let source_id = frame.source_id();
+        let selected_source = lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<String>();
+        let document =
+            crate::source_document::SourceDocument::new(&selected_source).map_err(|_| {
+                error(
+                    PreprocessErrorKind::InternalInvariant,
+                    source_id.clone(),
+                    zero_range(),
+                    "selected source exceeds the supported position range",
+                )
+            })?;
+        if document.lines().len() < lines.len() {
+            return Err(error(
+                PreprocessErrorKind::InternalInvariant,
+                source_id,
+                zero_range(),
+                "selected source lines do not preserve physical boundaries",
+            ));
+        }
+        Ok(Self {
+            lines,
+            document,
+            frame,
+            next_line: 0,
+            conditions: Vec::new(),
+            attribute_value_through: None,
+        })
+    }
+}
+
+struct PendingInclude {
+    frame: IncludeFrame,
+    source_id: Option<SourceId>,
+    range: TextRange,
+    target_range: TextRange,
+    expanded_target: String,
+    target: String,
+    attributes: BTreeMap<String, String>,
+    optional: bool,
+}
+
+enum MachineFailure {
+    Error(PreprocessError),
+    Cancelled,
+}
+
+impl MachineFailure {
+    fn into_step(self) -> PreprocessStep {
+        match self {
+            Self::Error(error) => PreprocessStep::Failed(error),
+            Self::Cancelled => PreprocessStep::Cancelled,
+        }
+    }
+}
+
+impl From<PreprocessError> for MachineFailure {
+    fn from(error: PreprocessError) -> Self {
+        Self::Error(error)
+    }
+}
+
+impl PreprocessMachine {
+    fn lines(
+        &mut self,
+        source: &str,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<Vec<SelectedLine>, MachineFailure> {
         let mut offset = 0;
         let mut lines = Vec::new();
         for line in source.split_inclusive('\n') {
             let start = offset;
             offset += line.len();
             let line_range = range(start, offset);
-            self.check_cancelled()?;
+            self.check_cancelled(cancellation)?;
             lines.push(SelectedLine {
                 text: line.to_owned(),
                 range: line_range,
                 mapping: SourceMapping::Identity,
             });
         }
-        self.expand_selected(lines, frame)
+        Ok(lines)
     }
 
-    fn expand_include(
+    fn prepare_include(
         &mut self,
         include: ParsedDirective,
         frame: &IncludeFrame,
         range: TextRange,
-    ) -> Result<(), PreprocessFailure> {
+    ) -> Result<PendingInclude, MachineFailure> {
+        #[cfg(test)]
+        RESUMABLE_INCLUDE_VISITS.with(|visits| visits.set(visits.get().saturating_add(1)));
         let source_id = frame.source_id();
         if frame.depth() >= self.options.max_include_depth {
             return Err(error(
@@ -706,7 +906,7 @@ impl Context<'_> {
             self.state.attribute_limits(),
         );
         let target = resolve_include_target(&expanded_target, frame.base_uri());
-        validate_target(&target, self.options).map_err(|message| {
+        validate_target(&target, &self.options).map_err(|message| {
             error(
                 PreprocessErrorKind::UnsafeTarget,
                 source_id.clone(),
@@ -744,7 +944,38 @@ impl Context<'_> {
             )
             .into());
         }
-        let document = self.snapshot.get(&target);
+        Ok(PendingInclude {
+            frame: frame.clone(),
+            source_id,
+            range,
+            target_range: relative_range(range, include.target_start, include.target_end),
+            expanded_target,
+            target,
+            attributes,
+            optional,
+        })
+    }
+
+    fn resolve_pending(
+        &mut self,
+        pending: PendingInclude,
+        response: ResourceResponse,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<(), MachineFailure> {
+        let PendingInclude {
+            frame,
+            source_id,
+            range,
+            target_range,
+            expanded_target,
+            target,
+            attributes,
+            optional,
+        } = pending;
+        let document = match response {
+            ResourceResponse::Found(document) => Some(document),
+            ResourceResponse::NotFound => None,
+        };
         self.directives.push(Directive {
             kind: DirectiveKind::Include,
             source_id: source_id.clone(),
@@ -752,8 +983,8 @@ impl Context<'_> {
             authored_target: Some(expanded_target.clone()),
             optional,
             target: target.clone(),
-            target_range: relative_range(range, include.target_start, include.target_end),
-            resource_source_id: document.map(|document| document.source_id.clone()),
+            target_range,
+            resource_source_id: document.as_ref().map(|document| document.source_id.clone()),
         });
         let Some(document) = document else {
             if optional {
@@ -775,75 +1006,81 @@ impl Context<'_> {
             }
             .into());
         };
-        let selected = select_lines(&document.source, &attributes, self.cancellation)
-            .map_err(|_| PreprocessFailure::Cancelled)?;
+        let selected = select_lines(&document.source, &attributes, cancellation)
+            .map_err(|_| MachineFailure::Cancelled)?;
         let remaining_bytes = self.source_map.remaining_bytes();
-        let transformed =
-            transform_lines(selected, &attributes, remaining_bytes, self.cancellation).map_err(
-                |failure| match failure {
-                    TransformFailure::Cancelled => PreprocessFailure::Cancelled,
-                    TransformFailure::ByteLimit => error(
-                        PreprocessErrorKind::ByteLimit,
-                        source_id.clone(),
-                        range,
-                        "preprocessor byte limit exceeded",
-                    )
-                    .into(),
-                },
-            )?;
+        let transformed = transform_lines(selected, &attributes, remaining_bytes, cancellation)
+            .map_err(|failure| match failure {
+                TransformFailure::Cancelled => MachineFailure::Cancelled,
+                TransformFailure::ByteLimit => error(
+                    PreprocessErrorKind::ByteLimit,
+                    source_id.clone(),
+                    range,
+                    "preprocessor byte limit exceeded",
+                )
+                .into(),
+            })?;
         let child = frame.child(
             target.clone(),
             document.source_id.clone(),
             target_base(&target),
         );
-        self.expand_selected(transformed, child)
+        self.stack.push(ExpansionCursor::new(transformed, child)?);
+        Ok(())
     }
 
-    fn expand_selected(
-        &mut self,
-        lines: Vec<SelectedLine>,
-        frame: IncludeFrame,
-    ) -> Result<(), PreprocessFailure> {
-        let source_id = frame.source_id();
-        let selected_source = lines
-            .iter()
-            .map(|line| line.text.as_str())
-            .collect::<String>();
-        let selected_document = crate::source_document::SourceDocument::new(&selected_source)
-            .map_err(|_| {
-                error(
-                    PreprocessErrorKind::InternalInvariant,
-                    source_id.clone(),
-                    zero_range(),
-                    "selected source exceeds the supported position range",
-                )
-            })?;
-        if selected_document.lines().len() < lines.len() {
-            return Err(error(
-                PreprocessErrorKind::InternalInvariant,
-                source_id,
-                zero_range(),
-                "selected source lines do not preserve physical boundaries",
-            )
-            .into());
-        }
-        let mut conditions = Vec::<bool>::new();
-        let mut attribute_value_through = None;
-        for (line_index, line) in lines.into_iter().enumerate() {
-            self.check_cancelled()?;
-            let content = line.text.trim_end_matches(['\r', '\n']);
-            let enabled = conditions.iter().all(|condition| *condition);
-            if attribute_value_through.is_some_and(|last_line| line_index <= last_line) {
-                self.bump_node(source_id.clone(), line.range)?;
-                self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
-                if attribute_value_through == Some(line_index) {
-                    attribute_value_through = None;
+    fn drive(
+        mut self,
+        resources: &(impl ResourceLookup + ?Sized),
+        cancellation: &dyn CancellationCheck,
+    ) -> PreprocessStep {
+        loop {
+            let Some(mut cursor) = self.stack.pop() else {
+                return self.finish(cancellation);
+            };
+            if cursor.next_line >= cursor.lines.len() {
+                if !cursor.conditions.is_empty() {
+                    return PreprocessStep::Failed(error(
+                        PreprocessErrorKind::UnclosedConditional,
+                        cursor.frame.source_id(),
+                        zero_range(),
+                        "conditional directive is not closed",
+                    ));
                 }
+                continue;
+            }
+            if self.check_cancelled(cancellation).is_err() {
+                return PreprocessStep::Cancelled;
+            }
+            let line_index = cursor.next_line;
+            cursor.next_line += 1;
+            let line = cursor.lines[line_index].clone();
+            let source_id = cursor.frame.source_id();
+            let content = line.text.trim_end_matches(['\r', '\n']);
+            let enabled = cursor.conditions.iter().all(|condition| *condition);
+            if cursor
+                .attribute_value_through
+                .is_some_and(|last_line| line_index <= last_line)
+            {
+                if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
+                    return failure.into_step();
+                }
+                if let Err(failure) =
+                    self.append(&line.text, source_id.clone(), line.range, line.mapping)
+                {
+                    return failure.into_step();
+                }
+                if cursor.attribute_value_through == Some(line_index) {
+                    cursor.attribute_value_through = None;
+                }
+                self.stack.push(cursor);
                 continue;
             }
             match directive::recognize(content) {
                 RecognizedDirective::Conditional(directive) => {
-                    self.bump_node(source_id.clone(), line.range)?;
+                    if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
+                        return failure.into_step();
+                    }
                     self.directives.push(Directive {
                         kind: directive.kind,
                         source_id: source_id.clone(),
@@ -867,36 +1104,90 @@ impl Context<'_> {
                         ConditionalTransition::Inline { selected } => {
                             if selected {
                                 let ending = &line.text[content.len()..];
-                                self.append(
+                                if let Err(failure) = self.append(
                                     &format!("{}{ending}", directive.attributes),
                                     source_id.clone(),
                                     line.range,
                                     SourceMapping::WholeOrigin,
-                                )?;
+                                ) {
+                                    return failure.into_step();
+                                }
                                 self.state.finish_directive_output();
                             }
                         }
                         ConditionalTransition::Open { enabled: condition } => {
-                            conditions.push(condition)
+                            cursor.conditions.push(condition)
                         }
                         ConditionalTransition::Close => {
-                            if conditions.pop().is_none() {
-                                return Err(error(
+                            if cursor.conditions.pop().is_none() {
+                                return PreprocessStep::Failed(error(
                                     PreprocessErrorKind::InvalidDirective,
                                     source_id,
                                     line.range,
                                     "endif has no matching conditional",
-                                )
-                                .into());
+                                ));
                             }
                         }
                     }
+                    self.stack.push(cursor);
                 }
                 RecognizedDirective::Include(include) if enabled => {
                     if self.options.enable_includes {
-                        self.expand_include(include, &frame, line.range)?;
+                        let pending = match self.prepare_include(include, &cursor.frame, line.range)
+                        {
+                            Ok(pending) => pending,
+                            Err(failure) => return failure.into_step(),
+                        };
+                        self.stack.push(cursor);
+                        let response = if let Some(cached) = self.resolved.get(&pending.target) {
+                            cached
+                                .clone()
+                                .map_or(ResourceLookupResult::Missing, ResourceLookupResult::Ready)
+                        } else {
+                            resources.lookup(&pending.target)
+                        };
+                        match response {
+                            ResourceLookupResult::Ready(document) => {
+                                self.resolved
+                                    .insert(pending.target.clone(), Some(document.clone()));
+                                if let Err(failure) = self.resolve_pending(
+                                    pending,
+                                    ResourceResponse::Found(document),
+                                    cancellation,
+                                ) {
+                                    return failure.into_step();
+                                }
+                            }
+                            ResourceLookupResult::Missing => {
+                                self.resolved.insert(pending.target.clone(), None);
+                                if let Err(failure) = self.resolve_pending(
+                                    pending,
+                                    ResourceResponse::NotFound,
+                                    cancellation,
+                                ) {
+                                    return failure.into_step();
+                                }
+                            }
+                            ResourceLookupResult::Deferred => {
+                                let request = ResourceRequest {
+                                    target: pending.target.clone(),
+                                    optional: pending.optional,
+                                    source_id: pending.source_id.clone(),
+                                    range: pending.range,
+                                };
+                                return PreprocessStep::NeedResource(Box::new(
+                                    SuspendedPreprocess {
+                                        machine: self,
+                                        pending,
+                                        request,
+                                    },
+                                ));
+                            }
+                        }
                     } else {
-                        self.bump_node(source_id.clone(), line.range)?;
+                        if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
+                            return failure.into_step();
+                        }
                         let authored_target = directive::expand_attributes(
                             &include.target,
                             self.state.attributes(),
@@ -918,92 +1209,110 @@ impl Context<'_> {
                             ),
                             resource_source_id: None,
                         });
-                        self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                        if let Err(failure) =
+                            self.append(&line.text, source_id.clone(), line.range, line.mapping)
+                        {
+                            return failure.into_step();
+                        }
                         self.state.finish_directive_output();
+                        self.stack.push(cursor);
                     }
                 }
                 RecognizedDirective::Escaped(literal) if enabled => {
                     let ending = &line.text[content.len()..];
-                    self.append(
+                    if let Err(failure) = self.append(
                         &format!("{literal}{ending}"),
                         source_id.clone(),
                         line.range,
                         SourceMapping::WholeOrigin,
-                    )?;
+                    ) {
+                        return failure.into_step();
+                    }
                     self.state.finish_directive_output();
+                    self.stack.push(cursor);
                 }
                 RecognizedDirective::Text if enabled => {
                     let delimiter = self.state.observe_delimiter(content);
                     let mut document_attribute = false;
-                    self.bump_node(source_id.clone(), line.range)?;
+                    if let Err(failure) = self.bump_node(source_id.clone(), line.range) {
+                        return failure.into_step();
+                    }
                     if self.state.accepts_attribute(delimiter)
                         && crate::attributes::parse_line(
                             content,
-                            selected_document.lines()[line_index]
+                            cursor.document.lines()[line_index]
                                 .content_range()
                                 .start()
                                 .to_usize(),
-                            selected_document.lines()[line_index].full_range(),
+                            cursor.document.lines()[line_index].full_range(),
                         )
                         .is_some()
-                        && let Some((occurrence, _, last_line)) =
-                            crate::attributes::parse_lines(&selected_document, line_index, &|| {
-                                self.cancellation.is_cancelled()
-                            })
-                            .map_err(|failure| match failure {
-                                crate::parser_support::ParseFailure::Cancelled => {
-                                    PreprocessFailure::Cancelled
-                                }
+                    {
+                        let parsed = match crate::attributes::parse_lines(
+                            &cursor.document,
+                            line_index,
+                            &|| cancellation.is_cancelled(),
+                        ) {
+                            Ok(parsed) => parsed,
+                            Err(crate::parser_support::ParseFailure::Cancelled) => {
+                                return PreprocessStep::Cancelled;
+                            }
+                            Err(
                                 crate::parser_support::ParseFailure::Position(_)
                                 | crate::parser_support::ParseFailure::Budget(_)
-                                | crate::parser_support::ParseFailure::InternalInvariant => error(
+                                | crate::parser_support::ParseFailure::InternalInvariant,
+                            ) => {
+                                return PreprocessStep::Failed(error(
                                     PreprocessErrorKind::InternalInvariant,
                                     source_id.clone(),
                                     line.range,
                                     "attribute preprocessing failed",
-                                )
-                                .into(),
-                            })?
-                    {
-                        self.state.apply_attribute(&occurrence);
-                        document_attribute = true;
-                        if last_line > line_index {
-                            attribute_value_through = Some(last_line);
+                                ));
+                            }
+                        };
+                        if let Some((occurrence, _, last_line)) = parsed {
+                            self.state.apply_attribute(&occurrence);
+                            document_attribute = true;
+                            if last_line > line_index {
+                                cursor.attribute_value_through = Some(last_line);
+                            }
                         }
                     }
-                    self.append(&line.text, source_id.clone(), line.range, line.mapping)?;
+                    if let Err(failure) =
+                        self.append(&line.text, source_id.clone(), line.range, line.mapping)
+                    {
+                        return failure.into_step();
+                    }
                     self.state.finish_line(document_attribute, content);
+                    self.stack.push(cursor);
                 }
                 RecognizedDirective::Include(_)
                 | RecognizedDirective::Escaped(_)
-                | RecognizedDirective::Text => {}
+                | RecognizedDirective::Text => self.stack.push(cursor),
             }
         }
-        if !conditions.is_empty() {
-            return Err(error(
-                PreprocessErrorKind::UnclosedConditional,
-                source_id,
-                zero_range(),
-                "conditional directive is not closed",
-            )
-            .into());
-        }
-        Ok(())
     }
 
-    fn check_cancelled(&mut self) -> Result<(), PreprocessFailure> {
-        if self.checkpoint.is_cancelled() {
-            Err(PreprocessFailure::Cancelled)
+    fn check_cancelled(
+        &mut self,
+        cancellation: &dyn CancellationCheck,
+    ) -> Result<(), MachineFailure> {
+        if self.until_cancel_check == 0 {
+            self.until_cancel_check = crate::cancellation::CHECKPOINT_INTERVAL - 1;
+            if cancellation.is_cancelled() {
+                return Err(MachineFailure::Cancelled);
+            }
         } else {
-            Ok(())
+            self.until_cancel_check -= 1;
         }
+        Ok(())
     }
 
     fn bump_node(
         &mut self,
         source_id: Option<SourceId>,
         range: TextRange,
-    ) -> Result<(), PreprocessFailure> {
+    ) -> Result<(), MachineFailure> {
         if self.state.register_node(self.options.max_expanded_nodes) == Err(ExpansionLimit::Nodes) {
             return Err(error(
                 PreprocessErrorKind::NodeLimit,
@@ -1022,7 +1331,7 @@ impl Context<'_> {
         source_id: Option<SourceId>,
         origin_range: TextRange,
         mapping: SourceMapping,
-    ) -> Result<(), PreprocessFailure> {
+    ) -> Result<(), MachineFailure> {
         self.source_map
             .append(value, source_id.clone(), origin_range, mapping)
             .map_err(|build_error| match build_error {
@@ -1039,7 +1348,35 @@ impl Context<'_> {
                     "source map segment limit exceeded",
                 ),
             })
-            .map_err(PreprocessFailure::from)
+            .map_err(MachineFailure::from)
+    }
+
+    fn finish(mut self, cancellation: &dyn CancellationCheck) -> PreprocessStep {
+        if cancellation.is_cancelled() {
+            return PreprocessStep::Cancelled;
+        }
+        let mut checkpoint = CancellationCheckpoint::new(cancellation);
+        match self.source_map.finish_cancellable(
+            std::mem::take(&mut self.directives),
+            std::mem::take(&mut self.notices),
+            &mut checkpoint,
+        ) {
+            Ok(_) if cancellation.is_cancelled() => PreprocessStep::Cancelled,
+            Ok(document) => PreprocessStep::Complete(document),
+            Err(source_map::SourceMapFinishError::Cancelled) => PreprocessStep::Cancelled,
+            Err(source_map::SourceMapFinishError::Invariant) => {
+                PreprocessStep::Failed(PreprocessError {
+                    kind: PreprocessErrorKind::InternalInvariant,
+                    source_id: self.options.source_id.clone(),
+                    range: zero_range(),
+                    requested_target: None,
+                    target: None,
+                    message:
+                        "source map segments are unsorted, overlapping, or outside expanded source"
+                            .to_owned(),
+                })
+            }
+        }
     }
 }
 
@@ -1430,6 +1767,7 @@ fn zero_range() -> TextRange {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -1444,6 +1782,311 @@ mod tests {
         fn is_cancelled(&self) -> bool {
             self.checks.fetch_add(1, Ordering::Relaxed) >= self.completed_checks
         }
+    }
+
+    struct DeferredLookup<'a> {
+        snapshot: &'a ResourceSnapshot,
+        lookups: Cell<usize>,
+    }
+
+    impl ResourceLookup for DeferredLookup<'_> {
+        fn lookup(&self, _target: &str) -> ResourceLookupResult {
+            self.lookups.set(self.lookups.get().saturating_add(1));
+            ResourceLookupResult::Deferred
+        }
+    }
+
+    fn deferred_preprocess(
+        source: &str,
+        snapshot: &ResourceSnapshot,
+        options: &PreprocessOptions,
+    ) -> (
+        Result<PreprocessedDocument, PreprocessError>,
+        Vec<String>,
+        usize,
+    ) {
+        let lookup = DeferredLookup {
+            snapshot,
+            lookups: Cell::new(0),
+        };
+        let mut requests = Vec::new();
+        let mut step = preprocess_resumable(source, options, &lookup, &NeverCancel);
+        loop {
+            match step {
+                PreprocessStep::Complete(document) => {
+                    return (Ok(document), requests, lookup.lookups.get());
+                }
+                PreprocessStep::NeedResource(suspended) => {
+                    let target = suspended.request().target().to_owned();
+                    requests.push(target.clone());
+                    let response = lookup
+                        .snapshot
+                        .get(&target)
+                        .cloned()
+                        .map_or(ResourceResponse::NotFound, ResourceResponse::Found);
+                    step = suspended.resume(response, &lookup, &NeverCancel);
+                }
+                PreprocessStep::Failed(error) => {
+                    return (Err(error), requests, lookup.lookups.get());
+                }
+                PreprocessStep::Cancelled => panic!("NeverCancel cannot cancel preprocessing"),
+            }
+        }
+    }
+
+    fn resource(source_id: &str, source: impl Into<Arc<str>>) -> ResourceDocument {
+        ResourceDocument {
+            source_id: SourceId::new(source_id),
+            source: source.into(),
+        }
+    }
+
+    #[test]
+    fn flat_deferred_resources_resume_once_without_reprocessing_directives() {
+        const INCLUDE_COUNT: usize = 32;
+        let source = (0..INCLUDE_COUNT)
+            .map(|index| format!("include::part-{index}.adoc[]\n"))
+            .collect::<String>();
+        let snapshot = (0..INCLUDE_COUNT)
+            .map(|index| {
+                (
+                    format!("part-{index}.adoc"),
+                    resource(&format!("part-{index}"), format!("part {index}\n")),
+                )
+            })
+            .collect::<ResourceSnapshot>();
+        let options = PreprocessOptions::default();
+        let expected = preprocess(&source, &snapshot, &options).expect("one-shot preprocessing");
+        RESUMABLE_INCLUDE_VISITS.with(|visits| visits.set(0));
+
+        let (actual, requests, lookups) = deferred_preprocess(&source, &snapshot, &options);
+        let actual = actual.expect("resumable preprocessing");
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.source_map(), expected.source_map());
+        assert_eq!(actual.directives, expected.directives);
+        assert_eq!(actual.notices, expected.notices);
+        assert_eq!(requests.len(), INCLUDE_COUNT);
+        assert_eq!(lookups, INCLUDE_COUNT);
+        RESUMABLE_INCLUDE_VISITS.with(|visits| assert_eq!(visits.get(), INCLUDE_COUNT));
+    }
+
+    #[test]
+    fn nested_and_attribute_dependent_includes_preserve_read_order() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert(
+            "attributes.adoc",
+            resource("attributes", ":selected: nested\ninclude::child.adoc[]\n"),
+        );
+        snapshot.insert(
+            "child.adoc",
+            resource("child", "child\ninclude::grandchild.adoc[]\n"),
+        );
+        snapshot.insert("grandchild.adoc", resource("grandchild", "grandchild\n"));
+        snapshot.insert("nested.adoc", resource("nested", "selected\n"));
+        let source = "include::attributes.adoc[]\ninclude::{selected}.adoc[]\n";
+        let options = PreprocessOptions::default();
+        let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
+        RESUMABLE_INCLUDE_VISITS.with(|visits| visits.set(0));
+
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+
+        assert_eq!(actual.expect("resumable preprocessing"), expected);
+        assert_eq!(
+            requests,
+            [
+                "attributes.adoc",
+                "child.adoc",
+                "grandchild.adoc",
+                "nested.adoc"
+            ]
+        );
+        RESUMABLE_INCLUDE_VISITS.with(|visits| assert_eq!(visits.get(), 4));
+    }
+
+    #[test]
+    fn suspended_condition_stack_never_requests_an_unreachable_resource() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert("reachable.adoc", resource("reachable", "included\n"));
+        let source = concat!(
+            "ifdef::undefined[]\n",
+            "include::unreachable.adoc[]\n",
+            "endif::[]\n",
+            "include::reachable.adoc[]\n",
+        );
+        let options = PreprocessOptions::default();
+        let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
+
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+
+        assert_eq!(actual.expect("resumable preprocessing"), expected);
+        assert_eq!(requests, ["reachable.adoc"]);
+    }
+
+    #[test]
+    fn optional_absence_is_authoritative_only_after_resume() {
+        let snapshot = ResourceSnapshot::default();
+        let source = "before\ninclude::missing.adoc[optional]\nafter\n";
+        let options = PreprocessOptions::default();
+        let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
+
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+        let actual = actual.expect("resumable preprocessing");
+
+        assert_eq!(actual, expected);
+        assert_eq!(requests, ["missing.adoc"]);
+        assert_eq!(actual.notices.len(), 1);
+        assert_eq!(
+            actual.notices[0].kind,
+            PreprocessNoticeKind::OptionalResourceMissing
+        );
+    }
+
+    #[test]
+    fn repeated_resource_is_acquired_once_but_expanded_each_time() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert("part.adoc", resource("part", "included\n"));
+        let source = "include::part.adoc[]\ninclude::part.adoc[]\n";
+        let options = PreprocessOptions::default();
+        let expected = preprocess(source, &snapshot, &options).expect("one-shot preprocessing");
+
+        let (actual, requests, lookups) = deferred_preprocess(source, &snapshot, &options);
+
+        assert_eq!(actual.expect("resumable preprocessing"), expected);
+        assert_eq!(requests, ["part.adoc"]);
+        assert_eq!(lookups, 1);
+    }
+
+    #[test]
+    fn cycle_and_include_limits_do_not_charge_again_after_resume() {
+        let mut cycle_snapshot = ResourceSnapshot::default();
+        cycle_snapshot.insert("part.adoc", resource("part", "include::part.adoc[]\n"));
+        let cycle_source = "include::part.adoc[]\n";
+        let cycle_options = PreprocessOptions::default();
+        let expected_cycle =
+            preprocess(cycle_source, &cycle_snapshot, &cycle_options).expect_err("cycle");
+
+        let (actual_cycle, requests, _) =
+            deferred_preprocess(cycle_source, &cycle_snapshot, &cycle_options);
+
+        assert_eq!(actual_cycle.expect_err("resumable cycle"), expected_cycle);
+        assert_eq!(requests, ["part.adoc"]);
+
+        let source = "include::one.adoc[]\ninclude::two.adoc[]\ninclude::three.adoc[]\n";
+        let snapshot = ["one", "two", "three"]
+            .into_iter()
+            .map(|name| (format!("{name}.adoc"), resource(name, "")))
+            .collect::<ResourceSnapshot>();
+        let accepted = PreprocessOptions {
+            max_includes: 3,
+            ..PreprocessOptions::default()
+        };
+        let expected = preprocess(source, &snapshot, &accepted).expect("exact include limit");
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &accepted);
+        assert_eq!(actual.expect("resumable exact include limit"), expected);
+        assert_eq!(requests.len(), 3);
+
+        let rejected = PreprocessOptions {
+            max_includes: 2,
+            ..PreprocessOptions::default()
+        };
+        let expected = preprocess(source, &snapshot, &rejected).expect_err("include limit");
+        let (actual, requests, _) = deferred_preprocess(source, &snapshot, &rejected);
+        assert_eq!(actual.expect_err("resumable include limit"), expected);
+        assert_eq!(requests.len(), 2);
+    }
+
+    #[test]
+    fn cumulative_node_byte_and_source_map_limits_survive_every_suspension() {
+        let source = "include::one.adoc[]\ninclude::two.adoc[]\n";
+        let snapshot = [
+            ("one.adoc".to_owned(), resource("one", "a\n")),
+            ("two.adoc".to_owned(), resource("two", "b\n")),
+        ]
+        .into_iter()
+        .collect::<ResourceSnapshot>();
+
+        for options in [
+            PreprocessOptions {
+                max_expanded_nodes: 4,
+                ..PreprocessOptions::default()
+            },
+            PreprocessOptions {
+                max_total_bytes: 4,
+                ..PreprocessOptions::default()
+            },
+            PreprocessOptions {
+                max_source_map_segments: 2,
+                ..PreprocessOptions::default()
+            },
+        ] {
+            let expected = preprocess(source, &snapshot, &options).expect("exact limit");
+            let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+            assert_eq!(actual.expect("resumable exact limit"), expected);
+            assert_eq!(requests.len(), 2);
+        }
+
+        for options in [
+            PreprocessOptions {
+                max_expanded_nodes: 3,
+                ..PreprocessOptions::default()
+            },
+            PreprocessOptions {
+                max_total_bytes: 3,
+                ..PreprocessOptions::default()
+            },
+            PreprocessOptions {
+                max_source_map_segments: 1,
+                ..PreprocessOptions::default()
+            },
+        ] {
+            let expected = preprocess(source, &snapshot, &options).expect_err("limit exceeded");
+            let (actual, requests, _) = deferred_preprocess(source, &snapshot, &options);
+            assert_eq!(actual.expect_err("resumable limit exceeded"), expected);
+            assert_eq!(requests.len(), 2);
+        }
+    }
+
+    #[test]
+    fn cancellation_discards_a_suspended_run_without_exposing_partial_output() {
+        let mut snapshot = ResourceSnapshot::default();
+        snapshot.insert("part.adoc", resource("part", "included\n"));
+        let lookup = DeferredLookup {
+            snapshot: &snapshot,
+            lookups: Cell::new(0),
+        };
+        let step = preprocess_resumable(
+            "prefix\ninclude::part.adoc[]\n",
+            &PreprocessOptions::default(),
+            &lookup,
+            &NeverCancel,
+        );
+        let PreprocessStep::NeedResource(suspended) = step else {
+            panic!("preprocessing must suspend");
+        };
+        let cancellation = crate::core::CancellationToken::new();
+        cancellation.cancel();
+
+        assert!(matches!(
+            suspended.resume(
+                ResourceResponse::Found(resource("part", "included\n")),
+                &lookup,
+                &cancellation,
+            ),
+            PreprocessStep::Cancelled
+        ));
+    }
+
+    #[test]
+    fn resumable_public_state_can_cross_a_worker_boundary() {
+        fn assert_send<T: Send>() {}
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send::<PreprocessStep>();
+        assert_send::<SuspendedPreprocess>();
+        assert_send_sync::<ResourceRequest>();
+        assert_send_sync::<ResourceResponse>();
+        assert_send_sync::<ResourceLookupResult>();
     }
 
     #[test]
