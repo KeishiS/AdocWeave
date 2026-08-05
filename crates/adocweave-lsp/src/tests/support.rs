@@ -148,23 +148,34 @@ pub(super) fn change(
     Ok(true)
 }
 
-pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
-    let analysis = job
-        .request
-        .analyze(job.cancellation.as_ref())
-        .expect("analysis");
-    assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
-    if let Some(problem) = &job.workspace_problem {
-        assert_eq!(
-            service.adopt_workspace_problem(&job, problem.clone()),
-            Adoption::Adopted
-        );
-        return;
-    }
-    if let Some(input) = &job.workspace {
+pub(super) fn adopt(service: &mut LanguageService, mut job: AnalysisJob) {
+    loop {
+        let analysis = job
+            .request
+            .analyze(job.cancellation.as_ref())
+            .expect("analysis");
+        assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
+        if let Some(problem) = &job.workspace_problem {
+            assert_eq!(
+                service.adopt_workspace_problem(&job, problem.clone()),
+                Adoption::Adopted
+            );
+            return;
+        }
+        let Some(input) = &job.workspace else {
+            return;
+        };
         let analysis = match input.analyze(&job.request.options, job.cancellation.as_ref()) {
             Ok(analysis) => analysis,
             Err(error) => {
+                if let Some(target) = error.requested_resource()
+                    && let Some(retry) = service
+                        .resolve_missing_include(&job, target)
+                        .expect("resolve missing include")
+                {
+                    job = retry;
+                    continue;
+                }
                 assert_eq!(
                     service.adopt_workspace_problem(
                         &job,
@@ -187,6 +198,7 @@ pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
             }
         };
         assert_eq!(service.adopt_workspace(&job, analysis), Adoption::Adopted);
+        return;
     }
 }
 

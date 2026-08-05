@@ -348,10 +348,17 @@ impl Backend {
     }
 
     fn schedule_analysis(&mut self, job: AnalysisJob) {
+        self.schedule_analysis_with_delay(job, self.service.debounce_ms());
+    }
+
+    fn schedule_analysis_immediately(&mut self, job: AnalysisJob) {
+        self.schedule_analysis_with_delay(job, 0);
+    }
+
+    fn schedule_analysis_with_delay(&mut self, job: AnalysisJob, debounce_ms: u64) {
         self.cancel_analysis(&job.uri);
         let limit = self.cpu_limit.clone();
         let client = self.client.clone();
-        let debounce_ms = self.service.debounce_ms();
         let uri = job.uri.clone();
         let generation = job.request.revision.generation;
         let handle = tokio::spawn(async move {
@@ -419,11 +426,15 @@ impl Backend {
         {
             self.analysis_tasks.remove(&completed.job.uri);
         }
+        if let Some(retry) = self.service.refresh_stale_workspace(&completed.job) {
+            self.schedule_analysis_immediately(retry);
+            return ControlFlow::Continue(());
+        }
         let mut resolution_problem = None;
         if let Some(target) = &completed.missing_resource {
             match self.service.resolve_missing_include(&completed.job, target) {
                 Ok(Some(retry)) => {
-                    self.schedule_analysis(retry);
+                    self.schedule_analysis_immediately(retry);
                     return ControlFlow::Continue(());
                 }
                 Ok(None) => {}

@@ -145,6 +145,13 @@ fn include_added_after_initial_scan_loads_an_excluded_target() {
         .resolve_missing_include(&job, &target)
         .expect("resolve missing include")
         .expect("replacement analysis");
+    assert_eq!(retry.include_resolution_attempts.len(), 1);
+    assert!(
+        service
+            .resolve_missing_include(&retry, &target)
+            .expect("reject repeated target")
+            .is_none()
+    );
     adopt(&mut service, retry);
 
     let analysis = service
@@ -226,6 +233,134 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
             .resolve_missing_include(&stale_job, &target)
             .expect("ignore stale analysis")
             .is_none()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("adocweave-concurrent-include-{unique}"));
+    let excluded = root.join("generated");
+    fs::create_dir_all(&excluded).expect("workspace directory");
+    fs::write(
+        root.join(adocweave_config::FILE_NAME),
+        concat!(
+            "schema-version = 1\n",
+            "[resources]\ninclude = true\nroots = [\".\"]\n",
+            "[workspace.scan]\nexclude = [\"generated\"]\n",
+        ),
+    )
+    .expect("configuration");
+    let first_path = root.join("first.adoc");
+    let second_path = root.join("second.adoc");
+    let first_source = "include::generated/first-part.adoc[]\n";
+    let second_source = "include::generated/second-part.adoc[]\n";
+    fs::write(&first_path, first_source).expect("first root");
+    fs::write(&second_path, second_source).expect("second root");
+    fs::write(excluded.join("first-part.adoc"), "first marker\n").expect("first include");
+    fs::write(excluded.join("second-part.adoc"), "second marker\n").expect("second include");
+    let root_uri = lsp::Url::from_directory_path(&root).expect("root URI");
+    let first_uri = lsp::Url::from_file_path(&first_path).expect("first URI");
+    let second_uri = lsp::Url::from_file_path(&second_path).expect("second URI");
+    let mut service = LanguageService::default();
+    initialize_with_params(
+        &mut service,
+        typed(json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "capabilities": {}
+        })),
+    );
+    let first_job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": first_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": first_source
+            }
+        })))
+        .pop()
+        .expect("first job");
+    let second_job = service
+        .begin_open(typed(json!({
+            "textDocument": {
+                "uri": second_uri,
+                "languageId": "asciidoc",
+                "version": 1,
+                "text": second_source
+            }
+        })))
+        .pop()
+        .expect("second job");
+
+    let first_job = service
+        .refresh_stale_workspace(&first_job)
+        .expect("first job follows the generation changed by opening the second document");
+    let first_target = first_job
+        .workspace
+        .as_ref()
+        .expect("first workspace")
+        .analyze(&first_job.request.options, first_job.cancellation.as_ref())
+        .expect_err("first missing include")
+        .requested_resource()
+        .expect("first target")
+        .clone();
+    let first_retry = service
+        .resolve_missing_include(&first_job, &first_target)
+        .expect("load first include")
+        .expect("first retry");
+
+    let second_current = service
+        .refresh_stale_workspace(&second_job)
+        .expect("second job follows the generation changed by the first include");
+    let second_target = second_current
+        .workspace
+        .as_ref()
+        .expect("second current workspace")
+        .analyze(
+            &second_current.request.options,
+            second_current.cancellation.as_ref(),
+        )
+        .expect_err("second missing include")
+        .requested_resource()
+        .expect("second target")
+        .clone();
+    let second_retry = service
+        .resolve_missing_include(&second_current, &second_target)
+        .expect("load second include")
+        .expect("second retry");
+    let first_current = service
+        .refresh_stale_workspace(&first_retry)
+        .expect("first job follows the generation changed by the second include");
+
+    adopt(&mut service, first_current);
+    adopt(&mut service, second_retry);
+    assert!(
+        service
+            .documents
+            .get(first_uri.as_str())
+            .expect("first document")
+            .workspace_analysis()
+            .expect("first analysis")
+            .analysis
+            .source()
+            .contains("first marker")
+    );
+    assert!(
+        service
+            .documents
+            .get(second_uri.as_str())
+            .expect("second document")
+            .workspace_analysis()
+            .expect("second analysis")
+            .analysis
+            .source()
+            .contains("second marker")
     );
     fs::remove_dir_all(root).expect("cleanup");
 }
