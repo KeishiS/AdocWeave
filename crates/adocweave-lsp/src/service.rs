@@ -405,10 +405,18 @@ impl LanguageService {
     }
 
     pub fn begin_open(&mut self, params: lsp::DidOpenTextDocumentParams) -> Vec<AnalysisJob> {
-        if self.workspace_error.is_some() {
-            return Vec::new();
-        }
         let document = params.text_document;
+        if let Some(error) = self.workspace_error.clone() {
+            let options = self.analysis_options_for(None);
+            let mut job = self.documents.begin_open_with_options(
+                document.uri.to_string(),
+                document.version,
+                document.text,
+                options,
+            );
+            attach_workspace(&mut job, Err(error));
+            return vec![job];
+        }
         let affected = match self.workspace.upsert_open(
             document.uri.clone(),
             i64::from(document.version),

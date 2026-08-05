@@ -932,7 +932,21 @@ fn invalid_project_configuration_does_not_fall_back_to_default_analysis() {
             "capabilities": {}
         })),
     );
-    open(&mut service, document_uri.as_str(), 1, "trailing \n");
+    let jobs = service.begin_open(typed(json!({
+        "textDocument": {
+            "uri": document_uri,
+            "languageId": "asciidoc",
+            "version": 1,
+            "text": "trailing \n"
+        }
+    })));
+    assert_eq!(jobs.len(), 1, "the workspace error must be publishable");
+    assert!(jobs[0].workspace.is_none());
+    assert!(jobs[0].workspace_problem.is_some());
+    for job in jobs {
+        adopt(&mut service, job);
+    }
+    assert!(service.documents.get(document_uri.as_str()).is_some());
 
     let diagnostics = service.diagnostics(&document_uri).expect("diagnostics");
     assert!(diagnostics.diagnostics.iter().any(|diagnostic| {
