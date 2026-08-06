@@ -50,11 +50,23 @@ local target検査とinclude読込を無効にするか、書換え不能なsnap
 同じfilesystem adapterを使用します。本文を読む処理は、用途ごとに一つのsessionと処理上限を共有します。成功cacheは
 検証後のcanonical pathをkeyとして、同じcommand内で最初に取得した本文を保持します。file identityはpath検証に
 使用しますが、cache keyとしては保持しません。このため、同じpathのfileが別のinodeへ置き換わっても通常の読込APIは
-command内のsnapshotを返します。明示的な再読込APIは本文cacheと処理予算を一つのtransactionとして置き換え、呼出側の
-state更新が失敗した場合はrollback値を使って両方を直前の状態へ戻します。失敗もcommand内だけでcacheし、次のcommandでは
+command内のsnapshotを返します。sessionを直接変更する明示的な再読込APIは本文cacheと処理予算を一つのtransactionとして
+置き換え、呼出側のstate更新が失敗した場合はrollback値を使って両方を直前の状態へ戻します。失敗もcommand内だけでcacheし、次のcommandでは
 再検査します。Language Serverのfile変更通知では同じsessionと処理上限を維持したまま
 対象を再度openし、古い本文cacheを使用しません。診断とsource mapには論理的な``SourceId``を使用し、OS pathや
 handleを公開しません。
+
+複数のfilesystem操作をほかの状態更新とまとめて採用する場合、呼出側は
+``LocalFilesystemSession::draft``でlive stateから隔離した候補を作ります。読込、再読込、走査およびbindingの解放は
+候補だけを変更し、draftを破棄した場合はlive stateを変更しません。draft内の操作が失敗した場合は、そのdraftを
+採用できません。``prepare_commit``はsession ID、開始時のrevisionおよび排他的なleaseを検証します。検証後の
+``PreparedFilesystemCommit::commit``は候補stateの移動とrevisionの更新だけを行うため、失敗しません。sessionを
+直接変更するAPIが呼ばれた場合、その時点のdraftは無効になり、後から採用できません。
+
+各``LocalFilesystemSession``はプロセス内で再利用しない不透明なIDを持ちます。読込結果の
+``FilesystemResourceBinding``はsession ID、候補path、検証済みcanonical pathおよびbinding generationを
+対応付けます。このgenerationは、draftを破棄した場合も再利用しません。draftでbindingを解放する場合は、別sessionの
+bindingを拒否し、現在のgenerationとの比較によって``Released``、``Stale``または``Missing``を返します。
 
 ``LocalFilesystemSession``はrootごとのadapterと全rootで共有する処理上限を所有します。
 ``LocalFilesystemPolicy``は正規化したpathだけでなく取得済みのroot handleも所有し、session作成時にpathから
@@ -75,9 +87,9 @@ Linuxの``format --write``と``check --fix``は、入力読込時に選んだaut
 内容の再確認、一時ファイルの作成およびrenameを同じディレクトリhandleに対して実行します。
 ``LocalFilesystemPolicy``が同時に保持するrootは128件までとします。この上限は本文の読込件数とは独立して適用し、
 設定や引数だけでprocessのfile descriptorを使い切ることを防ぎます。
-``LoadedFilesystemSource``は``LogicalSourceId``と不変な本文を保持し、検査したfileのprovenanceを
-直接構築できないfieldに分離します。読込後にpathを再度openせず、論理ID、本文およびprovenanceを
-一回の読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
+``LoadedFilesystemSource``は``LogicalSourceId``、不変な本文および世代付き``FilesystemResourceBinding``を保持し、
+検査したfileのprovenanceを直接構築できないfieldに分離します。読込後にpathを再度openせず、これらを一回の
+読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
 診断とsource mapには論理IDを使用します。
 
 == 検証方針

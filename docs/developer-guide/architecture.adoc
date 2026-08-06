@@ -68,8 +68,13 @@ path検査後に別のfileを開き直しません。
 初期ディレクトリ列挙、symlink判定、UTF-8読込およびfile数・byte数の上限も同じsessionが担当します。
 policyが保持するroot数には128件の独立した上限を設けます。呼出側はroot pathの配列をsessionと別に保持せず、
 取得元のauthorityと選択済みrootの対応を``LocalFilesystemAccess``に保ちます。
-論理的なsource ID、不変な本文およびfilesystem provenanceは一つの読込結果として構築します。
+論理的なsource ID、不変な本文、filesystem provenanceおよび世代付きresource bindingは一つの読込結果として
+構築します。
 依存関係を監視するadapter以外はcanonical pathを利用せず、診断やsource mapの識別子にも使用しません。
+
+``LocalFilesystemSession``はプロセス内で一意な不透明IDを持ちます。一つのsessionで複数のfilesystem操作をまとめて
+採用する呼出側は、live stateから隔離した``LocalFilesystemDraft``で候補を構築します。候補を破棄してもlive stateは
+変わらず、session identity、revisionおよびleaseを検証した後のcommitだけが候補全体を置き換えます。
 
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
 設定は解析とI/O policyへの入力であり、ワークスペース外へのアクセス権限を追加しません。
