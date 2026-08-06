@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   actions: read
@@ -14,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   changes:
@@ -67,11 +65,7 @@ jobs:
             < changed-paths.txt
       - id: version
         run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="v$(jq -r .packageVersion release-manifest.json)"
-          fi
+          tag="v$(jq -r .packageVersion release-manifest.json)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   preflight:
@@ -93,46 +87,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
       manifest: ${{ steps.plan.outputs.manifest }}
-      publishing: ${{ steps.plan.outputs.publishing }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Publication tag verification against the current main commit
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          git fetch origin main:refs/remotes/origin/main
-          test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
       - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - id: candidate
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA&per_page=100")"
-          run_id="$(jq -r '[.[].workflow_runs[] | select(.head_branch == "main" and .head_sha == env.GITHUB_SHA and .conclusion == "success") | .id] | max // empty' <<<"$runs")"
-          if [ -z "$run_id" ]; then
-            echo "no successful main candidate exists for $GITHUB_SHA" >&2
-            exit 1
-          fi
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - id: plan
         env:
           CANDIDATE_TAG: ${{ needs.changes.outputs.tag }}
         run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            publishing=true
-          else
-            publishing=false
-          fi
           tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG" --output-format=json > plan.json
-          {
-            echo "manifest=$(jq -c . plan.json)"
-            echo "publishing=$publishing"
-          } >> "$GITHUB_OUTPUT"
+          echo "manifest=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
 
   quality:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
@@ -466,52 +433,3 @@ jobs:
             test "$NATIVE_SMOKE_RESULT" = skipped
             test "$INSTALLATION_RESULT" = skipped
           fi
-
-  reuse-candidate:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [release-plan]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-candidate
-          path: artifacts
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.release-plan.outputs.candidate_run_id }}
-      - name: Reused candidate verification
-        run: node tools/release-metadata.mjs verify artifacts "$GITHUB_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-candidate
-          if-no-files-found: error
-          retention-days: 1
-          path: artifacts/*
-
-  publish:
-    if: needs.release-plan.outputs.publishing == 'true'
-    needs: [release-plan, reuse-candidate]
-    uses: ./.github/workflows/release-publish.yml
-    with:
-      plan: ${{ needs.release-plan.outputs.manifest }}
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-
-  textlint-plugin-post-release-smoke:
-    if: startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success'
-    needs: [publish]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
-      - name: Published textlint asset, checksum, and one-shot npx observation
-        run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke

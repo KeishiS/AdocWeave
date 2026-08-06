@@ -126,6 +126,7 @@ args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 [tasks.release-contract]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
 dependencies = [
+  "release-intent-check",
   "release-version-check",
   "release-metadata-test",
   "release-notes-test",
@@ -149,6 +150,21 @@ cargo metadata --manifest-path editors/zed/Cargo.toml --locked --format-version=
 node tools/verify-cargo-release-metadata.mjs "$metadata" "$zed_metadata"
 node tools/generate-third-party-notices.mjs "$notice"
 '''
+
+[tasks.release-intent-check]
+description = "Verify the machine-readable release preparation state"
+dependencies = ["release-intent-test"]
+command = "node"
+args = ["tools/release-intent.mjs"]
+
+[tasks.release-intent-test]
+description = "Test release intent validation and version transitions"
+command = "node"
+args = [
+  "--test",
+  "tools/release-intent.test.mjs",
+  "tools/release-readiness.test.mjs",
+]
 
 [tasks.release-version-check]
 description = "Verify the explicit release version allowlist and generated outputs"
