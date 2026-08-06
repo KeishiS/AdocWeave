@@ -1182,3 +1182,51 @@ test("private draft publication must use the returned upload URL and avoid tag-o
     /tag-only release API/,
   );
 });
+
+test("host unit tests on Darwin and Windows cannot be dropped or deferred", () => {
+  const inputs = loadWorkflowPolicyInputs();
+  const darwinStep =
+    "      - name: Darwin host unit tests\n" +
+    "        if: endsWith(matrix.target, '-apple-darwin')\n" +
+    "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n";
+  const windowsStep =
+    "      - name: Windows host unit tests\n" +
+    "        if: matrix.build == 'windows'\n" +
+    "        shell: pwsh\n" +
+    "        run: cargo test -p adocweave-host --all-features\n";
+
+  for (const [step, pattern] of [
+    [darwinStep, /Darwin host unit test step is missing/],
+    [windowsStep, /Windows host unit test step is missing/],
+  ]) {
+    const release = inputs.release.replace(step, "");
+    assert.notEqual(release, inputs.release);
+    assert.throws(() => validateReleaseWorkflowPolicy({ ...inputs, release }), pattern);
+  }
+
+  // Running the tests after the archive is built would let a failing platform
+  // still produce the artefact the smoke tests then certify.
+  const deferredDarwin = inputs.release
+    .replace(darwinStep, "")
+    .replace(
+      "      - name: Darwin archive portability normalization\n",
+      `${darwinStep}      - name: Darwin archive portability normalization\n`,
+    );
+  assert.notEqual(deferredDarwin, inputs.release);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, release: deferredDarwin }),
+    /Darwin host unit tests must run before the archive they certify/,
+  );
+
+  const wideningDarwin = inputs.release.replace(
+    "        if: endsWith(matrix.target, '-apple-darwin')\n" +
+    "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
+    "        if: matrix.build == 'nix'\n" +
+    "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
+  );
+  assert.notEqual(wideningDarwin, inputs.release);
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({ ...inputs, release: wideningDarwin }),
+    /Darwin host unit tests must be limited to Darwin targets/,
+  );
+});

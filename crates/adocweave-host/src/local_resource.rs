@@ -800,10 +800,10 @@ impl LocalFilesystemView<'_> {
                 {
                     continue;
                 }
+                self.state.meter.observe_directory_read();
                 let directory = policy
                     .open_directory_no_symlinks(&path)
                     .map_err(ResourceError::from)?;
-                self.state.meter.observe_directory_read();
                 let mut entries =
                     Dir::read_from(&directory).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
@@ -3120,6 +3120,36 @@ mod tests {
                 directory_entries: 1,
             }
         );
+    }
+
+    /// A directory that disappears between being queued and being opened fails
+    /// the scan on every platform. The failed enumeration is still counted,
+    /// because the work of attempting it was performed. The two implementations
+    /// report different errors for it, so this asserts only what both promise.
+    #[test]
+    fn a_failed_directory_enumeration_still_counts_the_attempt() {
+        let root = TestDir::new("meter-directory-enumeration-failure");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        fs::write(nested.join("a.adoc"), "abc").expect("source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let meter = session.state.meter.clone();
+
+        let result = LocalFilesystemView {
+            state: &session.state,
+        }
+        .discover_adoc_paths_with_control(
+            LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            |_, _| {
+                // The scan has queued `nested` and is about to enumerate it.
+                let _ = fs::remove_dir_all(&nested);
+                false
+            },
+            || false,
+        );
+
+        assert!(result.is_err(), "a vanished directory must fail the scan");
+        assert_eq!(meter.usage().directory_read_operations, 2);
     }
 
     /// Entries are counted as the iterator yields them, before anything decides
