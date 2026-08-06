@@ -9,10 +9,11 @@ mod local_target;
 
 pub use exit_status::ExitStatus;
 pub use local_resource::{
-    DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadRollback, FilesystemReleaseOutcome,
-    FilesystemResourceBinding, LoadedFilesystemSource, LocalFilesystemAccess, LocalFilesystemDraft,
-    LocalFilesystemPolicy, LocalFilesystemSession, LocalFilesystemSessionId, LogicalSourceId,
-    PreparedFilesystemCommit, ResourceBudget, ResourceError,
+    DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadLimits, FilesystemReadRollback,
+    FilesystemReleaseOutcome, FilesystemResourceBinding, LoadedFilesystemSource,
+    LocalFilesystemAccess, LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession,
+    LocalFilesystemSessionId, LogicalSourceId, PreparedFilesystemCommit, ResourceBudget,
+    ResourceError,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalBytes, LoadedLocalTarget, LocalTargetError,
