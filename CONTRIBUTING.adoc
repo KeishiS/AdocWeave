@@ -237,11 +237,13 @@ node tools/sync-release-version.mjs --check
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
 . release対象のPull Requestをすべて統合し、main向けのopen Pull Requestがないことを確認します。
 . ``release/intent.json``の``state``だけを``preparing``から``ready``へ変更するfinalization Pull Requestを作成し、
-  必須checkの成功後にmainへ統合します。versionとgenerationは変更しません。
+  必須checkの成功後にsquash mergeでmainへ統合します。versionとgenerationは変更しません。
+  公開workflowが単一親の候補commitを要求するため、merge commitまたはrebase mergeは使用しません。
 . finalization Pull Requestのmerge commitに対するmain candidateが成功してから、次のように公開workflowを実行します。
 +
 [source,console]
 ----
+git fetch upstream main
 candidate_sha="$(git rev-parse upstream/main)"
 gh workflow run release-dispatch.yml \
   --ref main \
@@ -280,7 +282,8 @@ deployment branchを``main``だけに制限します。``RELEASE_PUBLISHER_APP_I
       ``release-manifest.json``と一致しています。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
-* [ ] ``release/intent.json``が対象versionの``ready``であり、finalization Pull Requestはこのfileだけを変更しています。
+* [ ] ``release/intent.json``が対象versionの``ready``であり、finalization Pull Requestはこのfileだけを変更する
+      1 commitのsquash mergeとして統合されています。
 * [ ] ``github-release`` Environmentが``main``だけを許可し、publisher AppのIDと秘密鍵が設定されています。
 * [ ] ``v*`` tag rulesetがtagの作成、更新および削除を制限し、publisher Appだけをbypass対象にしています。
       workflowはこの外部設定を検査しないため、dispatch前にGitHubの設定画面で確認します。

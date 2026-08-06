@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
@@ -41,6 +41,7 @@ jobs:
         name: Reviewed final candidate readiness
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
           FINALIZATION_PR: ${{ inputs.finalization_pr }}
           GH_TOKEN: ${{ github.token }}
         run: node tools/release-readiness.mjs

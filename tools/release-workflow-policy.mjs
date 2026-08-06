@@ -704,16 +704,25 @@ export function validateReleaseWorkflowPolicy({
   }
   const readinessCheckout = step(readiness, (item) => item.uses?.startsWith("actions/checkout@"),
     "release readiness checkout is missing");
-  if (readinessCheckout.with?.ref !== "${{ inputs.candidate_sha }}" ||
+  if (readinessCheckout.with?.ref !== "${{ github.sha }}" ||
       readinessCheckout.with?.["fetch-depth"] !== 0 ||
       readinessCheckout.with?.["fetch-tags"] !== true ||
       readinessCheckout.with?.["persist-credentials"] !== false) {
-    fail("release readiness must inspect complete history at the requested SHA without credentials");
+    fail("release readiness must execute trusted default-branch code with complete history and no credentials");
   }
-  const readinessRun = step(readiness, (item) => item.id === "readiness",
-    "reviewed final candidate readiness step is missing").run;
-  requireExactCommand(readinessRun, "node tools/release-readiness.mjs",
+  const readinessStep = step(readiness, (item) => item.id === "readiness",
+    "reviewed final candidate readiness step is missing");
+  requireExactCommand(readinessStep.run, "node tools/release-readiness.mjs",
     "release readiness must use the tested helper");
+  const readinessEnvironment = Object.fromEntries(Object.entries(readinessStep.env ?? {}).sort());
+  if (JSON.stringify(readinessEnvironment) !== JSON.stringify({
+    CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+    DISPATCH_SHA: "${{ github.sha }}",
+    FINALIZATION_PR: "${{ inputs.finalization_pr }}",
+    GH_TOKEN: "${{ github.token }}",
+  })) {
+    fail("release readiness must bind candidate input to the trusted dispatch SHA evidence");
+  }
   requireNeeds(dispatchJobs.plan, ["readiness"], "publish planning must follow readiness");
   requireNeeds(dispatchJobs["reuse-candidate"], ["readiness", "plan"],
     "candidate reuse must consume readiness and the immutable plan");
@@ -960,6 +969,7 @@ export function validateReleaseWorkflowPolicy({
   const publishRuns = (publishJob?.steps ?? []).map((item) => item.run).filter(Boolean).join("\n");
   for (const [value, message] of [
     ["node tools/release-notes.mjs", "publisher must validate release notes"],
+    ['node tools/release-readiness.mjs --assert-tag-absent "$tag"', "publisher must fail closed when rechecking the stable tag"],
     ["release already exists", "publisher must reject replacement"],
     ['gh api --method POST "repos/$GITHUB_REPOSITORY/releases"', "publisher must create a draft"],
     ["-F draft=true", "publisher must stage a private draft"],
@@ -981,9 +991,15 @@ export function validateReleaseWorkflowPolicy({
   const publisherToken = step(publishJob, (item) =>
     item.uses?.startsWith("actions/create-github-app-token@"),
   "publisher must obtain a scoped GitHub App token");
-  if (publisherToken.with?.["app-id"] !== "${{ vars.RELEASE_PUBLISHER_APP_ID }}" ||
-      publisherToken.with?.["private-key"] !== "${{ secrets.RELEASE_PUBLISHER_PRIVATE_KEY }}") {
-    fail("publisher App credentials must come from the github-release environment");
+  const publisherTokenInputs = Object.fromEntries(
+    Object.entries(publisherToken.with ?? {}).sort(),
+  );
+  if (JSON.stringify(publisherTokenInputs) !== JSON.stringify({
+    "app-id": "${{ vars.RELEASE_PUBLISHER_APP_ID }}",
+    "permission-contents": "write",
+    "private-key": "${{ secrets.RELEASE_PUBLISHER_PRIVATE_KEY }}",
+  })) {
+    fail("publisher App token must request only contents: write with credentials from the github-release environment");
   }
   const tagCreation = step(publishJob, (item) => item.name === "Immutable stable tag creation",
     "publisher must create the frozen stable tag");
@@ -994,7 +1010,21 @@ export function validateReleaseWorkflowPolicy({
   if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(tagCreation)) {
     fail("all release inputs must be attested before stable tag creation");
   }
-  step(publishJob, (item) => item.if === "failure()", "failed publication must clean up its draft");
+  const cleanup = step(publishJob, (item) => item.if === "failure()",
+    "failed publication must clean up its draft");
+  const cleanupEnvironment = Object.fromEntries(Object.entries(cleanup.env ?? {}).sort());
+  if (JSON.stringify(cleanupEnvironment) !== JSON.stringify({
+    GH_TOKEN: "${{ steps.publisher-token.outputs.token }}",
+    RELEASE_ID: "${{ steps.draft.outputs.release-id }}",
+  })) {
+    fail("publisher cleanup must receive only its token and own draft ID");
+  }
+  requireExactCommand(cleanup.run,
+    'if [ -z "$RELEASE_ID" ]; then echo "draft release ID is unavailable; cleanup is not attempted" exit 0 fi ' +
+      'draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" 2>/dev/null || true)" ' +
+      'if [ "$(jq -r \'.draft // false\' <<<"${draft:-{}}")" = true ]; then ' +
+      'gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" fi',
+    "publisher cleanup must only inspect and delete its own known draft ID");
   if (publishRuns.includes("/releases/tags/") ||
       /gh release\s+(upload|view|edit)/.test(publishRuns)) {
     fail("private drafts must never use the tag-only release API");

@@ -315,7 +315,7 @@ installation E2Eを含む完全なcandidateを保存します。candidateが失�
 
 ``main`` candidateはworkflow artifactとして14日間保持します。tagはこの期間内に作成してください。
 期間を過ぎるとartifactが失われ、tagの公開処理は再利用するcandidateを見つけられずに失敗します。
-その場合は、同じコミットへ空でない変更を加えて``main`` candidateを作り直す必要があります。
+その場合は新しいpatch versionを準備し、release対象の変更とfinalization Pull Requestを最初から作り直します。
 
 ``main`` pushのrunは``cancel-in-progress``の対象です。バージョン同期のコミットが``main``へ入った直後に
 別のコミットが入ると、前者のcandidateは取り消されます。finalization Pull Requestを作成する前にrelease対象の

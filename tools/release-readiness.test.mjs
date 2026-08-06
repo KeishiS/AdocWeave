@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  assertTagAbsent,
   collectReadinessEvidence,
+  readCandidateChangedPaths,
   validateReadinessEvidence,
 } from "./release-readiness.mjs";
 
@@ -89,19 +91,22 @@ function apiFixture({ failPath, unboundedOpenPullRequests = false } = {}) {
   return { calls, fetchImpl };
 }
 
-function collect(fetchImpl) {
+function collect(fetchImpl, readChangedPaths = () => ["release/intent.json"]) {
   return collectReadinessEvidence({
     repository: "example/adocweave",
     token: "test-token",
     candidateSha: SHA,
+    dispatchSha: SHA,
     finalizationPullRequest: "42",
     fetchImpl,
+    readChangedPaths,
   });
 }
 
 function evidence() {
   return {
     candidateSha: SHA,
+    dispatchSha: SHA,
     finalizationPullRequest: "42",
     defaultBranch: "main",
     defaultBranchSha: SHA,
@@ -112,6 +117,7 @@ function evidence() {
       sha: SHA,
       parents: [{ sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
     },
+    candidateChangedPaths: ["release/intent.json"],
     pullRequest: {
       number: 42,
       state: "closed",
@@ -152,6 +158,8 @@ test("finalization Pull Requestとintent遷移の不一致を拒否する", () =
     (value) => { value.candidateCommit.sha = "a".repeat(40); },
     (value) => { value.candidateCommit.parents = []; },
     (value) => { value.candidateCommit.parents.push({ sha: "b".repeat(40) }); },
+    (value) => { value.candidateChangedPaths = []; },
+    (value) => { value.candidateChangedPaths.push("README.adoc"); },
     (value) => { value.previousIntent.state = "ready"; },
     (value) => { value.previousIntent.generation = 7; },
     (value) => { value.intent.state = "preparing"; },
@@ -181,6 +189,8 @@ test("未固定のrepository状態と既存公開対象をfail-closedに拒否�
 test("不正なSHAとPull Request番号を拒否する", () => {
   for (const mutate of [
     (value) => { value.candidateSha = "ABC"; },
+    (value) => { value.dispatchSha = "ABC"; },
+    (value) => { value.dispatchSha = "b".repeat(40); },
     (value) => { value.finalizationPullRequest = "0"; },
     (value) => { value.finalizationPullRequest = "01"; },
   ]) {
@@ -207,12 +217,91 @@ test("GitHub APIから複数pageを取得しcandidateの親から直前intentを
   assert.equal(calls.filter((url) => url.pathname.endsWith("/runs")).length, 2);
 });
 
+test("candidateと単一parentのtree差分pathをNUL区切りで取得する", () => {
+  const calls = [];
+  const paths = readCandidateChangedPaths({
+    candidateSha: SHA,
+    parentSha: PARENT_SHA,
+    root: new URL("../", import.meta.url),
+    execFile(command, args, options) {
+      calls.push({ command, args, options });
+      return "release/intent.json\0docs/README.adoc\0";
+    },
+  });
+  assert.deepEqual(paths, ["release/intent.json", "docs/README.adoc"]);
+  assert.deepEqual(calls[0].args, [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    "-z",
+    PARENT_SHA,
+    SHA,
+  ]);
+});
+
+test("Git tree差分の取得失敗をfail-closedにする", async () => {
+  const { fetchImpl } = apiFixture();
+  await assert.rejects(
+    () => collect(fetchImpl, () => { throw new Error("git command failed"); }),
+    /git command failed/,
+  );
+});
+
 test("GitHub APIのHTTP失敗をfail-closedにする", async () => {
   const tagPath = `git/ref/tags/v${PACKAGE_VERSION}`;
   const { fetchImpl } = apiFixture({ failPath: tagPath });
   await assert.rejects(
     () => collect(fetchImpl),
     { message: `GitHub API ${tagPath} がHTTP 503を返しました` },
+  );
+});
+
+test("公開直前のtag再確認は404だけを不存在として扱う", async () => {
+  const path = "git/ref/tags/v1.2.3";
+  await assertTagAbsent({
+    repository: "example/adocweave",
+    token: "test-token",
+    tag: "v1.2.3",
+    fetchImpl: async () => jsonResponse({ message: "Not Found" }, 404),
+  });
+  await assert.rejects(
+    () => assertTagAbsent({
+      repository: "example/adocweave",
+      token: "test-token",
+      tag: "v1.2.3",
+      fetchImpl: async () => jsonResponse({ ref: "refs/tags/v1.2.3" }),
+    }),
+    /すでに存在/,
+  );
+  for (const status of [403, 429, 500, 503]) {
+    await assert.rejects(
+      () => assertTagAbsent({
+        repository: "example/adocweave",
+        token: "test-token",
+        tag: "v1.2.3",
+        fetchImpl: async () => jsonResponse({ message: "failure" }, status),
+      }),
+      { message: `GitHub API ${path} がHTTP ${status}を返しました` },
+    );
+  }
+  await assert.rejects(
+    () => assertTagAbsent({
+      repository: "example/adocweave",
+      token: "test-token",
+      tag: "v1.2.3",
+      fetchImpl: async () => { throw new Error("network unavailable"); },
+    }),
+    /network unavailable/,
+  );
+  await assert.rejects(
+    () => assertTagAbsent({
+      repository: "example/adocweave",
+      token: "test-token",
+      tag: "latest",
+      fetchImpl: async () => { throw new Error("呼ばれません"); },
+    }),
+    /stable tagが不正/,
   );
 });
 

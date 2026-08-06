@@ -158,6 +158,44 @@ test("publisher cannot omit its named environment or cleanup", () => {
     }),
     /clean up its draft/,
   );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace(
+        "          permission-contents: write\n",
+        "          permission-contents: write\n          permission-actions: write\n",
+      ),
+    }),
+    /request only contents: write/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace("          permission-contents: write\n", ""),
+    }),
+    /request only contents: write/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace(
+        '          if [ -z "$RELEASE_ID" ]; then\n',
+        '          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100"\n' +
+          '          if [ -z "$RELEASE_ID" ]; then\n',
+      ),
+    }),
+    /only inspect and delete its own known draft ID/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace(
+        '            exit 0\n',
+        '            true\n',
+      ),
+    }),
+    /only inspect and delete its own known draft ID/,
+  );
 });
 
 test("publisherは公開前に全assetをattestする", () => {
@@ -218,6 +256,26 @@ test("source workflow cannot publish and stable release requires reviewed dispat
       ),
     }),
     /default branch workflow/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      dispatch: inputs.dispatch.replace(
+        "ref: ${{ github.sha }}",
+        "ref: ${{ inputs.candidate_sha }}",
+      ),
+    }),
+    /trusted default-branch code/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      dispatch: inputs.dispatch.replace(
+        "          DISPATCH_SHA: ${{ github.sha }}\n",
+        "",
+      ),
+    }),
+    /trusted dispatch SHA evidence/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -1035,6 +1093,16 @@ test("tag publication must reuse and verify the selected main candidate", () => 
       ),
     }),
     /selected main candidate/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace(
+        'node tools/release-readiness.mjs --assert-tag-absent "$tag"',
+        'if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag"; then exit 1; fi',
+      ),
+    }),
+    /fail closed when rechecking the stable tag/,
   );
 });
 

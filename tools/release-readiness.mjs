@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { validateReleaseIntent } from "./release-intent.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
+const STABLE_TAG = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const MAX_API_PAGES = 100;
 
 function fail(message) {
@@ -21,6 +24,7 @@ function positivePullRequestNumber(value) {
 
 export function validateReadinessEvidence({
   candidateSha,
+  dispatchSha,
   finalizationPullRequest,
   defaultBranch,
   defaultBranchSha,
@@ -28,6 +32,7 @@ export function validateReadinessEvidence({
   previousIntent,
   packageVersion,
   candidateCommit,
+  candidateChangedPaths,
   pullRequest,
   pullRequestFiles,
   openPullRequests,
@@ -38,6 +43,10 @@ export function validateReadinessEvidence({
   if (typeof candidateSha !== "string" || !COMMIT_SHA.test(candidateSha)) {
     fail("candidate SHAは小文字40文字のGit commitである必要があります");
   }
+  if (typeof dispatchSha !== "string" || !COMMIT_SHA.test(dispatchSha) ||
+      dispatchSha !== candidateSha) {
+    fail("candidate SHAは信頼済みmain dispatch SHAと一致する必要があります");
+  }
   const pullRequestNumber = positivePullRequestNumber(finalizationPullRequest);
   if (defaultBranch !== "main" || defaultBranchSha !== candidateSha) {
     fail("candidate SHAがdispatch開始時点のmain先端と一致しません");
@@ -45,6 +54,12 @@ export function validateReadinessEvidence({
   if (candidateCommit?.sha !== candidateSha || candidateCommit.parents?.length !== 1 ||
       !COMMIT_SHA.test(candidateCommit.parents[0]?.sha ?? "")) {
     fail("candidate commitは確認済みの単一親merge commitである必要があります");
+  }
+  const changedPaths = Array.isArray(candidateChangedPaths)
+    ? [...candidateChangedPaths].sort()
+    : [];
+  if (JSON.stringify(changedPaths) !== JSON.stringify(["release/intent.json"])) {
+    fail("candidate commitはrelease/intent.jsonだけを変更する必要があります");
   }
   validateReleaseIntent(intent, packageVersion, { requireReady: true });
   validateReleaseIntent(previousIntent, packageVersion);
@@ -119,6 +134,34 @@ async function requestPages(repository, token, path, query = {}, fetchImpl = glo
   fail(`GitHub API ${path} がpage上限 ${MAX_API_PAGES}に達しました`);
 }
 
+export async function assertTagAbsent({ repository, token, tag, fetchImpl = globalThis.fetch }) {
+  if (!STABLE_TAG.test(tag)) fail("確認するstable tagが不正です");
+  const existing = await requestJson(repository, token, `git/ref/tags/${tag}`, {
+    allowMissing: true,
+    fetchImpl,
+  });
+  if (existing !== undefined) fail(`tag ${tag}はすでに存在します`);
+}
+
+export function readCandidateChangedPaths({
+  candidateSha,
+  parentSha,
+  root = ROOT,
+  execFile = execFileSync,
+}) {
+  try {
+    const output = execFile(
+      "git",
+      ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", parentSha, candidateSha],
+      { cwd: fileURLToPath(root), encoding: "utf8" },
+    );
+    if (typeof output !== "string") fail("git diff-treeの出力形式が不正です");
+    return output.split("\0").filter((path) => path.length !== 0);
+  } catch (error) {
+    fail(`candidate commitのtree差分を取得できません：${error.message}`);
+  }
+}
+
 function decodeContent(value, label) {
   if (value?.encoding !== "base64" || typeof value.content !== "string") {
     fail(`${label}をbase64 fileとして取得できません`);
@@ -130,8 +173,10 @@ export async function collectReadinessEvidence({
   repository,
   token,
   candidateSha,
+  dispatchSha,
   finalizationPullRequest,
   fetchImpl = globalThis.fetch,
+  readChangedPaths = readCandidateChangedPaths,
   root = ROOT,
 }) {
   const pullRequestNumber = positivePullRequestNumber(finalizationPullRequest);
@@ -170,8 +215,14 @@ export async function collectReadinessEvidence({
     "contents/release/intent.json",
     { fetchImpl, query: { ref: candidateCommit.parents[0].sha } },
   );
+  const candidateChangedPaths = readChangedPaths({
+    candidateSha,
+    parentSha: candidateCommit.parents[0].sha,
+    root,
+  });
   return {
     candidateSha,
+    dispatchSha,
     finalizationPullRequest: String(pullRequestNumber),
     defaultBranch,
     defaultBranchSha: branch.sha,
@@ -179,6 +230,7 @@ export async function collectReadinessEvidence({
     previousIntent: decodeContent(previousContent, "finalization前のrelease intent"),
     packageVersion: manifest.packageVersion,
     candidateCommit,
+    candidateChangedPaths,
     pullRequest,
     pullRequestFiles,
     openPullRequests,
@@ -188,18 +240,31 @@ export async function collectReadinessEvidence({
   };
 }
 
-async function main() {
+async function main(args = process.argv.slice(2)) {
   const repository = process.env.GITHUB_REPOSITORY;
   const token = process.env.GH_TOKEN;
+  if (args[0] === "--assert-tag-absent") {
+    if (args.length !== 2 || !repository || !token) {
+      fail("使用方法：node tools/release-readiness.mjs --assert-tag-absent vX.Y.Z");
+    }
+    await assertTagAbsent({ repository, token, tag: args[1] });
+    process.stdout.write(`stable tagが存在しないことを確認しました：${args[1]}\n`);
+    return;
+  }
+  if (args.length !== 0) {
+    fail("使用方法：node tools/release-readiness.mjs");
+  }
   const candidateSha = process.env.CANDIDATE_SHA;
+  const dispatchSha = process.env.DISPATCH_SHA;
   const finalizationPullRequest = process.env.FINALIZATION_PR;
-  if (!repository || !token || !candidateSha || !finalizationPullRequest) {
-    fail("GITHUB_REPOSITORY、GH_TOKEN、CANDIDATE_SHAおよびFINALIZATION_PRが必要です");
+  if (!repository || !token || !candidateSha || !dispatchSha || !finalizationPullRequest) {
+    fail("GITHUB_REPOSITORY、GH_TOKEN、CANDIDATE_SHA、DISPATCH_SHAおよびFINALIZATION_PRが必要です");
   }
   const evidence = await collectReadinessEvidence({
     repository,
     token,
     candidateSha,
+    dispatchSha,
     finalizationPullRequest,
   });
   const result = validateReadinessEvidence(evidence);
