@@ -3,9 +3,10 @@ use std::error::Error;
 use std::fmt;
 #[cfg(not(target_os = "linux"))]
 use std::fs;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
@@ -96,12 +97,62 @@ pub struct LoadedFilesystemSource {
     source_id: LogicalSourceId,
     source: Arc<str>,
     provenance: FilesystemProvenance,
+    binding: FilesystemResourceBinding,
+}
+
+/// Stable opaque identity of one local-filesystem session.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LocalFilesystemSessionId(u64);
+
+/// Generation-specific ownership of one candidate path in a session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilesystemResourceBinding {
+    session_id: LocalFilesystemSessionId,
+    candidate_path: PathBuf,
+    canonical_path: PathBuf,
+    generation: u64,
+}
+
+impl FilesystemResourceBinding {
+    pub const fn session_id(&self) -> LocalFilesystemSessionId {
+        self.session_id
+    }
+
+    pub fn candidate_path(&self) -> &Path {
+        &self.candidate_path
+    }
+
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+}
+
+/// Result of releasing a generation-specific binding from a draft.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilesystemReleaseOutcome {
+    Released,
+    Stale,
+    Missing,
+}
+
+/// An isolated candidate state for one filesystem session.
+///
+/// Dropping this value leaves the live session unchanged. [`Self::commit`]
+/// replaces the live state only after validating its identity and revision.
+#[must_use = "a filesystem draft must be committed or dropped"]
+#[derive(Debug)]
+pub struct LocalFilesystemDraft {
+    session_id: LocalFilesystemSessionId,
+    base_revision: u64,
+    candidate: Option<LocalFilesystemSession>,
+    active: Arc<AtomicBool>,
+    poisoned: bool,
 }
 
 /// Opaque state used to undo one filesystem reread and its command snapshot.
 #[derive(Clone, Debug)]
 pub struct FilesystemReadRollback {
-    session_id: u64,
+    session_id: LocalFilesystemSessionId,
     applied_generation: u64,
     canonical_path: PathBuf,
     candidate_path: PathBuf,
@@ -137,6 +188,10 @@ impl LoadedFilesystemSource {
         &self.source
     }
 
+    pub const fn binding(&self) -> &FilesystemResourceBinding {
+        &self.binding
+    }
+
     pub fn into_parts(self) -> (LogicalSourceId, Arc<str>) {
         (self.source_id, self.source)
     }
@@ -149,14 +204,42 @@ impl LoadedFilesystemSource {
 /// one budget is enforced across every root.
 #[derive(Debug)]
 pub struct LocalFilesystemSession {
-    session_id: u64,
+    session_id: LocalFilesystemSessionId,
+    revision: u64,
+    active_draft: Arc<AtomicBool>,
+    state: LocalFilesystemState,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalFilesystemState {
     next_generation: u64,
+    next_binding_generation: u64,
     roots: Vec<PathBuf>,
     sessions: Vec<LocalTargetSession>,
     limits: FilesystemReadLimits,
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, FilesystemCharge>,
-    candidates: BTreeMap<PathBuf, PathBuf>,
+    candidates: BTreeMap<PathBuf, FilesystemCandidateBinding>,
+}
+
+impl Deref for LocalFilesystemSession {
+    type Target = LocalFilesystemState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for LocalFilesystemSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FilesystemCandidateBinding {
+    canonical_path: PathBuf,
+    generation: u64,
 }
 
 static NEXT_FILESYSTEM_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -368,14 +451,19 @@ impl LocalFilesystemAccess {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, next_session_id)
             .map_err(|_| ResourceError::SessionIdentityExhausted)?;
         Ok(LocalFilesystemSession {
-            session_id,
-            next_generation: 1,
-            roots: self.roots.clone(),
-            sessions,
-            limits: self.limits,
-            budget: ResourceBudget::default(),
-            charged: BTreeMap::new(),
-            candidates: BTreeMap::new(),
+            session_id: LocalFilesystemSessionId(session_id),
+            revision: 0,
+            active_draft: Arc::new(AtomicBool::new(false)),
+            state: LocalFilesystemState {
+                next_generation: 1,
+                next_binding_generation: 1,
+                roots: self.roots.clone(),
+                sessions,
+                limits: self.limits,
+                budget: ResourceBudget::default(),
+                charged: BTreeMap::new(),
+                candidates: BTreeMap::new(),
+            },
         })
     }
 }
@@ -417,12 +505,39 @@ const fn next_session_id(current: u64) -> Option<u64> {
 impl LocalFilesystemSession {
     const MAX_SCAN_ENTRIES: usize = 100_000;
 
+    pub const fn id(&self) -> LocalFilesystemSessionId {
+        self.session_id
+    }
+
+    /// Creates an isolated candidate state without changing this live session.
+    pub fn draft(&self) -> Result<LocalFilesystemDraft, ResourceError> {
+        self.active_draft
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| ResourceError::DraftBusy)?;
+        Ok(LocalFilesystemDraft {
+            session_id: self.session_id,
+            base_revision: self.revision,
+            candidate: Some(self.clone_for_draft()),
+            active: Arc::clone(&self.active_draft),
+            poisoned: false,
+        })
+    }
+
+    fn clone_for_draft(&self) -> Self {
+        Self {
+            session_id: self.session_id,
+            revision: self.revision,
+            active_draft: Arc::clone(&self.active_draft),
+            state: self.state.clone(),
+        }
+    }
+
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
 
     pub const fn limits(&self) -> FilesystemReadLimits {
-        self.limits
+        self.state.limits
     }
 
     /// Returns the retained authority for the deepest root containing `path`.
@@ -444,6 +559,16 @@ impl LocalFilesystemSession {
         &mut self,
         mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
+        let mut draft = self.draft()?;
+        let loaded = draft.scan_utf8(&mut source_id)?;
+        draft.commit(self)?;
+        Ok(loaded)
+    }
+
+    fn scan_utf8_in_place(
+        &mut self,
+        mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
+    ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
         let paths = self.discover_adoc_paths()?;
         if paths.len() > self.limits.max_files {
             return Err(ResourceError::FileLimit {
@@ -454,7 +579,7 @@ impl LocalFilesystemSession {
             .into_iter()
             .map(|path| {
                 let source_id = source_id(&path)?;
-                self.read_utf8(source_id, &path)
+                self.read_utf8_in_place(source_id, &path)
             })
             .collect()
     }
@@ -680,6 +805,17 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let mut draft = self.draft()?;
+        let loaded = draft.read_utf8(source_id, path)?;
+        draft.commit(self)?;
+        Ok(loaded)
+    }
+
+    fn read_utf8_in_place(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
         self.read_utf8_with(source_id, path, || {})
     }
 
@@ -690,16 +826,29 @@ impl LocalFilesystemSession {
         base: &Path,
         target: &str,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let mut draft = self.draft()?;
+        let loaded = draft.read_target_utf8(source_id, base, target)?;
+        draft.commit(self)?;
+        Ok(loaded)
+    }
+
+    fn read_target_utf8_in_place(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
         let index = self.root_index(base)?;
         let candidate = self.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
-        let budget = self.budget;
-        let charged = &self.charged;
-        let candidates = &self.candidates;
-        let limits = self.limits;
+        let state = &mut self.state;
+        let budget = state.budget;
+        let charged = &state.charged;
+        let candidates = &state.candidates;
+        let limits = state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = self.sessions[index]
+        let loaded = state.sessions[index]
             .read_candidate_utf8_with_capacity(
                 &candidate,
                 false,
@@ -728,6 +877,17 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let mut draft = self.draft()?;
+        let loaded = draft.reread_utf8(source_id, path)?;
+        draft.commit(self)?;
+        Ok(loaded)
+    }
+
+    fn reread_utf8_in_place(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
         self.reread_utf8_with_rollback(source_id, path)
             .map(|(loaded, _)| loaded)
     }
@@ -744,12 +904,13 @@ impl LocalFilesystemSession {
     ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
         let index = self.root_index(path)?;
         let candidate_rollback = self.sessions[index].candidate_rollback(path);
-        let budget = self.budget;
-        let charged = &self.charged;
-        let candidates = &self.candidates;
-        let limits = self.limits;
+        let state = &mut self.state;
+        let budget = state.budget;
+        let charged = &state.charged;
+        let candidates = &state.candidates;
+        let limits = state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let (loaded, text_rollback) = match self.sessions[index]
+        let (loaded, text_rollback) = match state.sessions[index]
             .reread_candidate_utf8_with_capacity(path, |canonical| {
                 shared_read_capacity(
                     budget,
@@ -763,7 +924,7 @@ impl LocalFilesystemSession {
             }) {
             Ok(loaded) => loaded,
             Err(error) => {
-                self.sessions[index].rollback_candidate(candidate_rollback);
+                state.sessions[index].rollback_candidate(candidate_rollback);
                 return Err(map_shared_read_error(
                     error,
                     limits,
@@ -816,7 +977,11 @@ impl LocalFilesystemSession {
         if current.generation != rollback.applied_generation {
             return Err(ResourceError::InvalidRollback);
         }
-        if self.candidates.get(&rollback.candidate_path) != Some(&rollback.canonical_path) {
+        if !self
+            .candidates
+            .get(&rollback.candidate_path)
+            .is_some_and(|binding| binding.canonical_path == rollback.canonical_path)
+        {
             return Err(ResourceError::InvalidRollback);
         }
         if let Some((path, _)) = &rollback.accounting.displaced_charge
@@ -842,8 +1007,14 @@ impl LocalFilesystemSession {
         }
         match rollback.accounting.previous_candidate {
             Some(previous) => {
-                self.candidates
-                    .insert(rollback.candidate_path.clone(), previous);
+                let generation = self.reserve_binding_generation()?;
+                self.candidates.insert(
+                    rollback.candidate_path.clone(),
+                    FilesystemCandidateBinding {
+                        canonical_path: previous,
+                        generation,
+                    },
+                );
             }
             None => {
                 self.candidates.remove(&rollback.candidate_path);
@@ -856,9 +1027,12 @@ impl LocalFilesystemSession {
 
     /// Releases the budget charge for a resource removed from the caller's workspace.
     pub fn release(&mut self, path: &Path) {
-        if let Some(canonical) = self.candidates.remove(path)
-            && !self.candidates.values().any(|other| other == &canonical)
-            && let Some(charge) = self.charged.remove(&canonical)
+        if let Some(binding) = self.candidates.remove(path)
+            && !self
+                .candidates
+                .values()
+                .any(|other| other.canonical_path == binding.canonical_path)
+            && let Some(charge) = self.charged.remove(&binding.canonical_path)
         {
             self.budget.release(charge.bytes);
         }
@@ -889,12 +1063,13 @@ impl LocalFilesystemSession {
         let candidate = self.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
+        let max_resource_bytes = self.limits.max_resource_bytes;
         let loaded = self.sessions[index]
             .read_candidate_utf8_with_capacity(&candidate, true, true, after_open, |_| {
                 crate::local_target::CandidateReadCapacity {
                     allow_file: true,
                     max_total_bytes: u64::MAX,
-                    max_resource_bytes: self.limits.max_resource_bytes,
+                    max_resource_bytes,
                 }
             })
             .map_err(ResourceError::from)?;
@@ -916,12 +1091,13 @@ impl LocalFilesystemSession {
         if candidate == self.roots[index] {
             return Err(ResourceError::NotRegularFile(candidate));
         }
-        let budget = self.budget;
-        let charged = &self.charged;
-        let candidates = &self.candidates;
-        let limits = self.limits;
+        let state = &mut self.state;
+        let budget = state.budget;
+        let charged = &state.charged;
+        let candidates = &state.candidates;
+        let limits = state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = self.sessions[index]
+        let loaded = state.sessions[index]
             .read_candidate_utf8_with_capacity(&candidate, false, true, after_open, |canonical| {
                 shared_read_capacity(
                     budget,
@@ -959,13 +1135,18 @@ impl LocalFilesystemSession {
     ) -> Result<(LoadedFilesystemSource, FilesystemAccountingRollback), ResourceError> {
         let (canonical_path, source) = loaded.into_parts();
         let bytes = source.len() as u64;
-        let previous_candidate = self.candidates.get(candidate).cloned();
+        let binding_generation = self.reserve_binding_generation()?;
+        let previous_candidate = self
+            .candidates
+            .get(candidate)
+            .map(|binding| binding.canonical_path.clone());
         let displaced_charge = previous_candidate
             .as_ref()
             .filter(|previous| previous.as_path() != canonical_path)
             .filter(|previous| {
-                !self.candidates.iter().any(|(other, canonical)| {
-                    other.as_path() != candidate && canonical == *previous
+                !self.candidates.iter().any(|(other, binding)| {
+                    other.as_path() != candidate
+                        && binding.canonical_path.as_path() == previous.as_path()
                 })
             })
             .and_then(|previous| {
@@ -998,13 +1179,25 @@ impl LocalFilesystemSession {
             canonical_path.clone(),
             FilesystemCharge { bytes, generation },
         );
-        self.candidates
-            .insert(candidate.to_owned(), canonical_path.clone());
+        self.candidates.insert(
+            candidate.to_owned(),
+            FilesystemCandidateBinding {
+                canonical_path: canonical_path.clone(),
+                generation: binding_generation,
+            },
+        );
+        let binding = FilesystemResourceBinding {
+            session_id: self.session_id,
+            candidate_path: candidate.to_owned(),
+            canonical_path: canonical_path.clone(),
+            generation: binding_generation,
+        };
         Ok((
             LoadedFilesystemSource {
                 source_id,
-                source: Arc::from(source),
+                source,
                 provenance: FilesystemProvenance { canonical_path },
+                binding,
             },
             FilesystemAccountingRollback {
                 previous_candidate,
@@ -1015,25 +1208,181 @@ impl LocalFilesystemSession {
     }
 
     pub const fn budget(&self) -> ResourceBudget {
-        self.budget
+        self.state.budget
+    }
+
+    fn release_binding_in_place(
+        &mut self,
+        binding: &FilesystemResourceBinding,
+    ) -> Result<FilesystemReleaseOutcome, ResourceError> {
+        if binding.session_id != self.session_id {
+            return Err(ResourceError::ForeignBinding);
+        }
+        let Some(current) = self.candidates.get(&binding.candidate_path) else {
+            return Ok(FilesystemReleaseOutcome::Missing);
+        };
+        if current.generation != binding.generation
+            || current.canonical_path != binding.canonical_path
+        {
+            return Ok(FilesystemReleaseOutcome::Stale);
+        }
+        self.release(&binding.candidate_path);
+        Ok(FilesystemReleaseOutcome::Released)
+    }
+
+    fn reserve_binding_generation(&mut self) -> Result<u64, ResourceError> {
+        let generation = self.next_binding_generation;
+        self.next_binding_generation = generation
+            .checked_add(1)
+            .ok_or(ResourceError::BindingGenerationExhausted)?;
+        Ok(generation)
+    }
+}
+
+impl LocalFilesystemDraft {
+    fn candidate(&self) -> &LocalFilesystemSession {
+        self.candidate
+            .as_ref()
+            .expect("an unfinished draft owns its candidate state")
+    }
+
+    fn candidate_mut(&mut self) -> &mut LocalFilesystemSession {
+        self.candidate
+            .as_mut()
+            .expect("an unfinished draft owns its candidate state")
+    }
+
+    fn record<T>(&mut self, result: Result<T, ResourceError>) -> Result<T, ResourceError> {
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    pub const fn session_id(&self) -> LocalFilesystemSessionId {
+        self.session_id
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        self.candidate().roots()
+    }
+
+    pub fn limits(&self) -> FilesystemReadLimits {
+        self.candidate().limits()
+    }
+
+    pub fn discover_adoc_paths_with_control(
+        &self,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        self.candidate()
+            .discover_adoc_paths_with_control(exclude_directory, is_cancelled)
+    }
+
+    pub fn scan_utf8(
+        &mut self,
+        source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
+    ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
+        let result = self.candidate_mut().scan_utf8_in_place(source_id);
+        self.record(result)
+    }
+
+    pub fn read_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let result = self.candidate_mut().read_utf8_in_place(source_id, path);
+        self.record(result)
+    }
+
+    pub fn reread_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let result = self.candidate_mut().reread_utf8_in_place(source_id, path);
+        self.record(result)
+    }
+
+    pub fn read_target_utf8(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
+        let result = self
+            .candidate_mut()
+            .read_target_utf8_in_place(source_id, base, target);
+        self.record(result)
+    }
+
+    pub fn release_binding(
+        &mut self,
+        binding: &FilesystemResourceBinding,
+    ) -> Result<FilesystemReleaseOutcome, ResourceError> {
+        let result = self.candidate_mut().release_binding_in_place(binding);
+        self.record(result)
+    }
+
+    pub fn budget(&self) -> ResourceBudget {
+        self.candidate().budget()
+    }
+
+    /// Verifies that this draft can be installed into `live` without mutation.
+    pub fn validate(&self, live: &LocalFilesystemSession) -> Result<(), ResourceError> {
+        if self.poisoned {
+            return Err(ResourceError::PoisonedDraft);
+        }
+        if self.session_id != live.session_id
+            || !Arc::ptr_eq(&self.active, &live.active_draft)
+            || self.base_revision != live.revision
+            || !self.active.load(Ordering::Acquire)
+        {
+            return Err(ResourceError::InvalidDraft);
+        }
+        Ok(())
+    }
+
+    /// Atomically replaces one live session after successful validation.
+    pub fn commit(mut self, live: &mut LocalFilesystemSession) -> Result<(), ResourceError> {
+        self.validate(live)?;
+        let next_revision = live
+            .revision
+            .checked_add(1)
+            .ok_or(ResourceError::SessionRevisionExhausted)?;
+        let mut candidate = self
+            .candidate
+            .take()
+            .expect("validated draft owns its candidate state");
+        candidate.revision = next_revision;
+        *live = candidate;
+        Ok(())
+    }
+}
+
+impl Drop for LocalFilesystemDraft {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
     }
 }
 
 fn shared_read_capacity(
     mut budget: ResourceBudget,
     charged: &BTreeMap<PathBuf, FilesystemCharge>,
-    candidates: &BTreeMap<PathBuf, PathBuf>,
+    candidates: &BTreeMap<PathBuf, FilesystemCandidateBinding>,
     limits: FilesystemReadLimits,
     candidate: &Path,
     canonical: &Path,
     file_limit_denied: &std::cell::Cell<bool>,
 ) -> crate::local_target::CandidateReadCapacity {
     if let Some(previous) = candidates.get(candidate)
-        && previous != canonical
-        && !candidates
-            .iter()
-            .any(|(other, resolved)| other.as_path() != candidate && resolved == previous)
-        && let Some(charge) = charged.get(previous)
+        && previous.canonical_path != canonical
+        && !candidates.iter().any(|(other, resolved)| {
+            other.as_path() != candidate && resolved.canonical_path == previous.canonical_path
+        })
+        && let Some(charge) = charged.get(&previous.canonical_path)
     {
         budget.release(charge.bytes);
     }
@@ -1172,6 +1521,12 @@ pub enum ResourceError {
     InvalidRoot,
     InvalidSourceId,
     SessionIdentityExhausted,
+    SessionRevisionExhausted,
+    BindingGenerationExhausted,
+    DraftBusy,
+    InvalidDraft,
+    PoisonedDraft,
+    ForeignBinding,
     InvalidRollback,
     Missing(PathBuf),
     PermissionDenied(PathBuf),
@@ -1197,6 +1552,24 @@ impl fmt::Display for ResourceError {
             Self::InvalidSourceId => formatter.write_str("local source ID is invalid"),
             Self::SessionIdentityExhausted => {
                 formatter.write_str("filesystem session identity space is exhausted")
+            }
+            Self::SessionRevisionExhausted => {
+                formatter.write_str("filesystem session revision space is exhausted")
+            }
+            Self::BindingGenerationExhausted => {
+                formatter.write_str("filesystem binding generation space is exhausted")
+            }
+            Self::DraftBusy => {
+                formatter.write_str("filesystem session already has an active draft")
+            }
+            Self::InvalidDraft => {
+                formatter.write_str("filesystem draft is stale or belongs to another session")
+            }
+            Self::PoisonedDraft => {
+                formatter.write_str("filesystem draft contains a failed operation")
+            }
+            Self::ForeignBinding => {
+                formatter.write_str("filesystem binding belongs to another session")
             }
             Self::InvalidRollback => formatter
                 .write_str("filesystem reread rollback is stale or belongs to another session"),
@@ -1325,6 +1698,97 @@ mod tests {
 
     fn source_id() -> LogicalSourceId {
         LogicalSourceId::new("test-source").expect("source ID")
+    }
+
+    #[test]
+    fn filesystem_draft_is_isolated_until_commit_and_drop_discards_it() {
+        let root = TestDir::new("filesystem-draft-isolation");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "a").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+
+        fs::write(&path, "bb").expect("replacement");
+        let mut discarded = session.draft().expect("discarded draft");
+        discarded
+            .reread_utf8(source_id(), &path)
+            .expect("draft reread");
+        assert_eq!(discarded.budget().bytes(), 2);
+        assert_eq!(session.budget().bytes(), 1);
+        drop(discarded);
+        assert_eq!(session.budget().bytes(), 1);
+
+        let mut committed = session.draft().expect("committed draft");
+        let loaded = committed
+            .reread_utf8(source_id(), &path)
+            .expect("replacement reread");
+        let binding = loaded.binding().clone();
+        committed.commit(&mut session).expect("commit draft");
+        assert_eq!(session.budget().bytes(), 2);
+
+        let mut released = session.draft().expect("release draft");
+        assert_eq!(
+            released.release_binding(&binding).expect("release binding"),
+            FilesystemReleaseOutcome::Released
+        );
+        assert_eq!(session.budget().bytes(), 2);
+        released.commit(&mut session).expect("commit release");
+        assert_eq!(session.budget(), ResourceBudget::default());
+    }
+
+    #[test]
+    fn filesystem_draft_is_exclusive_and_failed_operations_poison_commit() {
+        let root = TestDir::new("filesystem-draft-exclusive");
+        let missing = root.path().join("missing.adoc");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("first draft");
+        assert!(matches!(session.draft(), Err(ResourceError::DraftBusy)));
+        assert!(draft.read_utf8(source_id(), &missing).is_err());
+        assert_eq!(
+            draft.commit(&mut session),
+            Err(ResourceError::PoisonedDraft)
+        );
+        drop(session.draft().expect("poisoned draft released its lease"));
+    }
+
+    #[test]
+    fn stale_binding_from_an_older_committed_generation_cannot_release_replacement() {
+        let root = TestDir::new("filesystem-draft-stale-binding");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "a").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let mut first = session.draft().expect("first draft");
+        let first_binding = first
+            .read_utf8(source_id(), &path)
+            .expect("first read")
+            .binding()
+            .clone();
+        first.commit(&mut session).expect("first commit");
+
+        fs::write(&path, "bb").expect("replacement");
+        let mut second = session.draft().expect("second draft");
+        let second_binding = second
+            .reread_utf8(source_id(), &path)
+            .expect("second read")
+            .binding()
+            .clone();
+        second.commit(&mut session).expect("second commit");
+
+        let mut release = session.draft().expect("release draft");
+        assert_eq!(
+            release
+                .release_binding(&first_binding)
+                .expect("stale release"),
+            FilesystemReleaseOutcome::Stale
+        );
+        assert_eq!(
+            release
+                .release_binding(&second_binding)
+                .expect("current release"),
+            FilesystemReleaseOutcome::Released
+        );
+        release.commit(&mut session).expect("release commit");
+        assert_eq!(session.budget(), ResourceBudget::default());
     }
 
     fn path_source_id(path: &Path) -> Result<LogicalSourceId, ResourceError> {
@@ -2180,7 +2644,7 @@ mod tests {
             session.read_utf8(source_id(), &path),
             Err(ResourceError::ResourceTooLarge(_))
         ));
-        assert_eq!(session.sessions[0].inspected_paths(), 1);
+        assert_eq!(session.sessions[0].inspected_paths(), 0);
 
         fs::write(&path, "ok").expect("accepted source");
         let (_, rollback) = session
@@ -2188,7 +2652,7 @@ mod tests {
             .expect("reread");
         session.rollback_reread(rollback).expect("rollback");
 
-        assert_eq!(session.sessions[0].inspected_paths(), 1);
+        assert_eq!(session.sessions[0].inspected_paths(), 0);
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
     }
 
