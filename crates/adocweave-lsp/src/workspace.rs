@@ -1955,12 +1955,17 @@ impl WorkspaceResources {
             self.watch_requested_includes(&root, requested_includes);
             return Ok(None);
         }
-        *self = candidate;
-        let analysis = self
+        // Publication is decided on the copy, so installing it below is the last
+        // step and cannot fail. Finalising against the live state instead would
+        // leave the acquired includes installed with no analysis to justify them
+        // whenever that check rejected the draft.
+        let mut candidate = candidate;
+        let analysis = candidate
             .inner
             .finalize_draft(draft)
             .map_err(|error| error.to_string())?;
-        self.accept_for_root(&root, &analysis, requested_includes)?;
+        candidate.accept_for_root(&root, &analysis, requested_includes)?;
+        *self = candidate;
         Ok(Some(analysis))
     }
 
@@ -2964,6 +2969,54 @@ mod tests {
         assert_eq!(
             resources.inner.roots(),
             &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
+        );
+    }
+
+    /// A result the workspace has moved past is rejected without installing any
+    /// part of it, including the includes the run acquired along the way.
+    #[test]
+    fn a_result_from_an_older_generation_installs_nothing() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.adoc");
+        let unrelated = root.0.join("unrelated.adoc");
+        std::fs::write(&source, "include::generated/part.adoc[]\n").expect("source");
+        std::fs::write(&included, "included\n").expect("included source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+
+        // The workspace moves on before the result comes back.
+        std::fs::write(&unrelated, "unrelated\n").expect("unrelated source");
+        resources
+            .reload_file(Url::from_file_path(&unrelated).expect("unrelated URI"))
+            .expect("discover an unrelated source");
+        let generation = resources.generation();
+
+        assert!(
+            resources
+                .apply_analyzed_root(analyzed)
+                .expect("apply a superseded analysis")
+                .is_none()
+        );
+        assert_eq!(resources.generation(), generation);
+        assert!(
+            resources.get(&included_uri).is_none(),
+            "a superseded result must not install the include it acquired"
         );
     }
 
