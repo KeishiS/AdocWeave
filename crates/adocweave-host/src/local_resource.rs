@@ -898,7 +898,7 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
-        self.reread_utf8_with_rollback(source_id, path)
+        self.reread_utf8_with_rollback_in_place(source_id, path)
             .map(|(loaded, _)| loaded)
     }
 
@@ -908,6 +908,15 @@ impl LocalFilesystemSession {
     /// Callers which update another state store after reading must retain the
     /// rollback value until that update commits.
     pub fn reread_utf8_with_rollback(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
+        self.invalidate_active_draft();
+        self.reread_utf8_with_rollback_in_place(source_id, path)
+    }
+
+    fn reread_utf8_with_rollback_in_place(
         &mut self,
         source_id: LogicalSourceId,
         path: &Path,
@@ -980,6 +989,7 @@ impl LocalFilesystemSession {
         &mut self,
         rollback: FilesystemReadRollback,
     ) -> Result<(), ResourceError> {
+        self.invalidate_active_draft();
         if rollback.session_id != self.session_id {
             return Err(ResourceError::InvalidRollback);
         }
@@ -1042,6 +1052,11 @@ impl LocalFilesystemSession {
 
     /// Releases the budget charge for a resource removed from the caller's workspace.
     pub fn release(&mut self, path: &Path) {
+        self.invalidate_active_draft();
+        self.release_in_place(path);
+    }
+
+    fn release_in_place(&mut self, path: &Path) {
         if let Some(binding) = self.state.candidates.remove(path)
             && !self
                 .state
@@ -1055,6 +1070,10 @@ impl LocalFilesystemSession {
         if let Ok(index) = self.root_index(path) {
             self.state.sessions[index].release_candidate(path);
         }
+    }
+
+    fn invalidate_active_draft(&self) {
+        self.active_draft.store(false, Ordering::Release);
     }
 
     #[cfg(test)]
@@ -1261,7 +1280,7 @@ impl LocalFilesystemSession {
         {
             return Ok(FilesystemReleaseOutcome::Stale);
         }
-        self.release(&binding.candidate_path);
+        self.release_in_place(&binding.candidate_path);
         Ok(FilesystemReleaseOutcome::Released)
     }
 
@@ -1819,6 +1838,56 @@ mod tests {
             Err(ResourceError::PoisonedDraft)
         ));
         drop(session.draft().expect("poisoned draft released its lease"));
+    }
+
+    #[test]
+    fn legacy_live_mutations_invalidate_an_active_draft() {
+        let root = TestDir::new("legacy-mutation-invalidates-draft");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "a").expect("source");
+
+        let mut released = policy(root.path(), 100).session().expect("session");
+        released
+            .read_utf8(source_id(), &path)
+            .expect("initial read");
+        let draft = released.draft().expect("draft before release");
+        released.release(&path);
+        assert!(matches!(
+            draft.prepare_commit(&mut released),
+            Err(ResourceError::InvalidDraft)
+        ));
+        assert_eq!(released.budget(), ResourceBudget::default());
+
+        let mut reread = policy(root.path(), 100).session().expect("session");
+        reread.read_utf8(source_id(), &path).expect("initial read");
+        let draft = reread.draft().expect("draft before reread");
+        fs::write(&path, "bb").expect("replacement");
+        reread
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("legacy reread");
+        assert!(matches!(
+            draft.prepare_commit(&mut reread),
+            Err(ResourceError::InvalidDraft)
+        ));
+        assert_eq!(reread.budget().bytes(), 2);
+
+        let mut rolled_back = policy(root.path(), 100).session().expect("session");
+        rolled_back
+            .read_utf8(source_id(), &path)
+            .expect("initial read");
+        fs::write(&path, "ccc").expect("replacement");
+        let (_, rollback) = rolled_back
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("legacy reread");
+        let draft = rolled_back.draft().expect("draft before rollback");
+        rolled_back
+            .rollback_reread(rollback)
+            .expect("legacy rollback");
+        assert!(matches!(
+            draft.prepare_commit(&mut rolled_back),
+            Err(ResourceError::InvalidDraft)
+        ));
+        assert_eq!(rolled_back.budget().bytes(), 2);
     }
 
     #[test]
