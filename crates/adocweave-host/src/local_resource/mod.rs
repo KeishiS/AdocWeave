@@ -9,8 +9,8 @@ use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
 use crate::io_observation::FilesystemIoMeter;
 use crate::local_target::{
-    CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetCandidateRollback,
-    LocalTargetError, LocalTargetPolicy, LocalTargetSession, LocalTargetTextRollback,
+    CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy,
+    LocalTargetSession, LocalTargetTextRollback,
 };
 
 mod budget;
@@ -186,26 +186,6 @@ pub struct PreparedFilesystemCommit<'a> {
     next_revision: u64,
     job: FilesystemJobCoordinator,
     _lease: FilesystemDraftLease,
-}
-
-/// Opaque state used to undo one filesystem reread and its command snapshot.
-#[derive(Clone, Debug)]
-pub struct FilesystemReadRollback {
-    session_id: LocalFilesystemSessionId,
-    applied_generation: u64,
-    canonical_path: PathBuf,
-    candidate_path: PathBuf,
-    session_index: usize,
-    candidate_rollback: LocalTargetCandidateRollback,
-    accounting: FilesystemAccountingRollback,
-    text_rollback: LocalTargetTextRollback,
-}
-
-#[derive(Clone, Debug)]
-struct FilesystemAccountingRollback {
-    previous_candidate: Option<FilesystemCandidateBinding>,
-    previous_charge: Option<FilesystemCharge>,
-    displaced_charge: Option<(PathBuf, FilesystemCharge)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1075,158 +1055,6 @@ impl LocalFilesystemSession {
             .reread_utf8(source_id, path)
             .map_err(ResourceError::from)
     }
-    /// Reopens a path and returns the state needed to undo its budget charge
-    /// and cached command snapshot.
-    ///
-    /// Callers which update another state store after reading must retain the
-    /// rollback value until that update commits.
-    pub fn reread_utf8_with_rollback(
-        &mut self,
-        source_id: LogicalSourceId,
-        path: &Path,
-    ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
-        self.invalidate_active_draft();
-        self.reread_utf8_with_rollback_in_place(source_id, path)
-    }
-
-    fn reread_utf8_with_rollback_in_place(
-        &mut self,
-        source_id: LogicalSourceId,
-        path: &Path,
-    ) -> Result<(LoadedFilesystemSource, FilesystemReadRollback), ResourceError> {
-        let index = self.root_index(path)?;
-        let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
-        let binding_generation = self.reserve_binding_generation()?;
-        let state = &mut self.state;
-        let budget = state.budget;
-        let charged = &state.charged;
-        let candidates = &state.candidates;
-        let limits = state.limits;
-        let file_limit_denied = std::cell::Cell::new(false);
-        let (loaded, text_rollback) = match state.sessions[index]
-            .reread_candidate_utf8_with_capacity(path, |canonical| {
-                shared_read_capacity(
-                    budget,
-                    charged,
-                    candidates,
-                    limits,
-                    path,
-                    canonical,
-                    &file_limit_denied,
-                )
-            }) {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                state.sessions[index].rollback_candidate(candidate_rollback);
-                return Err(map_shared_read_error(
-                    error,
-                    limits,
-                    file_limit_denied.get(),
-                ));
-            }
-        };
-        let canonical_path = loaded.canonical_path().to_owned();
-        match self.finish_read(self.session_id, binding_generation, source_id, path, loaded) {
-            Ok((loaded, accounting)) => {
-                let applied_generation = self
-                    .state
-                    .charged
-                    .get(&canonical_path)
-                    .expect("successful read records its charge")
-                    .generation;
-                Ok((
-                    loaded,
-                    FilesystemReadRollback {
-                        session_id: self.session_id,
-                        applied_generation,
-                        canonical_path,
-                        candidate_path: path.to_owned(),
-                        session_index: index,
-                        candidate_rollback,
-                        accounting,
-                        text_rollback,
-                    },
-                ))
-            }
-            Err(error) => {
-                self.state.sessions[index].rollback_cached_text(text_rollback);
-                self.state.sessions[index].rollback_candidate(candidate_rollback);
-                Err(error)
-            }
-        }
-    }
-
-    /// Restores the charge and cached command snapshot replaced by
-    /// [`Self::reread_utf8_with_rollback`].
-    pub fn rollback_reread(
-        &mut self,
-        rollback: FilesystemReadRollback,
-    ) -> Result<(), ResourceError> {
-        self.invalidate_active_draft();
-        if rollback.session_id != self.session_id {
-            return Err(ResourceError::InvalidRollback);
-        }
-        let Some(current) = self.state.charged.get(&rollback.canonical_path).copied() else {
-            return Err(ResourceError::InvalidRollback);
-        };
-        if current.generation != rollback.applied_generation {
-            return Err(ResourceError::InvalidRollback);
-        }
-        if !self
-            .state
-            .candidates
-            .get(&rollback.candidate_path)
-            .is_some_and(|binding| binding.canonical_path == rollback.canonical_path)
-        {
-            return Err(ResourceError::InvalidRollback);
-        }
-        if let Some((path, _)) = &rollback.accounting.displaced_charge
-            && self.state.charged.contains_key(path)
-        {
-            return Err(ResourceError::InvalidRollback);
-        }
-        match rollback.accounting.previous_charge {
-            Some(previous) => {
-                self.state
-                    .budget
-                    .restore_replacement(current.bytes, previous.bytes);
-                self.state
-                    .charged
-                    .insert(rollback.canonical_path.clone(), previous);
-            }
-            None => {
-                self.state.budget.release(current.bytes);
-                self.state.charged.remove(&rollback.canonical_path);
-            }
-        }
-        if let Some((path, charge)) = rollback.accounting.displaced_charge {
-            self.state.budget.restore_charge(charge.bytes);
-            self.state.charged.insert(path, charge);
-        }
-        match rollback.accounting.previous_candidate {
-            Some(previous) => {
-                self.state
-                    .candidates
-                    .insert(rollback.candidate_path.clone(), previous);
-            }
-            None => {
-                self.state.candidates.remove(&rollback.candidate_path);
-            }
-        }
-        self.state.sessions[rollback.session_index].rollback_cached_text(rollback.text_rollback);
-        self.state.sessions[rollback.session_index].rollback_candidate(rollback.candidate_rollback);
-        Ok(())
-    }
-
-    /// Releases a path through the migration-only compatibility API.
-    ///
-    /// This operation has no binding-generation protection. Do not mix it with
-    /// [`LocalFilesystemDraft::release_binding`]; callers adopting bindings
-    /// must release resources through that generation-checked API instead.
-    pub fn release(&mut self, path: &Path) {
-        self.invalidate_active_draft();
-        self.mutation_cursor().release_path(path);
-    }
 
     fn mutation_cursor(&mut self) -> LocalFilesystemMutationCursor<'_> {
         LocalFilesystemMutationCursor {
@@ -1297,9 +1125,11 @@ impl LocalFilesystemSession {
             &candidate,
             loaded,
         )
-        .map(|(loaded, _)| loaded)
     }
 
+    /// Only the test-only read path below still needs these helpers; every
+    /// production read now goes through a draft.
+    #[cfg(test)]
     fn root_index(&self, path: &Path) -> Result<usize, ResourceError> {
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()));
@@ -1314,6 +1144,7 @@ impl LocalFilesystemSession {
             .ok_or_else(|| ResourceError::OutsideRoots(path.to_owned()))
     }
 
+    #[cfg(test)]
     fn finish_read(
         &mut self,
         session_id: LocalFilesystemSessionId,
@@ -1321,7 +1152,7 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         candidate: &Path,
         loaded: crate::local_target::LoadedLocalTarget,
-    ) -> Result<(LoadedFilesystemSource, FilesystemAccountingRollback), ResourceError> {
+    ) -> Result<LoadedFilesystemSource, ResourceError> {
         let (canonical_path, source) = loaded.into_shared_parts();
         let bytes = source.len() as u64;
         let previous_candidate = self.state.candidates.get(candidate).cloned();
@@ -1376,25 +1207,19 @@ impl LocalFilesystemSession {
             canonical_path: canonical_path.clone(),
             generation: binding_generation,
         };
-        Ok((
-            LoadedFilesystemSource {
-                source_id,
-                source,
-                provenance: FilesystemProvenance { canonical_path },
-                binding,
-            },
-            FilesystemAccountingRollback {
-                previous_candidate,
-                previous_charge,
-                displaced_charge,
-            },
-        ))
+        Ok(LoadedFilesystemSource {
+            source_id,
+            source,
+            provenance: FilesystemProvenance { canonical_path },
+            binding,
+        })
     }
 
     pub const fn budget(&self) -> ResourceBudget {
         self.state.budget
     }
 
+    #[cfg(test)]
     fn reserve_binding_generation(&mut self) -> Result<u64, FilesystemDraftError> {
         self.next_binding_generation
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
@@ -1578,7 +1403,7 @@ impl LocalFilesystemMutationCursor<'_> {
             }
         };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
-            .map(|(loaded, _)| FilesystemReadOutcome::Found(loaded))
+            .map(FilesystemReadOutcome::Found)
     }
 
     fn reread_utf8(
@@ -1651,7 +1476,7 @@ impl LocalFilesystemMutationCursor<'_> {
             }
         };
         match self.finish_read(binding_generation, source_id, path, loaded) {
-            Ok((loaded, _)) => Ok(FilesystemReadOutcome::Found(loaded)),
+            Ok(loaded) => Ok(FilesystemReadOutcome::Found(loaded)),
             Err(error) => {
                 self.state.sessions[index].rollback_cached_text(text_rollback);
                 self.state.sessions[index].rollback_candidate(candidate_rollback);
@@ -1750,7 +1575,7 @@ impl LocalFilesystemMutationCursor<'_> {
             }
         };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
-            .map(|(loaded, _)| FilesystemReadOutcome::Found(loaded))
+            .map(FilesystemReadOutcome::Found)
     }
 
     fn root_index(&self, path: &Path) -> Result<usize, FilesystemDraftError> {
@@ -1773,7 +1598,7 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         candidate: &Path,
         loaded: crate::local_target::LoadedLocalTarget,
-    ) -> Result<(LoadedFilesystemSource, FilesystemAccountingRollback), FilesystemDraftError> {
+    ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
         let (canonical_path, source) = loaded.into_shared_parts();
         let bytes = source.len() as u64;
         let previous_candidate = self.state.candidates.get(candidate).cloned();
@@ -1829,19 +1654,12 @@ impl LocalFilesystemMutationCursor<'_> {
             canonical_path: canonical_path.clone(),
             generation: binding_generation,
         };
-        Ok((
-            LoadedFilesystemSource {
-                source_id,
-                source,
-                provenance: FilesystemProvenance { canonical_path },
-                binding,
-            },
-            FilesystemAccountingRollback {
-                previous_candidate,
-                previous_charge,
-                displaced_charge,
-            },
-        ))
+        Ok(LoadedFilesystemSource {
+            source_id,
+            source,
+            provenance: FilesystemProvenance { canonical_path },
+            binding,
+        })
     }
 
     fn release_binding(
@@ -2296,6 +2114,23 @@ mod tests {
     fn unbounded_job() -> FilesystemJobCoordinator {
         FilesystemJobCoordinator::new(crate::FilesystemJobLimits::unbounded())
             .expect("filesystem job")
+    }
+
+    /// Gives up one claim the way a live owner does: through a short draft.
+    ///
+    /// The outcome is asserted, so a claim that has gone stale fails the test
+    /// rather than quietly releasing nothing.
+    fn release_binding(session: &mut LocalFilesystemSession, binding: &FilesystemResourceBinding) {
+        let mut draft = session.draft(&unbounded_job()).expect("release draft");
+        assert_eq!(
+            draft.release_binding(binding).expect("release binding"),
+            FilesystemReleaseOutcome::Released
+        );
+        draft
+            .prepare_commit(session)
+            .expect("prepare release")
+            .commit()
+            .expect("commit release");
     }
 
     fn job_limits(read_bytes: u64, directory_entries: u64) -> crate::FilesystemJobLimits {
@@ -2786,66 +2621,37 @@ mod tests {
     }
 
     #[test]
-    fn legacy_live_mutations_invalidate_an_active_draft() {
-        let root = TestDir::new("legacy-mutation-invalidates-draft");
+    fn live_session_reads_invalidate_an_active_draft() {
+        let root = TestDir::new("live-read-invalidates-draft");
         let path = root.path().join("source.adoc");
         fs::write(&path, "a").expect("source");
 
-        let mut released = policy(root.path(), 100).session().expect("session");
-        released
-            .read_utf8(source_id(), &path)
-            .expect("initial read");
-        let draft = released
-            .draft(&unbounded_job())
-            .expect("draft before release");
-        released.release(&path);
+        let mut read = policy(root.path(), 100).session().expect("session");
+        let draft = read.draft(&unbounded_job()).expect("draft before read");
+        read.read_utf8(source_id(), &path).expect("live read");
         assert!(matches!(
-            released.draft(&unbounded_job()),
+            read.draft(&unbounded_job()),
             Err(FilesystemDraftError::DraftBusy)
         ));
         assert!(matches!(
-            draft.prepare_commit(&mut released),
+            draft.prepare_commit(&mut read),
             Err(FilesystemDraftError::InvalidDraft)
         ));
         drop(
-            released
-                .draft(&unbounded_job())
+            read.draft(&unbounded_job())
                 .expect("invalid draft released its lease"),
         );
-        assert_eq!(released.budget(), ResourceBudget::default());
 
         let mut reread = policy(root.path(), 100).session().expect("session");
         reread.read_utf8(source_id(), &path).expect("initial read");
         let draft = reread.draft(&unbounded_job()).expect("draft before reread");
         fs::write(&path, "bb").expect("replacement");
-        reread
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("legacy reread");
+        reread.reread_utf8(source_id(), &path).expect("live reread");
         assert!(matches!(
             draft.prepare_commit(&mut reread),
             Err(FilesystemDraftError::InvalidDraft)
         ));
         assert_eq!(reread.budget().bytes(), 2);
-
-        let mut rolled_back = policy(root.path(), 100).session().expect("session");
-        rolled_back
-            .read_utf8(source_id(), &path)
-            .expect("initial read");
-        fs::write(&path, "ccc").expect("replacement");
-        let (_, rollback) = rolled_back
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("legacy reread");
-        let draft = rolled_back
-            .draft(&unbounded_job())
-            .expect("draft before rollback");
-        rolled_back
-            .rollback_reread(rollback)
-            .expect("legacy rollback");
-        assert!(matches!(
-            draft.prepare_commit(&mut rolled_back),
-            Err(FilesystemDraftError::InvalidDraft)
-        ));
-        assert_eq!(rolled_back.budget().bytes(), 2);
     }
 
     #[test]
@@ -3194,19 +3000,21 @@ mod tests {
     }
 
     #[test]
-    fn rollback_restores_the_original_binding_generation() {
-        let root = TestDir::new("rollback-binding-generation");
+    fn a_discarded_reread_leaves_the_original_binding_current() {
+        let root = TestDir::new("discarded-reread-binding");
         let path = root.path().join("source.adoc");
         fs::write(&path, "a").expect("source");
         let mut session = policy(root.path(), 100).session().expect("session");
         let original = session.read_utf8(source_id(), &path).expect("initial read");
         fs::write(&path, "bb").expect("replacement");
-        let (_, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("reread");
-        session.rollback_reread(rollback).expect("rollback");
-        let mut release = session.draft(&unbounded_job()).expect("release draft");
 
+        let mut discarded = session.draft(&unbounded_job()).expect("reread draft");
+        discarded
+            .reread_utf8(source_id(), &path)
+            .expect("reread into the draft");
+        drop(discarded);
+
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             release
                 .release_binding(original.binding())
@@ -3991,7 +3799,7 @@ mod tests {
         assert_eq!((session.budget().files(), session.budget().bytes()), (2, 6));
 
         fs::write(&second, "1").expect("shrink second");
-        session
+        let second_binding = session
             .reread_utf8(source_id(), &second)
             .expect("shrunk second");
         session
@@ -4000,7 +3808,7 @@ mod tests {
         assert_eq!((session.budget().files(), session.budget().bytes()), (2, 4));
 
         fs::remove_file(&second).expect("delete second");
-        session.release(&second);
+        release_binding(&mut session, second_binding.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
     }
 
@@ -4021,7 +3829,7 @@ mod tests {
         assert_eq!(loaded.canonical_path(), renamed);
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
 
-        session.release(&candidate);
+        release_binding(&mut session, loaded.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
     }
 
@@ -4036,9 +3844,9 @@ mod tests {
         fs::write(&source, "text").expect("source");
         let mut session = policy(root.path(), 100).session().expect("session");
 
-        session.read_utf8(source_id(), &alias).expect("alias read");
+        let loaded = session.read_utf8(source_id(), &alias).expect("alias read");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
-        session.release(&alias);
+        release_binding(&mut session, loaded.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
     }
 
@@ -4054,8 +3862,8 @@ mod tests {
         symlink("source.adoc", &alias).expect("source alias");
         let mut session = policy(root.path(), 100).session().expect("session");
 
-        session.read_utf8(source_id(), &alias).expect("alias read");
-        session.release(&alias);
+        let loaded = session.read_utf8(source_id(), &alias).expect("alias read");
+        release_binding(&mut session, loaded.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
     }
 
@@ -4093,274 +3901,15 @@ mod tests {
             first_loaded.canonical_path(),
             second_loaded.canonical_path()
         );
-        session.release(&first_alias);
+        release_binding(&mut session, first_loaded.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
 
-        session.release(&second_alias);
+        release_binding(&mut session, second_loaded.binding());
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
         session
             .read_utf8(source_id(), &replacement)
             .expect("released file slot");
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-    }
-
-    #[test]
-    fn reread_rollback_restores_replaced_and_new_charges() {
-        let root = TestDir::new("reread-rollback");
-        let first = root.path().join("first.adoc");
-        let second = root.path().join("second.adoc");
-        fs::write(&first, "a").expect("first source");
-        fs::write(&second, "bb").expect("second source");
-        let policy = LocalFilesystemPolicy::new(
-            [root.path().to_owned()],
-            FilesystemReadLimits {
-                max_files: 2,
-                max_total_bytes: 4,
-                max_resource_bytes: 4,
-            },
-        )
-        .expect("policy");
-        let mut session = policy.session().expect("session");
-        session
-            .read_utf8(source_id(), &first)
-            .expect("initial read");
-
-        fs::write(&first, "aaa").expect("grown first");
-        let (_, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &first)
-            .expect("replacement reread");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-        session
-            .rollback_reread(rollback)
-            .expect("rollback replacement");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
-
-        let (_, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &second)
-            .expect("new reread");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 3));
-        session
-            .rollback_reread(rollback)
-            .expect("rollback new read");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 1));
-    }
-
-    #[test]
-    fn reread_commit_replaces_the_command_text_snapshot() {
-        let root = TestDir::new("reread-cache-commit");
-        let path = root.path().join("source.adoc");
-        fs::write(&path, "old").expect("initial source");
-        let mut session = policy(root.path(), 100).session().expect("session");
-        session.read_utf8(source_id(), &path).expect("initial read");
-        session.state.sessions[0]
-            .read_candidate_utf8(&path)
-            .expect("initial cached read");
-
-        fs::write(&path, "new text").expect("replacement source");
-        let reread = session
-            .reread_utf8(source_id(), &path)
-            .expect("committed reread");
-        assert_eq!(reread.source(), "new text");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
-
-        fs::write(&path, "disk changed again").expect("later disk source");
-        let cached = session.state.sessions[0]
-            .read_candidate_utf8(&path)
-            .expect("committed command snapshot");
-        assert_eq!(cached.source(), "new text");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
-    }
-
-    #[test]
-    fn reread_rollback_restores_the_previous_command_text_snapshot() {
-        let root = TestDir::new("reread-cache-rollback");
-        let path = root.path().join("source.adoc");
-        fs::write(&path, "old").expect("initial source");
-        let mut session = policy(root.path(), 100).session().expect("session");
-        session.read_utf8(source_id(), &path).expect("initial read");
-        session.state.sessions[0]
-            .read_candidate_utf8(&path)
-            .expect("initial cached read");
-
-        fs::write(&path, "new text").expect("replacement source");
-        let (prepared, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("prepared reread");
-        assert_eq!(prepared.source(), "new text");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
-
-        session.rollback_reread(rollback).expect("rollback reread");
-        assert_eq!(
-            session.state.sessions[0]
-                .read_candidate_utf8(&path)
-                .expect("restored snapshot")
-                .source(),
-            "old"
-        );
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-    }
-
-    #[test]
-    fn reread_rollback_rejects_another_session_and_reuse() {
-        let root = TestDir::new("reread-rollback-session");
-        let path = root.path().join("source.adoc");
-        fs::write(&path, "a").expect("source");
-        let policy = LocalFilesystemPolicy::new(
-            [root.path().to_owned()],
-            FilesystemReadLimits {
-                max_files: 1,
-                max_total_bytes: 4,
-                max_resource_bytes: 4,
-            },
-        )
-        .expect("policy");
-        let mut first = policy.session().expect("first session");
-        let mut second = policy.session().expect("second session");
-        first
-            .read_utf8(source_id(), &path)
-            .expect("first initial read");
-        second
-            .read_utf8(source_id(), &path)
-            .expect("second initial read");
-
-        fs::write(&path, "bb").expect("replacement");
-        let (_, rollback) = first
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("replacement reread");
-        assert_eq!(
-            second.rollback_reread(rollback.clone()),
-            Err(ResourceError::InvalidRollback)
-        );
-        assert_eq!((second.budget().files(), second.budget().bytes()), (1, 1));
-
-        first
-            .rollback_reread(rollback.clone())
-            .expect("first rollback");
-        assert_eq!((first.budget().files(), first.budget().bytes()), (1, 1));
-        assert_eq!(
-            first.rollback_reread(rollback),
-            Err(ResourceError::InvalidRollback)
-        );
-        assert_eq!((first.budget().files(), first.budget().bytes()), (1, 1));
-    }
-
-    #[test]
-    fn reread_rollback_rejects_stale_and_out_of_order_tokens() {
-        let root = TestDir::new("reread-rollback-generation");
-        let path = root.path().join("source.adoc");
-        fs::write(&path, "a").expect("source");
-        let policy = LocalFilesystemPolicy::new(
-            [root.path().to_owned()],
-            FilesystemReadLimits {
-                max_files: 1,
-                max_total_bytes: 8,
-                max_resource_bytes: 8,
-            },
-        )
-        .expect("policy");
-        let mut session = policy.session().expect("session");
-        session.read_utf8(source_id(), &path).expect("initial read");
-
-        fs::write(&path, "bb").expect("first replacement");
-        let (_, first_rollback) = session
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("first reread");
-        fs::write(&path, "ccc").expect("second replacement");
-        let (_, second_rollback) = session
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("second reread");
-
-        assert_eq!(
-            session.rollback_reread(first_rollback),
-            Err(ResourceError::InvalidRollback)
-        );
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-        session
-            .rollback_reread(second_rollback)
-            .expect("latest rollback");
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 2));
-        assert_eq!(
-            session.state.sessions[0]
-                .read_candidate_utf8(&path)
-                .expect("latest rollback restores the preceding cache generation")
-                .source(),
-            "bb"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn reread_rollback_preserves_a_preexisting_uncharged_candidate() {
-        let root = TestDir::new("reread-rollback-preexisting-candidate");
-        let path = root.path().join("source.adoc");
-        fs::write(&path, "oversized").expect("oversized source");
-        let policy = LocalFilesystemPolicy::new(
-            [root.path().to_owned()],
-            FilesystemReadLimits {
-                max_files: 1,
-                max_total_bytes: 8,
-                max_resource_bytes: 4,
-            },
-        )
-        .expect("policy");
-        let mut session = policy.session().expect("session");
-        assert!(matches!(
-            session.read_utf8(source_id(), &path),
-            Err(ResourceError::ResourceTooLarge(_))
-        ));
-        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
-
-        fs::write(&path, "ok").expect("accepted source");
-        let (_, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &path)
-            .expect("reread");
-        session.rollback_reread(rollback).expect("rollback");
-
-        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
-        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn reread_rollback_releases_a_new_spelling_of_a_charged_canonical_path() {
-        let root = TestDir::new("reread-rollback-canonical-alias");
-        let nested = root.path().join("nested");
-        fs::create_dir(&nested).expect("nested directory");
-        let path = root.path().join("source.adoc");
-        let alias = nested.join("..").join("source.adoc");
-        fs::write(&path, "old").expect("source");
-        let policy = LocalFilesystemPolicy::new(
-            [root.path().to_owned()],
-            FilesystemReadLimits {
-                max_files: 2,
-                max_total_bytes: 8,
-                max_resource_bytes: 8,
-            },
-        )
-        .expect("policy");
-        let mut session = policy.session().expect("session");
-        session.read_utf8(source_id(), &path).expect("initial read");
-        session.state.sessions[0]
-            .read_candidate_utf8(&path)
-            .expect("initial canonical cache");
-        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
-
-        fs::write(&path, "new").expect("replacement");
-        let (_, rollback) = session
-            .reread_utf8_with_rollback(source_id(), &alias)
-            .expect("alias reread");
-        assert_eq!(session.state.sessions[0].inspected_paths(), 2);
-        session.rollback_reread(rollback).expect("rollback");
-
-        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
-        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 3));
-        assert_eq!(
-            session.state.sessions[0]
-                .read_candidate_utf8(&path)
-                .expect("alias rollback preserves the canonical cache")
-                .source(),
-            "old"
-        );
     }
 
     #[test]

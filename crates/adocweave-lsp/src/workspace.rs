@@ -12,7 +12,7 @@ use adocweave::preprocess::{
 };
 use adocweave_host::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
-    FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemDraft, LocalFilesystemPolicy,
+    FilesystemReadOutcome, FilesystemResourceBinding, LocalFilesystemDraft, LocalFilesystemPolicy,
     LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
@@ -56,6 +56,24 @@ pub(crate) const fn document_analysis_job_limits() -> FilesystemJobLimits {
         max_directory_probe_entries: 0,
         max_candidate_changes: reads.max_files as u64,
         max_sessions: reads.max_files + 2,
+    }
+}
+
+/// Bounds the reads of one watched-file update.
+///
+/// A watcher notification concerns exactly one file, so this allows one read and
+/// no directory work at all.
+pub(crate) const fn watched_file_job_limits() -> FilesystemJobLimits {
+    let reads = FilesystemReadLimits::DEFAULT;
+    FilesystemJobLimits {
+        max_read_operations: 1,
+        max_read_bytes: reads.max_resource_bytes,
+        max_read_probe_bytes: 1,
+        max_directory_operations: 0,
+        max_directory_entries: 0,
+        max_directory_probe_entries: 0,
+        max_candidate_changes: 2,
+        max_sessions: 1,
     }
 }
 
@@ -186,14 +204,26 @@ pub struct WorkspaceResources {
     /// every other request. Discovery depends only on the directory and the
     /// roots, so the directory is a complete key while the roots hold still.
     config_cache: BTreeMap<PathBuf, Option<adocweave_config::ConfigSnapshot>>,
+    /// The claim each disk resource holds on its project's filesystem session.
+    ///
+    /// Releasing a resource means giving up the exact claim its last read
+    /// established, rather than naming a path. A claim carries a generation, so
+    /// a stale watcher notification cannot release a resource that has since
+    /// been read again.
+    resource_bindings: BTreeMap<ResourceId, FilesystemResourceBinding>,
     next_disk_version: i64,
     last_load_failed_closed: bool,
 }
 
+/// One watched file read through a draft, held open until the update commits.
+///
+/// Dropping this without committing discards the read, which is what replaces
+/// the explicit rollback the previous design needed.
 struct PreparedWorkspaceRead {
     text: Arc<str>,
+    binding: FilesystemResourceBinding,
     filesystem: Arc<Mutex<LocalFilesystemSession>>,
-    rollback: FilesystemReadRollback,
+    draft: LocalFilesystemDraft,
 }
 
 struct WorkspaceFilesystemCandidate {
@@ -349,16 +379,17 @@ impl IncludeAcquisition<'_> {
         let read = self
             .draft_for(&scope, plan)
             .and_then(|draft| read_scan_candidate(draft, &path));
-        let text = match read {
-            Ok(Some((_, text))) => text,
+        let candidate = match read {
+            Ok(Some(candidate)) => candidate,
             Ok(None) => return Ok(AcquiredInclude::NotFound),
             Err(message) => {
                 self.read_failure.get_or_insert_with(|| message.clone());
                 return Ok(AcquiredInclude::Failed(message));
             }
         };
+        let text = Arc::clone(&candidate.text);
         self.candidate
-            .admit_include_text(id, Arc::clone(&text), scope, plan)?;
+            .admit_include_text(id, candidate, scope, plan)?;
         Ok(AcquiredInclude::Found(text))
     }
 
@@ -430,13 +461,23 @@ impl IncludeAcquisition<'_> {
 }
 
 impl PreparedWorkspaceRead {
-    fn rollback(self) -> Result<(), String> {
-        self.filesystem
+    /// Installs the read into the live session.
+    ///
+    /// Everything that could reject the update has already been decided by the
+    /// time this runs, so the only failures left are the session lock and the
+    /// draft's own validation.
+    fn commit(self) -> Result<Arc<Mutex<LocalFilesystemSession>>, String> {
+        let mut session = self
+            .filesystem
             .lock()
-            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .rollback_reread(self.rollback)
+            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+        self.draft
+            .prepare_commit(&mut session)
+            .map_err(|error| error.to_string())?
+            .commit()
             .map_err(|error| error.to_string())?;
-        Ok(())
+        drop(session);
+        Ok(self.filesystem)
     }
 }
 
@@ -810,6 +851,7 @@ impl WorkspaceResources {
             let mut inner = Workspace::new_at_generation(limits, seed);
             let mut filesystem_candidates = BTreeMap::new();
             let mut resource_projects = BTreeMap::new();
+            let mut resource_bindings = BTreeMap::new();
             let mut analysis_root_roles = BTreeMap::new();
             let mut project_plans = BTreeMap::new();
             let mut retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget> =
@@ -874,7 +916,7 @@ impl WorkspaceResources {
                         })
                     }
                 };
-                let Some((source_id, text)) = read_scan_candidate(
+                let Some(read) = read_scan_candidate(
                     filesystem.draft.as_mut().expect("draft is active"),
                     &path,
                 )?
@@ -882,19 +924,21 @@ impl WorkspaceResources {
                     continue;
                 };
                 next_disk_version = next_disk_version.saturating_add(1);
-                let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
+                let id =
+                    ResourceId::new(read.source_id.as_str()).map_err(|error| error.to_string())?;
                 retained_layers
                     .entry(scope.clone())
                     .or_default()
                     .try_replace_layers(
                         id.clone(),
-                        RetainedLayerCharge::new(Some(text.len() as u64), None),
+                        RetainedLayerCharge::new(Some(read.text.len() as u64), None),
                         plan.retained_layers,
                     )
                     .map_err(|error| error.to_string())?;
                 inner
-                    .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
+                    .upsert_disk(id.clone(), Revision::new(next_disk_version), read.text)
                     .map_err(|error| error.to_string())?;
+                resource_bindings.insert(id.clone(), read.binding);
                 if path_is_analysis_root(&path, &directory_roots, &single_file_roots) {
                     inner
                         .register_root(id.clone())
@@ -946,6 +990,7 @@ impl WorkspaceResources {
             self.filesystems = filesystems;
             self.project_plans = project_plans;
             self.resource_projects = resource_projects;
+            self.resource_bindings = resource_bindings;
             self.include_interests.clear();
             self.loaded_include_resources.clear();
             self.include_dependencies.clear();
@@ -1100,7 +1145,7 @@ impl WorkspaceResources {
         }
         if !resource_path_is_allowed(config.as_ref(), &admitted_path) {
             let affected =
-                self.remove_outside_authority(&id, &admitted_path)
+                self.remove_outside_authority(&id)
                     .map_err(|message| WatchedFileError {
                         message,
                         journal_relevant,
@@ -1153,15 +1198,13 @@ impl WorkspaceResources {
             }
             Ok((retained_layers, inner, affected))
         })();
+        // Every rejection below leaves through `prepared` unread, which drops
+        // its draft and with it the read and the claim the read took.
         let (retained_layers, inner, affected) = match result {
             Ok(committed) => committed,
-            Err(error) => {
-                prepared.rollback().map_err(|rollback| WatchedFileError {
-                    message: format!("{error}; rollback failed: {rollback}"),
-                    journal_relevant,
-                })?;
+            Err(message) => {
                 return Err(WatchedFileError {
-                    message: error,
+                    message,
                     journal_relevant,
                 });
             }
@@ -1170,19 +1213,19 @@ impl WorkspaceResources {
         if previous_scope
             .as_ref()
             .is_some_and(|previous| previous != &scope)
-            && let Err(error) =
-                self.release_filesystem_charge(previous_scope.as_ref(), &admitted_path)
+            && let Err(message) = self.release_resource_binding(&id)
         {
-            prepared.rollback().map_err(|rollback| WatchedFileError {
-                message: format!("{error}; rollback failed: {rollback}"),
-                journal_relevant,
-            })?;
             return Err(WatchedFileError {
-                message: error,
+                message,
                 journal_relevant,
             });
         }
         let pending_dependents = self.include_dependents(&id);
+        let binding = prepared.binding.clone();
+        let filesystem = prepared.commit().map_err(|message| WatchedFileError {
+            message,
+            journal_relevant,
+        })?;
         self.inner = inner;
         if discover_as_root {
             self.analysis_root_roles
@@ -1191,10 +1234,10 @@ impl WorkspaceResources {
                 .scan_root = true;
         }
         self.retained_layers = retained_layers;
-        self.filesystems
-            .insert(scope.clone(), Arc::clone(&prepared.filesystem));
+        self.filesystems.insert(scope.clone(), filesystem);
         self.project_plans.insert(scope.clone(), plan);
         self.resource_projects.insert(id.clone(), scope);
+        self.resource_bindings.insert(id.clone(), binding);
         if known_include {
             self.loaded_include_resources.insert(id);
         }
@@ -1208,11 +1251,7 @@ impl WorkspaceResources {
         })
     }
 
-    fn remove_outside_authority(
-        &mut self,
-        id: &ResourceId,
-        path: &Path,
-    ) -> Result<BTreeSet<String>, String> {
+    fn remove_outside_authority(&mut self, id: &ResourceId) -> Result<BTreeSet<String>, String> {
         let Some(scope) = self.resource_projects.get(id).cloned() else {
             return Ok(BTreeSet::new());
         };
@@ -1227,7 +1266,7 @@ impl WorkspaceResources {
             .unwrap_or_default()
             .without_resource(id);
         retained_layers.insert(scope.clone(), budget);
-        self.release_filesystem_charge(Some(&scope), path)?;
+        self.release_resource_binding(id)?;
         self.inner = inner;
         self.analysis_root_roles.remove(id);
         self.retained_layers = retained_layers;
@@ -1295,25 +1334,30 @@ impl WorkspaceResources {
     fn admit_include_text(
         &mut self,
         id: ResourceId,
-        text: Arc<str>,
+        read: ReadCandidate,
         scope: ProjectScopeId,
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<(), String> {
-        let charge = RetainedLayerCharge::new(Some(text.len() as u64), None);
+        let charge = RetainedLayerCharge::new(Some(read.text.len() as u64), None);
         let retained_layers =
             self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
         let next_disk_version = self.next_disk_version.saturating_add(1);
         self.inner
-            .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
+            .upsert_disk(id.clone(), Revision::new(next_disk_version), read.text)
             .map_err(|error| error.to_string())?;
         self.retained_layers = retained_layers;
         self.project_plans.insert(scope.clone(), plan);
         self.resource_projects.insert(id.clone(), scope);
+        self.resource_bindings.insert(id.clone(), read.binding);
         self.loaded_include_resources.insert(id);
         self.next_disk_version = next_disk_version;
         Ok(())
     }
 
+    /// Reads one watched file into a draft, leaving live state untouched.
+    ///
+    /// The draft stays open in the returned value. Committing it installs the
+    /// read; dropping it discards the read together with the claim it took.
     fn read_workspace_resource(
         &self,
         path: &Path,
@@ -1321,19 +1365,26 @@ impl WorkspaceResources {
         plan: adocweave_config::ResolvedResourceLimitPlan,
     ) -> Result<PreparedWorkspaceRead, String> {
         let filesystem = self.session_for(scope, plan)?;
-        let (loaded, rollback) = filesystem
+        let job = FilesystemJobCoordinator::new(watched_file_job_limits())
+            .map_err(|error| error.to_string())?;
+        let mut draft = filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .reread_utf8_with_rollback(
+            .draft(&job)
+            .map_err(|error| error.to_string())?;
+        let loaded = draft
+            .reread_utf8(
                 LogicalSourceId::new(path.to_string_lossy().into_owned())
                     .map_err(|error| error.to_string())?,
                 path,
             )
             .map_err(|error| error.to_string())?;
+        let (_, text, binding) = loaded.into_parts_with_binding();
         Ok(PreparedWorkspaceRead {
-            text: loaded.into_parts().1,
+            text,
+            binding,
             filesystem,
-            rollback,
+            draft,
         })
     }
 
@@ -1372,18 +1423,36 @@ impl WorkspaceResources {
         Ok(retained_layers)
     }
 
-    fn release_filesystem_charge(
-        &self,
-        scope: Option<&ProjectScopeId>,
-        path: &Path,
-    ) -> Result<(), String> {
-        let Some(filesystem) = scope.and_then(|scope| self.filesystems.get(scope)) else {
+    /// Gives up the claim one resource holds on its project's session.
+    ///
+    /// Releasing names the claim rather than the path, so a claim taken before
+    /// a newer read cannot release what that newer read established. The session
+    /// reports such a claim as stale and keeps the resource, which is exactly
+    /// what a late watcher notification must not be able to undo.
+    fn release_resource_binding(&mut self, id: &ResourceId) -> Result<(), String> {
+        let Some(binding) = self.resource_bindings.remove(id) else {
             return Ok(());
         };
-        filesystem
+        let Some(scope) = self.resource_projects.get(id) else {
+            return Ok(());
+        };
+        let Some(filesystem) = self.filesystems.get(scope).map(Arc::clone) else {
+            return Ok(());
+        };
+        let job = FilesystemJobCoordinator::new(watched_file_job_limits())
+            .map_err(|error| error.to_string())?;
+        let mut session = filesystem
             .lock()
-            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-            .release(path);
+            .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+        let mut draft = session.draft(&job).map_err(|error| error.to_string())?;
+        draft
+            .release_binding(&binding)
+            .map_err(|error| error.to_string())?;
+        draft
+            .prepare_commit(&mut session)
+            .map_err(|error| error.to_string())?
+            .commit()
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -1489,38 +1558,32 @@ impl WorkspaceResources {
                     .register_root(id.clone())
                     .map_err(|error| error.to_string())?;
             }
-            Ok((retained_layers, inner, affected))
+            Ok::<_, String>((retained_layers, inner, affected))
         })();
-        let (retained_layers, inner, affected) = match result {
-            Ok(committed) => committed,
-            Err(error) => {
-                if let Some(prepared) = prepared_disk {
-                    prepared.rollback()?;
-                }
-                return Err(error);
-            }
-        };
+        // A rejection leaves through `prepared_disk` unread, which drops its
+        // draft and with it the read and the claim the read took.
+        let (retained_layers, inner, affected) = result?;
         if previous_scope
             .as_ref()
             .is_some_and(|previous| previous != &scope)
-            && let Err(error) = self.release_filesystem_charge(previous_scope.as_ref(), &path)
         {
-            if let Some(prepared) = prepared_disk {
-                prepared
-                    .rollback()
-                    .map_err(|rollback| format!("{error}; rollback failed: {rollback}"))?;
-            }
-            return Err(error);
+            self.release_resource_binding(&id)?;
         }
+        let committed_disk = prepared_disk
+            .map(|prepared| {
+                let binding = prepared.binding.clone();
+                prepared.commit().map(|filesystem| (filesystem, binding))
+            })
+            .transpose()?;
         self.inner = inner;
         self.analysis_root_roles
             .entry(id.clone())
             .or_default()
             .open_overlay = true;
         self.retained_layers = retained_layers;
-        if let Some(prepared) = &prepared_disk {
-            self.filesystems
-                .insert(scope.clone(), Arc::clone(&prepared.filesystem));
+        if let Some((filesystem, binding)) = committed_disk {
+            self.filesystems.insert(scope.clone(), filesystem);
+            self.resource_bindings.insert(id.clone(), binding);
         }
         self.project_plans.insert(scope.clone(), plan);
         self.resource_projects.insert(id.clone(), scope);
@@ -1533,9 +1596,6 @@ impl WorkspaceResources {
 
     pub fn remove_disk(&mut self, uri: &Url) -> Result<BTreeSet<String>, String> {
         let id = uri_id(uri)?;
-        let path = uri
-            .to_file_path()
-            .map_err(|()| format!("workspace resource is not a file URI: {uri}"))?;
         let scope = self.resource_projects.get(&id).cloned();
         let mut retained_layers = self.retained_layers.clone();
         if let Some(scope) = &scope {
@@ -1560,7 +1620,7 @@ impl WorkspaceResources {
         let mut inner = self.inner.clone();
         let mut affected = strings(inner.remove_disk(&id));
         affected.extend(self.include_dependents(&id));
-        self.release_filesystem_charge(scope.as_ref(), &path)?;
+        self.release_resource_binding(&id)?;
         self.inner = inner;
         self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
@@ -2128,10 +2188,21 @@ impl WorkspaceResources {
     }
 }
 
+/// One file read through a draft, together with the claim it established.
+///
+/// The binding is what later releases this resource's charge on its session. It
+/// names a generation, so a claim from an earlier read cannot release a
+/// resource that has since been read again.
+struct ReadCandidate {
+    source_id: LogicalSourceId,
+    text: Arc<str>,
+    binding: FilesystemResourceBinding,
+}
+
 fn read_scan_candidate(
     filesystem: &mut LocalFilesystemDraft,
     path: &Path,
-) -> Result<Option<(LogicalSourceId, Arc<str>)>, String> {
+) -> Result<Option<ReadCandidate>, String> {
     let uri = Url::from_file_path(path)
         .map_err(|()| format!("cannot convert workspace path to URI: {}", path.display()))?;
     let outcome = filesystem
@@ -2141,7 +2212,14 @@ fn read_scan_candidate(
         )
         .map_err(|error| error.to_string())?;
     Ok(match outcome {
-        FilesystemReadOutcome::Found(file) => Some(file.into_parts()),
+        FilesystemReadOutcome::Found(file) => {
+            let (source_id, text, binding) = file.into_parts_with_binding();
+            Some(ReadCandidate {
+                source_id,
+                text,
+                binding,
+            })
+        }
         FilesystemReadOutcome::NotFound { .. } => None,
     })
 }
@@ -2607,18 +2685,19 @@ mod tests {
         let mut filesystem = session.draft(&job).expect("filesystem draft");
         std::fs::remove_file(&vanished).expect("remove discovered source");
 
-        assert_eq!(
-            read_scan_candidate(&mut filesystem, &candidates[0]).expect("vanished candidate"),
-            None
+        assert!(
+            read_scan_candidate(&mut filesystem, &candidates[0])
+                .expect("vanished candidate")
+                .is_none()
         );
-        let (source_id, text) = read_scan_candidate(&mut filesystem, &candidates[1])
+        let read = read_scan_candidate(&mut filesystem, &candidates[1])
             .expect("remaining candidate")
             .expect("remaining source");
         assert_eq!(
-            source_id.as_str(),
+            read.source_id.as_str(),
             Url::from_file_path(&remaining).unwrap().as_str()
         );
-        assert_eq!(text.as_ref(), "remaining\n");
+        assert_eq!(read.text.as_ref(), "remaining\n");
     }
 
     #[cfg(unix)]

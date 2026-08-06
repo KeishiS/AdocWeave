@@ -86,7 +86,6 @@ pub enum ResourceError {
     InvalidRoot,
     InvalidSourceId,
     SessionIdentityExhausted,
-    InvalidRollback,
     Missing(PathBuf),
     PermissionDenied(PathBuf),
     PathNotAbsolute(PathBuf),
@@ -113,8 +112,6 @@ impl fmt::Display for ResourceError {
             Self::SessionIdentityExhausted => {
                 formatter.write_str("filesystem session identity space is exhausted")
             }
-            Self::InvalidRollback => formatter
-                .write_str("filesystem reread rollback is stale or belongs to another session"),
             Self::Missing(path) => {
                 write!(formatter, "local resource is missing: {}", path.display())
             }
