@@ -2333,11 +2333,8 @@ mod tests {
         let replacement = root.0.join("replacement.toml");
         std::fs::write(&config, "schema-version = 1\n").expect("project configuration");
         std::fs::write(&replacement, "schema-version = 1\n").expect("replacement");
-        let policy = LocalFilesystemPolicy::new(
-            [root.0.clone()],
-            FilesystemReadLimits::DEFAULT,
-        )
-        .expect("filesystem policy");
+        let policy = LocalFilesystemPolicy::new([root.0.clone()], FilesystemReadLimits::DEFAULT)
+            .expect("filesystem policy");
         let discovered = adocweave_config::discover_with_policy(
             &root.0,
             policy.root_policy(&root.0).expect("root policy"),
