@@ -24,13 +24,18 @@ pub use error::{FilesystemDraftError, ResourceError};
 /// A Linux authority owns one file descriptor per root. This bound is kept
 /// separate from the number of files a session may read so configuration alone
 /// cannot exhaust the process file-descriptor table before any read begins.
-const MAX_FILESYSTEM_POLICY_ROOTS: usize = 128;
+const MAX_FILESYSTEM_POLICY_ROOTS: usize = LocalFilesystemPolicy::MAX_ROOTS;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalFilesystemPolicy {
     roots: Vec<PathBuf>,
     root_policies: Vec<LocalTargetPolicy>,
     limits: FilesystemReadLimits,
+}
+
+impl LocalFilesystemPolicy {
+    /// Maximum number of directory authorities retained by one policy.
+    pub const MAX_ROOTS: usize = 128;
 }
 
 /// Immutable selection of retained filesystem roots and read limits.
@@ -592,7 +597,8 @@ const fn next_session_id(current: u64) -> Option<u64> {
 }
 
 impl LocalFilesystemSession {
-    const MAX_SCAN_ENTRIES: usize = 100_000;
+    /// Maximum directory entries inspected by one recursive scan.
+    pub const MAX_SCAN_ENTRIES: usize = 100_000;
 
     pub const fn id(&self) -> LocalFilesystemSessionId {
         self.session_id
