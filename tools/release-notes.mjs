@@ -53,6 +53,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "#492：filesystem resourceの不在を正常な取得結果として扱い、候補stateを安全に採用または破棄できる基礎を追加しました。",
+  "#495：tableの``cols``属性にある空のcolumn specを既定列として保持し、明示した列数どおりに解析するよう修正しました。",
 ];
 
 export function breakingContractNotes(changes) {

@@ -87,9 +87,10 @@ Linuxの``format --write``と``check --fix``は、入力読込時に選んだaut
 内容の再確認、一時ファイルの作成およびrenameを同じディレクトリhandleに対して実行します。
 ``LocalFilesystemPolicy``が同時に保持するrootは128件までとします。この上限は本文の読込件数とは独立して適用し、
 設定や引数だけでprocessのfile descriptorを使い切ることを防ぎます。
-単一resourceの取得は``FilesystemReadOutcome``を返します。対象fileが存在しない場合は、errorではなく
+単一resourceを取得する``*_outcome`` APIは``FilesystemReadOutcome``を返します。対象fileが存在しない場合は、errorではなく
 ``NotFound``として論理IDと候補pathを返します。実体を取得していないためbindingは作りません。権限不足、root外、
 symlink検証失敗、不正なUTF-8および上限超過は安全性や資源上限の失敗であり、``NotFound``にはしません。
+従来の読込APIは不在を``ResourceError::Missing``として返し、読込前のbindingと保持量を変更しません。
 
 ``Found``が保持する``LoadedFilesystemSource``は``LogicalSourceId``、不変な本文および世代付き``FilesystemResourceBinding``を保持し、
 検査したfileのprovenanceを直接構築できないfieldに分離します。読込後にpathを再度openせず、これらを一回の

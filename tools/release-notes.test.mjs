@@ -38,6 +38,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.equal(PREVIOUS_RELEASE_VERSION, "0.33.0");
   assert.match(notes, /#492：/);
   assert.match(notes, /filesystem resourceの不在を正常な取得結果/);
+  assert.match(notes, /#495：/);
+  assert.match(notes, /空のcolumn specを既定列として保持/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
