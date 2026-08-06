@@ -2091,7 +2091,8 @@ fn scan_config_for_path(
                 })?;
                 let source_id = LogicalSourceId::new(uri.to_string())
                     .map_err(|error| ScopeConfigError::Other(error.to_string()))?;
-                let loaded = match filesystem.read_utf8_outcome(source_id, &config_path) {
+                let loaded = match filesystem.read_utf8_no_symlinks_outcome(source_id, &config_path)
+                {
                     Ok(FilesystemReadOutcome::Found(loaded)) => loaded,
                     Ok(FilesystemReadOutcome::NotFound { .. }) => {
                         return Err(ScopeConfigError::Transient(
@@ -2320,6 +2321,52 @@ mod tests {
             Url::from_file_path(&remaining).unwrap().as_str()
         );
         assert_eq!(text.as_ref(), "remaining\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_config_replaced_by_a_symlink_after_discovery_is_not_read() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let config = root.0.join(adocweave_config::FILE_NAME);
+        let replacement = root.0.join("replacement.toml");
+        std::fs::write(&config, "schema-version = 1\n").expect("project configuration");
+        std::fs::write(&replacement, "schema-version = 1\n").expect("replacement");
+        let policy = LocalFilesystemPolicy::new(
+            [root.0.clone()],
+            FilesystemReadLimits::DEFAULT,
+        )
+        .expect("filesystem policy");
+        let discovered = adocweave_config::discover_with_policy(
+            &root.0,
+            policy.root_policy(&root.0).expect("root policy"),
+        )
+        .expect("configuration discovery")
+        .expect("configuration path");
+        std::fs::remove_file(&config).expect("remove discovered configuration");
+        symlink(&replacement, &config).expect("replace configuration with symlink");
+        let session = policy
+            .access_existing([root.0.clone()], workspace_config_read_limits())
+            .and_then(|access| access.session())
+            .expect("configuration session");
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+        let mut draft = session.draft(&job).expect("configuration draft");
+        let source_id = LogicalSourceId::new(
+            Url::from_file_path(&discovered)
+                .expect("configuration URI")
+                .to_string(),
+        )
+        .expect("source ID");
+
+        assert!(
+            draft
+                .read_utf8_no_symlinks_outcome(source_id, &discovered)
+                .is_err()
+        );
+        let usage = job.usage().expect("job usage");
+        assert_eq!(usage.read_operations, 1);
+        assert_eq!(usage.read_bytes, 0);
     }
 
     #[test]

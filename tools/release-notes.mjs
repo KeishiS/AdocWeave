@@ -103,6 +103,7 @@ const contractNotes = [
   "Language Serverの初期走査では、列挙後に消えたfileを走査全体の失敗にせず、その候補だけを省略します。",
   "Rust host APIへ``FilesystemJobCoordinator``を追加しました。一つのjobに参加する複数sessionで、resource取得、取得byte、directory列挙、entryおよび候補変更の上限を共有します。I/O前の予約により並行処理でも残量を重複利用せず、draftを破棄しても使用量を戻しません。",
   "``LocalFilesystemDraft``は作成時にcoordinatorを必須とし、file読込とdirectory走査を同じjobへ計上します。取消や上限超過の後にI/Oが完了しても、最初の終了理由を維持したまま実際の使用量を確定します。",
+  "policyを定義するfileを読むRust consumer向けに、jobへ計上しながらroot内を含むsymlinkを拒否する``LocalFilesystemDraft::read_utf8_no_symlinks_outcome``を追加しました。",
   "Language Serverの初期ワークスペース走査は、ディレクトリ列挙、project設定の読込および全project scopeの本文読込を一つのfilesystem jobへ計上します。各scopeの変更はdraftへ隔離し、候補Workspaceの構築後にだけ採用します。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,

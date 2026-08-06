@@ -131,10 +131,13 @@ impl WorkspaceScanCancellation {
     }
 
     pub(super) fn cancel(&self) {
-        self.token.cancel();
+        // Stop the job before making cancellation visible to the worker. Once
+        // the token is true, the job is therefore already terminal and cannot
+        // race to `Finished` after the worker's final token check.
         if let Ok(job) = &self.filesystem_job {
             let _ = job.cancel();
         }
+        self.token.cancel();
     }
 
     pub(super) fn filesystem_job(&self) -> Result<&FilesystemJobCoordinator, String> {

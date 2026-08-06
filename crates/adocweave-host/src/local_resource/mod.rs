@@ -1458,6 +1458,21 @@ impl LocalFilesystemMutationCursor<'_> {
         self.read_utf8_with(source_id, path, false, || {})
     }
 
+    fn read_utf8_no_symlinks(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_utf8_with_disposition(
+            source_id,
+            path,
+            false,
+            false,
+            || {},
+            MissingDisposition::ApplyNotFound,
+        )
+    }
+
     fn read_utf8_preserving_missing(
         &mut self,
         source_id: LogicalSourceId,
@@ -1467,6 +1482,7 @@ impl LocalFilesystemMutationCursor<'_> {
             source_id,
             path,
             false,
+            true,
             || {},
             MissingDisposition::PreserveLegacyState,
         )
@@ -1526,6 +1542,7 @@ impl LocalFilesystemMutationCursor<'_> {
             &mut self.state.sessions[index],
             &candidate,
             false,
+            true,
             || {},
             |canonical| {
                 shared_read_capacity(
@@ -1659,6 +1676,7 @@ impl LocalFilesystemMutationCursor<'_> {
             source_id,
             path,
             reuse_cached_text,
+            true,
             after_open,
             MissingDisposition::ApplyNotFound,
         )
@@ -1669,6 +1687,7 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         path: &Path,
         reuse_cached_text: bool,
+        follow_symlinks: bool,
         after_open: impl FnOnce(),
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
@@ -1695,6 +1714,7 @@ impl LocalFilesystemMutationCursor<'_> {
             &mut self.state.sessions[index],
             &candidate,
             reuse_cached_text,
+            follow_symlinks,
             after_open,
             |canonical| {
                 shared_read_capacity(
@@ -2004,6 +2024,22 @@ impl LocalFilesystemDraft {
         self.record(result)
     }
 
+    /// Reads one absolute path while rejecting every symbolic link.
+    ///
+    /// This form is intended for policy-bearing files. `NotFound` keeps the
+    /// draft usable, while a symbolic link or another read failure poisons it.
+    pub fn read_utf8_no_symlinks_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_utf8_no_symlinks(source_id, path);
+        self.record(result)
+    }
+
     pub fn reread_utf8(
         &mut self,
         source_id: LogicalSourceId,
@@ -2143,6 +2179,7 @@ fn read_candidate_with_optional_job(
     session: &mut LocalTargetSession,
     candidate: &Path,
     reuse_cached_text: bool,
+    follow_symlinks: bool,
     after_open: impl FnOnce(),
     capacity: impl FnOnce(&Path) -> crate::local_target::CandidateReadCapacity,
     permit: Option<&mut FilesystemReadPermit>,
@@ -2151,7 +2188,7 @@ fn read_candidate_with_optional_job(
         Some(permit) => session.read_candidate_utf8_with_job_capacity(
             candidate,
             reuse_cached_text,
-            true,
+            follow_symlinks,
             after_open,
             capacity,
             permit,
@@ -2160,7 +2197,7 @@ fn read_candidate_with_optional_job(
             .read_candidate_utf8_with_capacity(
                 candidate,
                 reuse_cached_text,
-                true,
+                follow_symlinks,
                 after_open,
                 capacity,
             )
@@ -4481,6 +4518,31 @@ mod tests {
                 .read_utf8(source_id(), &link),
             Err(ResourceError::OutsideRoots(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn draft_policy_read_rejects_a_symlink_that_stays_inside_the_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("draft-policy-symlink");
+        let target = root.path().join("target.toml");
+        let link = root.path().join(".adocweave.toml");
+        fs::write(&target, "schema-version = 1\n").expect("target");
+        symlink(&target, &link).expect("policy symlink");
+        let session = policy(root.path(), 100).session().expect("session");
+        let job = unbounded_job();
+        let mut draft = session.draft(&job).expect("draft");
+
+        assert!(
+            draft
+                .read_utf8_no_symlinks_outcome(source_id(), &link)
+                .is_err()
+        );
+        let usage = job.usage().expect("job usage");
+        assert_eq!(usage.read_operations, 1);
+        assert_eq!(usage.read_bytes, 0);
+        assert_eq!(usage.candidate_changes, 0);
     }
 
     #[cfg(unix)]
