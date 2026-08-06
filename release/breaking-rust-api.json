@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
   "releaseVersion": "0.34.0",
-  "changes": []
+  "changes": [
+    {
+      "crate": "adocweave-host",
+      "description": "公開enumのResourceErrorへ、filesystem jobの上限超過や取消を型付きで保持するJob variantを追加しました。",
+      "item": "ResourceError:Job",
+      "lint": "enum_variant_added",
+      "migration": "ResourceErrorを網羅的にmatchするRust consumerはResourceError::Jobを処理してください。",
+      "summary": "ResourceErrorへJob variantを追加"
+    }
+  ]
 }

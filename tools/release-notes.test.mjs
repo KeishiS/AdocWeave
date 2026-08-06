@@ -49,11 +49,11 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /どちらもv0\.33\.0から変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
   assert.match(notes, /Rust APIの破壊的変更/);
-  assert.match(notes, /Rust APIの破壊的変更：ありません/);
+  assert.doesNotMatch(notes, /Rust APIの破壊的変更：ありません/);
   assert.doesNotMatch(notes, /constructible_struct_adds_field/);
   assert.doesNotMatch(notes, /externally-constructible struct adds field/);
-  assert.doesNotMatch(notes, /enum_variant_added/);
-  assert.doesNotMatch(notes, /enum variant added on exhaustive enum/);
+  assert.match(notes, /ResourceError::Job/);
+  assert.match(notes, /ResourceErrorを網羅的にmatchするRust consumer/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /0\.34\.0のpackageとAPIへ更新/);
   assert.match(notes, /requestの``packageVersion``も``0\.34\.0``にそろえて/);
