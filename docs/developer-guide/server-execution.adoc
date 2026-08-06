@@ -162,11 +162,13 @@ draftを破棄してもjobの使用量は戻りません。同じ論理処理を
 
 Language Serverの初期ワークスペース走査は、走査ごとに一つのcoordinatorを作ります。ディレクトリ列挙用sessionと
 各project scopeの本文読込用sessionは同じcoordinatorを共有します。project scopeごとに一つのdraftへ候補を蓄積し、
-全候補の読込とWorkspace候補の構築に成功した後でsessionへ反映します。走査を取り消した場合、または上限やI/Oの
-検査に失敗した場合は、未採用のdraftを破棄して既存のWorkspaceを維持します。
+全候補の読込とWorkspace候補の構築に成功した後で候補sessionへ反映します。計画中はlive stateを変更しません。
+置換要求で棄却した走査と取消した走査は候補全体を破棄します。受理した走査が上限やI/Oの検査に失敗した場合は、
+従来どおり空の信頼済みstateをfail closedで採用します。
 
 初期走査全体では、本文読込10,000回、取得本文50 MiB、directory entry 100,000件、候補変更10,000回、
-参加session 10,001件を上限とします。project設定から決まるsession単位の上限より先に、走査全体の上限へ
+参加session 10,002件を上限とします。project設定の探索後に読む``.adocweave.toml``も、本文と同じ読込回数・
+byte上限へ含めます。project設定から決まるsession単位の上限より先に、走査全体の上限へ
 達する場合があります。
 
 Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の探索と読込、およびLanguage Serverの

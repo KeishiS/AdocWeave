@@ -371,10 +371,13 @@ impl Backend {
         tokio::spawn(async move {
             let worker_cancellation = Arc::clone(&cancellation);
             let scan = tokio::task::spawn_blocking(move || {
-                service.plan_workspace_scan(worker_cancellation.as_ref())
+                worker_cancellation.filesystem_job().map(|job| {
+                    service.plan_workspace_scan_with_job(worker_cancellation.as_ref(), job)
+                })
             })
             .await
-            .map_err(|error| format!("workspace scan worker failed: {error}"));
+            .map_err(|error| format!("workspace scan worker failed: {error}"))
+            .and_then(|scan| scan);
             let _ = client.emit(WorkspaceScanned::new(sequence, scan));
         });
     }

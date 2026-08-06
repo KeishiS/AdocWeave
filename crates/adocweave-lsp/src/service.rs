@@ -758,12 +758,26 @@ impl LanguageService {
     /// finds. It takes `&self` so a caller can run it on a worker while the
     /// event loop keeps answering requests. Installing the result is
     /// [`Self::apply_workspace_scan`], which is cheap and runs in order.
+    #[cfg(test)]
     pub fn plan_workspace_scan(&self, cancellation: &dyn CancellationCheck) -> WorkspaceScan {
         let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
         WorkspaceScan {
             loaded: self
                 .workspace
                 .load_roots_detached_with_cancellation(&roots, cancellation),
+        }
+    }
+
+    pub(crate) fn plan_workspace_scan_with_job(
+        &self,
+        cancellation: &dyn CancellationCheck,
+        job: &adocweave_host::FilesystemJobCoordinator,
+    ) -> WorkspaceScan {
+        let roots = self.workspace_roots.values().cloned().collect::<Vec<_>>();
+        WorkspaceScan {
+            loaded: self
+                .workspace
+                .load_roots_detached_with_job(&roots, cancellation, job),
         }
     }
 
