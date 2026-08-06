@@ -4,17 +4,18 @@
 //! not depend on the parser core or workspace state.
 
 mod exit_status;
+mod filesystem_limits;
 mod io_observation;
 mod local_resource;
 mod local_target;
 
 pub use exit_status::ExitStatus;
+pub use filesystem_limits::FilesystemReadLimits;
 pub use local_resource::{
-    DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadLimits, FilesystemReadRollback,
-    FilesystemReleaseOutcome, FilesystemResourceBinding, LoadedFilesystemSource,
-    LocalFilesystemAccess, LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession,
-    LocalFilesystemSessionId, LogicalSourceId, PreparedFilesystemCommit, ResourceBudget,
-    ResourceError,
+    DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadRollback, FilesystemReleaseOutcome,
+    FilesystemResourceBinding, LoadedFilesystemSource, LocalFilesystemAccess, LocalFilesystemDraft,
+    LocalFilesystemPolicy, LocalFilesystemSession, LocalFilesystemSessionId, LogicalSourceId,
+    PreparedFilesystemCommit, ResourceBudget, ResourceError,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalBytes, LoadedLocalTarget, LocalTargetError,

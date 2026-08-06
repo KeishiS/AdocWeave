@@ -12,8 +12,8 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::filesystem_limits::FilesystemReadLimits;
 use crate::io_observation::FilesystemIoMeter;
-use crate::local_resource::FilesystemReadLimits;
 
 /// How many times a confined open may be retried after a concurrent-change race.
 ///

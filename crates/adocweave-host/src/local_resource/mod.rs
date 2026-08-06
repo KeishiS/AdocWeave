@@ -1,17 +1,22 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::error::Error;
-use std::fmt;
 #[cfg(not(target_os = "linux"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::filesystem_limits::FilesystemReadLimits;
 use crate::io_observation::FilesystemIoMeter;
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
     LocalTargetSession, LocalTargetTextRollback,
 };
+
+mod budget;
+mod error;
+
+pub use budget::ResourceBudget;
+pub use error::{FilesystemDraftError, ResourceError};
 
 /// Maximum number of directory authorities retained by one policy.
 ///
@@ -19,27 +24,6 @@ use crate::local_target::{
 /// separate from the number of files a session may read so configuration alone
 /// cannot exhaust the process file-descriptor table before any read begins.
 const MAX_FILESYSTEM_POLICY_ROOTS: usize = 128;
-
-/// Bounds applied while the host discovers and reads filesystem resources.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FilesystemReadLimits {
-    /// Maximum number of filesystem resources charged to one session.
-    pub max_files: usize,
-    /// Maximum combined bytes charged to one session.
-    pub max_total_bytes: u64,
-    /// Maximum bytes read from one filesystem resource.
-    pub max_resource_bytes: u64,
-}
-
-impl Default for FilesystemReadLimits {
-    fn default() -> Self {
-        Self {
-            max_files: 10_000,
-            max_total_bytes: 50 * 1024 * 1024,
-            max_resource_bytes: 10 * 1024 * 1024,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalFilesystemPolicy {
@@ -1734,11 +1718,11 @@ fn shared_read_capacity(
         budget.release(charge.bytes);
     }
     let previous = charged.get(canonical).copied();
-    let allow_file = previous.is_some() || budget.files < limits.max_files;
+    let allow_file = previous.is_some() || budget.files() < limits.max_files;
     file_limit_denied.set(!allow_file);
     let retained = previous
-        .and_then(|charge| budget.bytes.checked_sub(charge.bytes))
-        .unwrap_or(budget.bytes);
+        .and_then(|charge| budget.bytes().checked_sub(charge.bytes))
+        .unwrap_or(budget.bytes());
     crate::local_target::CandidateReadCapacity {
         allow_file,
         max_total_bytes: limits.max_total_bytes.saturating_sub(retained),
@@ -1760,286 +1744,11 @@ fn map_shared_read_error(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ResourceBudget {
-    files: usize,
-    bytes: u64,
-}
-
-impl ResourceBudget {
-    pub fn charge(
-        &mut self,
-        path: &Path,
-        bytes: u64,
-        limits: FilesystemReadLimits,
-    ) -> Result<(), ResourceError> {
-        if bytes > limits.max_resource_bytes {
-            return Err(ResourceError::ResourceTooLarge(path.to_owned()));
-        }
-        let files = self.files.checked_add(1).ok_or(ResourceError::FileLimit {
-            limit: limits.max_files,
-        })?;
-        if files > limits.max_files {
-            return Err(ResourceError::FileLimit {
-                limit: limits.max_files,
-            });
-        }
-        let total = self
-            .bytes
-            .checked_add(bytes)
-            .ok_or(ResourceError::ByteLimit)?;
-        if total > limits.max_total_bytes {
-            return Err(ResourceError::ByteLimit);
-        }
-        self.files = files;
-        self.bytes = total;
-        Ok(())
-    }
-
-    fn replace(
-        &mut self,
-        path: &Path,
-        previous: Option<u64>,
-        bytes: u64,
-        limits: FilesystemReadLimits,
-    ) -> Result<(), ResourceError> {
-        let Some(previous) = previous else {
-            return self.charge(path, bytes, limits);
-        };
-        if bytes > limits.max_resource_bytes {
-            return Err(ResourceError::ResourceTooLarge(path.to_owned()));
-        }
-        let retained = self
-            .bytes
-            .checked_sub(previous)
-            .expect("charged bytes are part of the total");
-        let total = retained
-            .checked_add(bytes)
-            .ok_or(ResourceError::ByteLimit)?;
-        if total > limits.max_total_bytes {
-            return Err(ResourceError::ByteLimit);
-        }
-        self.bytes = total;
-        Ok(())
-    }
-
-    fn restore_replacement(&mut self, current: u64, previous: u64) {
-        self.bytes = self
-            .bytes
-            .checked_sub(current)
-            .and_then(|bytes| bytes.checked_add(previous))
-            .expect("replacement charge is part of the budget");
-    }
-
-    fn restore_charge(&mut self, bytes: u64) {
-        self.files = self
-            .files
-            .checked_add(1)
-            .expect("restored file count fits the original budget");
-        self.bytes = self
-            .bytes
-            .checked_add(bytes)
-            .expect("restored bytes fit the original budget");
-    }
-
-    fn release(&mut self, bytes: u64) {
-        self.files = self
-            .files
-            .checked_sub(1)
-            .expect("released file was charged");
-        self.bytes = self
-            .bytes
-            .checked_sub(bytes)
-            .expect("released bytes were charged");
-    }
-
-    pub const fn files(self) -> usize {
-        self.files
-    }
-
-    pub const fn bytes(self) -> u64 {
-        self.bytes
-    }
-}
-
-/// An error raised while creating, mutating, or committing a filesystem draft.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FilesystemDraftError {
-    SessionRevisionExhausted,
-    BindingGenerationExhausted,
-    DraftBusy,
-    InvalidDraft,
-    PoisonedDraft,
-    ForeignBinding,
-    Resource(ResourceError),
-}
-
-impl fmt::Display for FilesystemDraftError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SessionRevisionExhausted => {
-                formatter.write_str("filesystem session revision space is exhausted")
-            }
-            Self::BindingGenerationExhausted => {
-                formatter.write_str("filesystem binding generation space is exhausted")
-            }
-            Self::DraftBusy => {
-                formatter.write_str("filesystem session already has an active draft")
-            }
-            Self::InvalidDraft => {
-                formatter.write_str("filesystem draft is stale or belongs to another session")
-            }
-            Self::PoisonedDraft => {
-                formatter.write_str("filesystem draft contains a failed operation")
-            }
-            Self::ForeignBinding => {
-                formatter.write_str("filesystem binding belongs to another session")
-            }
-            Self::Resource(source) => source.fmt(formatter),
-        }
-    }
-}
-
-impl Error for FilesystemDraftError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Resource(source) => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<ResourceError> for FilesystemDraftError {
-    fn from(source: ResourceError) -> Self {
-        Self::Resource(source)
-    }
-}
-
-impl From<FilesystemDraftError> for ResourceError {
-    fn from(error: FilesystemDraftError) -> Self {
-        match error {
-            FilesystemDraftError::Resource(source) => source,
-            lifecycle => Self::Unverifiable(lifecycle.to_string()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceError {
-    NoRoots,
-    InvalidRoot,
-    InvalidSourceId,
-    SessionIdentityExhausted,
-    InvalidRollback,
-    Missing(PathBuf),
-    PermissionDenied(PathBuf),
-    PathNotAbsolute(PathBuf),
-    OutsideRoots(PathBuf),
-    NotRegularFile(PathBuf),
-    Inspect { path: PathBuf, source: String },
-    Read { path: PathBuf, source: String },
-    InvalidUtf8 { path: PathBuf, source: String },
-    ResourceTooLarge(PathBuf),
-    RootLimit { limit: usize },
-    FileLimit { limit: usize },
-    ScanEntryLimit { limit: usize },
-    ByteLimit,
-    Unverifiable(String),
-}
-
-impl fmt::Display for ResourceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoRoots => formatter.write_str("no local resource roots were configured"),
-            Self::InvalidRoot => formatter.write_str("local resource root is not a directory"),
-            Self::InvalidSourceId => formatter.write_str("local source ID is invalid"),
-            Self::SessionIdentityExhausted => {
-                formatter.write_str("filesystem session identity space is exhausted")
-            }
-            Self::InvalidRollback => formatter
-                .write_str("filesystem reread rollback is stale or belongs to another session"),
-            Self::Missing(path) => {
-                write!(formatter, "local resource is missing: {}", path.display())
-            }
-            Self::PermissionDenied(path) => {
-                write!(formatter, "permission denied reading {}", path.display())
-            }
-            Self::PathNotAbsolute(path) => write!(
-                formatter,
-                "local resource path is not absolute: {}",
-                path.display()
-            ),
-            Self::OutsideRoots(path) => write!(
-                formatter,
-                "local resource is outside configured roots: {}",
-                path.display()
-            ),
-            Self::NotRegularFile(path) => write!(
-                formatter,
-                "local resource is not a regular file: {}",
-                path.display()
-            ),
-            Self::Inspect { path, source } => {
-                write!(formatter, "cannot inspect {}: {source}", path.display())
-            }
-            Self::Read { path, source } => {
-                write!(formatter, "cannot read {}: {source}", path.display())
-            }
-            Self::InvalidUtf8 { path, source } => write!(
-                formatter,
-                "cannot read {} as UTF-8: {source}",
-                path.display()
-            ),
-            Self::ResourceTooLarge(path) => {
-                write!(formatter, "local resource is too large: {}", path.display())
-            }
-            Self::RootLimit { limit } => {
-                write!(formatter, "local resource root limit exceeded: {limit}")
-            }
-            Self::FileLimit { limit } => {
-                write!(formatter, "local resource file limit exceeded: {limit}")
-            }
-            Self::ScanEntryLimit { limit } => {
-                write!(
-                    formatter,
-                    "local filesystem scan entry limit exceeded: {limit}"
-                )
-            }
-            Self::ByteLimit => formatter.write_str("local resource byte limit exceeded"),
-            Self::Unverifiable(reason) => {
-                write!(formatter, "local resource cannot be verified: {reason}")
-            }
-        }
-    }
-}
-
-impl Error for ResourceError {}
-
-impl From<LocalTargetError> for ResourceError {
-    fn from(error: LocalTargetError) -> Self {
-        match error {
-            LocalTargetError::Missing(path) => Self::Missing(path),
-            LocalTargetError::OutsideRoot(path) => Self::OutsideRoots(path),
-            LocalTargetError::NotFile(path) | LocalTargetError::NotDirectory(path) => {
-                Self::NotRegularFile(path)
-            }
-            LocalTargetError::PermissionDenied(path) => Self::PermissionDenied(path),
-            LocalTargetError::InvalidUtf8(path) => Self::InvalidUtf8 {
-                path,
-                source: "input is not valid UTF-8".to_owned(),
-            },
-            LocalTargetError::Unverifiable(source) => Self::Unverifiable(source),
-            LocalTargetError::LimitExceeded { limit } => Self::FileLimit { limit },
-            LocalTargetError::ResourceTooLarge(path) => Self::ResourceTooLarge(path),
-            LocalTargetError::ReadLimitExceeded => Self::ByteLimit,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::io_observation::FilesystemIoUsage;
+    use std::error::Error;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
