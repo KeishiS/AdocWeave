@@ -531,7 +531,7 @@ export function validateReleaseWorkflowPolicy({
   if (darwinHostTests.if !== "endsWith(matrix.target, '-apple-darwin')") {
     fail("Darwin host unit tests must be limited to Darwin targets");
   }
-  requireCommand(darwinHostTests.run, "nix develop .#ci -c cargo test -p adocweave-host --all-features",
+  requireExactCommand(darwinHostTests.run, "nix develop .#ci -c cargo test -p adocweave-host --all-features",
     "Darwin host unit tests must run the host package inside the locked closure");
   if (nativeSteps.indexOf(darwinHostTests) >
       nativeSteps.findIndex((item) => item.name === "Target archive builds")) {
@@ -543,7 +543,7 @@ export function validateReleaseWorkflowPolicy({
   if (windowsHostTests.if !== "matrix.build == 'windows'") {
     fail("Windows host unit tests must be limited to Windows builds");
   }
-  requireCommand(windowsHostTests.run, "cargo test -p adocweave-host --all-features",
+  requireExactCommand(windowsHostTests.run, "cargo test -p adocweave-host --all-features",
     "Windows host unit tests must run the host package");
   const windowsToolchainIndex = nativeSteps.findIndex((item) =>
     item.name === "Fixed Windows Rust and cargo-dist installation");

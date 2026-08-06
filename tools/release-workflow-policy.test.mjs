@@ -1183,7 +1183,7 @@ test("private draft publication must use the returned upload URL and avoid tag-o
   );
 });
 
-test("host unit tests on Darwin and Windows cannot be dropped or deferred", () => {
+test("native host unit tests remain exact, platform-scoped, and ordered", () => {
   const inputs = loadWorkflowPolicyInputs();
   const darwinStep =
     "      - name: Darwin host unit tests\n" +
@@ -1194,29 +1194,33 @@ test("host unit tests on Darwin and Windows cannot be dropped or deferred", () =
     "        if: matrix.build == 'windows'\n" +
     "        shell: pwsh\n" +
     "        run: cargo test -p adocweave-host --all-features\n";
+  const rejects = (release, pattern) => {
+    assert.notEqual(release, inputs.release);
+    assert.throws(() => validateReleaseWorkflowPolicy({ ...inputs, release }), pattern);
+  };
 
   for (const [step, pattern] of [
     [darwinStep, /Darwin host unit test step is missing/],
     [windowsStep, /Windows host unit test step is missing/],
   ]) {
     const release = inputs.release.replace(step, "");
-    assert.notEqual(release, inputs.release);
-    assert.throws(() => validateReleaseWorkflowPolicy({ ...inputs, release }), pattern);
+    rejects(release, pattern);
   }
 
-  // Running the tests after the archive is built would let a failing platform
-  // still produce the artefact the smoke tests then certify.
-  const deferredDarwin = inputs.release
-    .replace(darwinStep, "")
-    .replace(
-      "      - name: Darwin archive portability normalization\n",
-      `${darwinStep}      - name: Darwin archive portability normalization\n`,
-    );
-  assert.notEqual(deferredDarwin, inputs.release);
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({ ...inputs, release: deferredDarwin }),
-    /Darwin host unit tests must run before the archive they certify/,
-  );
+  for (const [command, replacement, pattern] of [
+    [
+      "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
+      "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features || true\n",
+      /Darwin host unit tests must run the host package inside the locked closure/,
+    ],
+    [
+      "        run: cargo test -p adocweave-host --all-features\n",
+      "        run: cargo test -p adocweave-host --all-features; exit 0\n",
+      /Windows host unit tests must run the host package/,
+    ],
+  ]) {
+    rejects(inputs.release.replace(command, replacement), pattern);
+  }
 
   const wideningDarwin = inputs.release.replace(
     "        if: endsWith(matrix.target, '-apple-darwin')\n" +
@@ -1224,9 +1228,44 @@ test("host unit tests on Darwin and Windows cannot be dropped or deferred", () =
     "        if: matrix.build == 'nix'\n" +
     "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
   );
-  assert.notEqual(wideningDarwin, inputs.release);
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({ ...inputs, release: wideningDarwin }),
-    /Darwin host unit tests must be limited to Darwin targets/,
+  rejects(wideningDarwin, /Darwin host unit tests must be limited to Darwin targets/);
+
+  const wideningWindows = inputs.release.replace(
+    "        if: matrix.build == 'windows'\n" +
+    "        shell: pwsh\n" +
+    "        run: cargo test -p adocweave-host --all-features\n",
+    "        if: runner.os == 'Windows'\n" +
+    "        shell: pwsh\n" +
+    "        run: cargo test -p adocweave-host --all-features\n",
+  );
+  rejects(wideningWindows, /Windows host unit tests must be limited to Windows builds/);
+
+  // Running a test after its archive build would let a failing platform still
+  // produce the artefact the smoke tests then certify.
+  const deferredDarwin = inputs.release
+    .replace(darwinStep, "")
+    .replace(
+      "      - name: Darwin archive portability normalization\n",
+      `${darwinStep}      - name: Darwin archive portability normalization\n`,
+    );
+  rejects(deferredDarwin, /Darwin host unit tests must run before the archive they certify/);
+
+  const prematureWindows = inputs.release
+    .replace(windowsStep, "")
+    .replace(
+      "      - name: Fixed Windows Rust and cargo-dist installation\n",
+      `${windowsStep}      - name: Fixed Windows Rust and cargo-dist installation\n`,
+    );
+  rejects(prematureWindows, /Windows host unit tests must follow the fixed Rust installation/);
+
+  const deferredWindows = inputs.release
+    .replace(windowsStep, "")
+    .replace(
+      "      - uses: actions/upload-artifact@",
+      `${windowsStep}      - uses: actions/upload-artifact@`,
+    );
+  rejects(
+    deferredWindows,
+    /Windows host unit tests must run before the archive they certify/,
   );
 });
