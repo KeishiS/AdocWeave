@@ -338,7 +338,6 @@ enum AcquiredInclude {
 struct IncludeAcquisition<'a> {
     candidate: WorkspaceResources,
     drafts: BTreeMap<ProjectScopeId, WorkspaceFilesystemCandidate>,
-    root: ResourceId,
     root_scope: ProjectScopeId,
     allowed_roots: Vec<PathBuf>,
     requested: BTreeSet<ResourceId>,
@@ -454,19 +453,24 @@ impl IncludeAcquisition<'_> {
         }
         Ok(self.candidate)
     }
-
-    fn root(&self) -> &ResourceId {
-        &self.root
-    }
 }
 
 impl PreparedWorkspaceRead {
-    /// Installs the read into the live session.
+    /// Installs the read into the live session and hands back the claim it took.
     ///
     /// Everything that could reject the update has already been decided by the
     /// time this runs, so the only failures left are the session lock and the
-    /// draft's own validation.
-    fn commit(self) -> Result<Arc<Mutex<LocalFilesystemSession>>, String> {
+    /// draft's own validation. Returning the claim here keeps it from being
+    /// recorded for a read that was never installed.
+    fn commit(
+        self,
+    ) -> Result<
+        (
+            Arc<Mutex<LocalFilesystemSession>>,
+            FilesystemResourceBinding,
+        ),
+        String,
+    > {
         let mut session = self
             .filesystem
             .lock()
@@ -477,7 +481,7 @@ impl PreparedWorkspaceRead {
             .commit()
             .map_err(|error| error.to_string())?;
         drop(session);
-        Ok(self.filesystem)
+        Ok((self.filesystem, self.binding))
     }
 }
 
@@ -1221,8 +1225,7 @@ impl WorkspaceResources {
             });
         }
         let pending_dependents = self.include_dependents(&id);
-        let binding = prepared.binding.clone();
-        let filesystem = prepared.commit().map_err(|message| WatchedFileError {
+        let (filesystem, binding) = prepared.commit().map_err(|message| WatchedFileError {
             message,
             journal_relevant,
         })?;
@@ -1570,10 +1573,7 @@ impl WorkspaceResources {
             self.release_resource_binding(&id)?;
         }
         let committed_disk = prepared_disk
-            .map(|prepared| {
-                let binding = prepared.binding.clone();
-                prepared.commit().map(|filesystem| (filesystem, binding))
-            })
+            .map(PreparedWorkspaceRead::commit)
             .transpose()?;
         self.inner = inner;
         self.analysis_root_roles
@@ -1861,7 +1861,6 @@ impl WorkspaceResources {
         let mut acquisition = IncludeAcquisition {
             candidate: self.clone(),
             drafts: BTreeMap::new(),
-            root: input.root.clone(),
             root_scope,
             allowed_roots,
             requested: BTreeSet::new(),
@@ -1869,7 +1868,7 @@ impl WorkspaceResources {
             job,
         };
         let mut step = input.snapshot.analyze_resumable(
-            acquisition.root(),
+            &input.root,
             &options,
             ProjectionLimits::default(),
             &SharedCancellation(cancellation),
@@ -1984,7 +1983,19 @@ impl WorkspaceResources {
             }
             self.include_interests.insert(id.clone());
         }
-        let watched = requested
+        self.record_include_dependencies(root, requested);
+    }
+
+    /// Records what one root depends on and drops includes nothing needs.
+    ///
+    /// Only targets the watcher already holds an interest in are kept, so a
+    /// target the configured authority refused cannot enter as a dependency.
+    fn record_include_dependencies(
+        &mut self,
+        root: &ResourceId,
+        dependencies: impl IntoIterator<Item = ResourceId>,
+    ) {
+        let watched = dependencies
             .into_iter()
             .filter(|id| self.include_interests.contains(id))
             .collect();
@@ -2012,14 +2023,13 @@ impl WorkspaceResources {
         self.inner
             .accept(analysis)
             .map_err(|error| error.to_string())?;
-        let dependencies = analysis
-            .dependencies()
-            .into_iter()
-            .chain(requested_includes)
-            .filter(|id| self.include_interests.contains(id))
-            .collect();
-        self.include_dependencies.insert(root.clone(), dependencies);
-        self.prune_unreferenced_include_resources();
+        self.record_include_dependencies(
+            root,
+            analysis
+                .dependencies()
+                .into_iter()
+                .chain(requested_includes),
+        );
         Ok(())
     }
 
