@@ -135,9 +135,15 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 公開用の論理IDを割り当てます。個別読込では
 呼出側が``LogicalSourceId``と絶対pathを同時に渡します。どちらの読込結果も
 ``LoadedFilesystemSource``として返します。
-この値は論理IDと不変な本文を一回の読込結果として保持します。検査に使ったcanonical pathはfieldとして
+この値は論理ID、不変な本文および世代付きresource bindingを一回の読込結果として保持します。bindingは読込に
+使用したsession、候補path、canonical pathおよびgenerationを対応付けます。検査に使ったcanonical pathはfieldとして
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
+
+呼出側がfilesystemの読込結果と別の状態更新をまとめて採用する場合は、sessionから排他的な
+``LocalFilesystemDraft``を作り、候補上で読込とbinding解放を行います。途中の失敗または取消ではdraftを破棄します。
+採用時は``prepare_commit``でsession ID、revisionおよびleaseを検証し、その後に失敗しないcommitでlive stateを
+置き換えます。
 
 Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の探索と読込、およびLanguage Serverの
 ワークスペース走査・読込が同じhandle相対adapterを使用します。CLIは最初に作業ディレクトリのauthorityを確立し、

@@ -8,7 +8,6 @@ use std::io::Read;
 #[cfg(target_os = "linux")]
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-#[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -943,7 +942,7 @@ fn read_bounded_utf8(
         .map_err(|_| LocalTargetError::InvalidUtf8(canonical_path.clone()))?;
     Ok(LoadedLocalTarget {
         canonical_path,
-        source,
+        source: Arc::from(source),
     })
 }
 
@@ -1011,13 +1010,13 @@ pub struct LocalTargetSession {
     read_bytes: u64,
     bases: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
     inspections: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
-    text: BTreeMap<PathBuf, Result<String, LocalTargetError>>,
+    text: BTreeMap<PathBuf, Result<Arc<str>, LocalTargetError>>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct LocalTargetTextRollback {
     canonical_path: PathBuf,
-    previous: Option<Result<String, LocalTargetError>>,
+    previous: Option<Result<Arc<str>, LocalTargetError>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1030,7 +1029,7 @@ pub(crate) struct LocalTargetCandidateRollback {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedLocalTarget {
     canonical_path: PathBuf,
-    source: String,
+    source: Arc<str>,
 }
 
 /// Bounded local file bytes paired with their stable logical path.
@@ -1050,6 +1049,10 @@ impl LoadedLocalTarget {
     }
 
     pub fn into_parts(self) -> (PathBuf, String) {
+        (self.canonical_path, self.source.to_string())
+    }
+
+    pub(crate) fn into_shared_parts(self) -> (PathBuf, Arc<str>) {
         (self.canonical_path, self.source)
     }
 }
@@ -1344,7 +1347,9 @@ impl LocalTargetSession {
             if bytes.len() as u64 > capacity.max_resource_bytes {
                 return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
             }
-            String::from_utf8(bytes).map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()))
+            String::from_utf8(bytes)
+                .map(Arc::<str>::from)
+                .map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()))
         })();
         if reuse_cached_text {
             self.text.insert(canonical.clone(), result.clone());
