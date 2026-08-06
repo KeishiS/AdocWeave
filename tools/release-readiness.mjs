@@ -5,6 +5,7 @@ import { validateReleaseIntent } from "./release-intent.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
+const MAX_API_PAGES = 100;
 
 function fail(message) {
   throw new Error(message);
@@ -86,8 +87,12 @@ function apiUrl(repository, path, query) {
   return url;
 }
 
-async function requestJson(repository, token, path, { allowMissing = false, query } = {}) {
-  const response = await fetch(apiUrl(repository, path, query), {
+async function requestJson(repository, token, path, {
+  allowMissing = false,
+  fetchImpl = globalThis.fetch,
+  query,
+} = {}) {
+  const response = await fetchImpl(apiUrl(repository, path, query), {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
@@ -95,14 +100,15 @@ async function requestJson(repository, token, path, { allowMissing = false, quer
     },
   });
   if (allowMissing && response.status === 404) return undefined;
-  if (!response.ok) fail(`GitHub API ${path} がHTTP ${response.status}を返しました`);
+  if (!response.ok) fail(`GitHub API ${path || "repository"} がHTTP ${response.status}を返しました`);
   return response.json();
 }
 
-async function requestPages(repository, token, path, query = {}) {
+async function requestPages(repository, token, path, query = {}, fetchImpl = globalThis.fetch) {
   const values = [];
-  for (let page = 1; ; page += 1) {
+  for (let page = 1; page <= MAX_API_PAGES; page += 1) {
     const result = await requestJson(repository, token, path, {
+      fetchImpl,
       query: { ...query, page: String(page), per_page: "100" },
     });
     const pageValues = Array.isArray(result) ? result : result.workflow_runs;
@@ -110,6 +116,7 @@ async function requestPages(repository, token, path, query = {}) {
     values.push(...pageValues);
     if (pageValues.length < 100) return values;
   }
+  fail(`GitHub API ${path} がpage上限 ${MAX_API_PAGES}に達しました`);
 }
 
 function decodeContent(value, label) {
@@ -124,27 +131,34 @@ export async function collectReadinessEvidence({
   token,
   candidateSha,
   finalizationPullRequest,
+  fetchImpl = globalThis.fetch,
   root = ROOT,
 }) {
   const pullRequestNumber = positivePullRequestNumber(finalizationPullRequest);
-  const repositoryState = await requestJson(repository, token, "");
+  const repositoryState = await requestJson(repository, token, "", { fetchImpl });
   const defaultBranch = repositoryState.default_branch;
   const manifest = JSON.parse(readFileSync(new URL("release-manifest.json", root), "utf8"));
   const [branch, candidateCommit, pullRequest, pullRequestFiles, openPullRequests, candidateRuns, tag, release] =
     await Promise.all([
-      requestJson(repository, token, `commits/${defaultBranch}`),
-      requestJson(repository, token, `commits/${candidateSha}`),
-      requestJson(repository, token, `pulls/${pullRequestNumber}`),
-      requestPages(repository, token, `pulls/${pullRequestNumber}/files`),
-      requestPages(repository, token, "pulls", { state: "open", base: defaultBranch }),
+      requestJson(repository, token, `commits/${defaultBranch}`, { fetchImpl }),
+      requestJson(repository, token, `commits/${candidateSha}`, { fetchImpl }),
+      requestJson(repository, token, `pulls/${pullRequestNumber}`, { fetchImpl }),
+      requestPages(repository, token, `pulls/${pullRequestNumber}/files`, {}, fetchImpl),
+      requestPages(repository, token, "pulls", { state: "open", base: defaultBranch }, fetchImpl),
       requestPages(repository, token, "actions/workflows/release.yml/runs", {
         branch: defaultBranch,
         event: "push",
         status: "success",
         head_sha: candidateSha,
+      }, fetchImpl),
+      requestJson(repository, token, `git/ref/tags/v${manifest.packageVersion}`, {
+        allowMissing: true,
+        fetchImpl,
       }),
-      requestJson(repository, token, `git/ref/tags/v${manifest.packageVersion}`, { allowMissing: true }),
-      requestJson(repository, token, `releases/tags/v${manifest.packageVersion}`, { allowMissing: true }),
+      requestJson(repository, token, `releases/tags/v${manifest.packageVersion}`, {
+        allowMissing: true,
+        fetchImpl,
+      }),
     ]);
   if (candidateCommit?.sha !== candidateSha || candidateCommit.parents?.length !== 1 ||
       !COMMIT_SHA.test(candidateCommit.parents[0]?.sha ?? "")) {
@@ -154,7 +168,7 @@ export async function collectReadinessEvidence({
     repository,
     token,
     "contents/release/intent.json",
-    { query: { ref: candidateCommit.parents[0].sha } },
+    { fetchImpl, query: { ref: candidateCommit.parents[0].sha } },
   );
   return {
     candidateSha,

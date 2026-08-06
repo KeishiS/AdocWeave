@@ -1,9 +1,103 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { validateReadinessEvidence } from "./release-readiness.mjs";
+import {
+  collectReadinessEvidence,
+  validateReadinessEvidence,
+} from "./release-readiness.mjs";
 
 const SHA = "1234567890abcdef1234567890abcdef12345678";
+const PARENT_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PACKAGE_VERSION = JSON.parse(
+  readFileSync(new URL("../release-manifest.json", import.meta.url), "utf8"),
+).packageVersion;
+
+function jsonResponse(value, status = 200) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    async json() {
+      return structuredClone(value);
+    },
+  };
+}
+
+function apiFixture({ failPath, unboundedOpenPullRequests = false } = {}) {
+  const calls = [];
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    const path = url.pathname.replace("/repos/example/adocweave/", "");
+    calls.push(url);
+    if (path === failPath) return jsonResponse({ message: "failure" }, 503);
+    if (path === "") return jsonResponse({ default_branch: "main" });
+    if (path === "commits/main") return jsonResponse({ sha: SHA });
+    if (path === `commits/${SHA}`) {
+      return jsonResponse({ sha: SHA, parents: [{ sha: PARENT_SHA }] });
+    }
+    if (path === "pulls/42") {
+      return jsonResponse({
+        number: 42,
+        state: "closed",
+        merged_at: "2026-08-05T00:00:00Z",
+        merge_commit_sha: SHA,
+        base: { ref: "main", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      });
+    }
+    if (path === "pulls/42/files") return jsonResponse([{ filename: "release/intent.json" }]);
+    if (path === "pulls") {
+      if (unboundedOpenPullRequests) {
+        return jsonResponse(Array.from({ length: 100 }, (_, index) => ({ number: index + 1 })));
+      }
+      const page = Number(url.searchParams.get("page"));
+      return jsonResponse(page === 1
+        ? Array.from({ length: 100 }, (_, index) => ({ number: index + 1 }))
+        : [{ number: 101 }]);
+    }
+    if (path === "actions/workflows/release.yml/runs") {
+      const page = Number(url.searchParams.get("page"));
+      const runs = page === 1
+        ? Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }))
+        : [{
+            id: 1234,
+            head_branch: "main",
+            head_sha: SHA,
+            event: "push",
+            status: "completed",
+            conclusion: "success",
+          }];
+      return jsonResponse({ workflow_runs: runs });
+    }
+    if (path === `git/ref/tags/v${PACKAGE_VERSION}` ||
+        path === `releases/tags/v${PACKAGE_VERSION}`) {
+      return jsonResponse({ message: "Not Found" }, 404);
+    }
+    if (path === "contents/release/intent.json") {
+      assert.equal(url.searchParams.get("ref"), PARENT_SHA);
+      return jsonResponse({
+        encoding: "base64",
+        content: Buffer.from(JSON.stringify({
+          schemaVersion: 1,
+          version: PACKAGE_VERSION,
+          state: "preparing",
+          generation: 1,
+        })).toString("base64"),
+      });
+    }
+    throw new Error(`想定外のGitHub API呼び出しです: ${url}`);
+  };
+  return { calls, fetchImpl };
+}
+
+function collect(fetchImpl) {
+  return collectReadinessEvidence({
+    repository: "example/adocweave",
+    token: "test-token",
+    candidateSha: SHA,
+    finalizationPullRequest: "42",
+    fetchImpl,
+  });
+}
 
 function evidence() {
   return {
@@ -94,4 +188,36 @@ test("不正なSHAとPull Request番号を拒否する", () => {
     mutate(value);
     assert.throws(() => validateReadinessEvidence(value));
   }
+});
+
+test("GitHub APIから複数pageを取得しcandidateの親から直前intentを読む", async () => {
+  const { calls, fetchImpl } = apiFixture();
+  const result = await collect(fetchImpl);
+  assert.equal(result.openPullRequests.length, 101);
+  assert.equal(result.successfulCandidateRuns.length, 101);
+  assert.deepEqual(result.previousIntent, {
+    schemaVersion: 1,
+    version: PACKAGE_VERSION,
+    state: "preparing",
+    generation: 1,
+  });
+  assert.equal(result.tagExists, false);
+  assert.equal(result.releaseExists, false);
+  assert.equal(calls.filter((url) => url.pathname.endsWith("/pulls")).length, 2);
+  assert.equal(calls.filter((url) => url.pathname.endsWith("/runs")).length, 2);
+});
+
+test("GitHub APIのHTTP失敗をfail-closedにする", async () => {
+  const tagPath = `git/ref/tags/v${PACKAGE_VERSION}`;
+  const { fetchImpl } = apiFixture({ failPath: tagPath });
+  await assert.rejects(
+    () => collect(fetchImpl),
+    { message: `GitHub API ${tagPath} がHTTP 503を返しました` },
+  );
+});
+
+test("GitHub APIが100件を返し続ける場合はpage上限で停止する", async () => {
+  const { calls, fetchImpl } = apiFixture({ unboundedOpenPullRequests: true });
+  await assert.rejects(() => collect(fetchImpl), /GitHub API pulls がpage上限 100/);
+  assert.equal(calls.filter((url) => url.pathname.endsWith("/pulls")).length, 100);
 });
