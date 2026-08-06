@@ -9,7 +9,8 @@ use adocweave::CancellationCheck;
 use adocweave::NeverCancel;
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
 use adocweave_host::{
-    FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession,
+    LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -517,19 +518,10 @@ impl WorkspaceResources {
                         entry.insert(Arc::new(Mutex::new(session)))
                     }
                 };
-                let uri = Url::from_file_path(&path).map_err(|()| {
-                    format!("cannot convert workspace path to URI: {}", path.display())
-                })?;
-                let file = filesystem
-                    .lock()
-                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-                    .read_utf8(
-                        LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
-                        &path,
-                    )
-                    .map_err(|error| error.to_string())?;
+                let Some((source_id, text)) = read_scan_candidate(filesystem, &path)? else {
+                    continue;
+                };
                 next_disk_version = next_disk_version.saturating_add(1);
-                let (source_id, text) = file.into_parts();
                 let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
                 retained_layers
                     .entry(scope.clone())
@@ -1698,6 +1690,26 @@ impl WorkspaceResources {
     }
 }
 
+fn read_scan_candidate(
+    filesystem: &Mutex<LocalFilesystemSession>,
+    path: &Path,
+) -> Result<Option<(LogicalSourceId, Arc<str>)>, String> {
+    let uri = Url::from_file_path(path)
+        .map_err(|()| format!("cannot convert workspace path to URI: {}", path.display()))?;
+    let outcome = filesystem
+        .lock()
+        .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+        .read_utf8_outcome(
+            LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
+            path,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(match outcome {
+        FilesystemReadOutcome::Found(file) => Some(file.into_parts()),
+        FilesystemReadOutcome::NotFound { .. } => None,
+    })
+}
+
 const fn adapter_managed_workspace_limits() -> WorkspaceLimits {
     WorkspaceLimits {
         resources: RetainedResourceLimits {
@@ -2036,6 +2048,38 @@ mod tests {
                 .as_ref(),
             "first\n"
         );
+    }
+
+    #[test]
+    fn scan_candidate_disappearance_does_not_hide_a_remaining_resource() {
+        let root = TestDirectory::new();
+        let vanished = root.0.join("vanished.adoc");
+        let remaining = root.0.join("remaining.adoc");
+        std::fs::write(&vanished, "vanished\n").expect("vanishing source");
+        std::fs::write(&remaining, "remaining\n").expect("remaining source");
+        let candidates = [vanished.clone(), remaining.clone()];
+        let session = LocalFilesystemPolicy::new(
+            [root.0.clone()],
+            adocweave_host::FilesystemReadLimits::default(),
+        )
+        .expect("filesystem policy")
+        .session()
+        .expect("filesystem session");
+        let filesystem = Mutex::new(session);
+        std::fs::remove_file(&vanished).expect("remove discovered source");
+
+        assert_eq!(
+            read_scan_candidate(&filesystem, &candidates[0]).expect("vanished candidate"),
+            None
+        );
+        let (source_id, text) = read_scan_candidate(&filesystem, &candidates[1])
+            .expect("remaining candidate")
+            .expect("remaining source");
+        assert_eq!(
+            source_id.as_str(),
+            Url::from_file_path(&remaining).unwrap().as_str()
+        );
+        assert_eq!(text.as_ref(), "remaining\n");
     }
 
     #[test]

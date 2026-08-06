@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.32.0";
+export const PREVIOUS_RELEASE_VERSION = "0.33.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#476：利用側アプリが生成した参考文献を、AsciiDocへ文字列連結せずに構造化入力として描画できるようにしました。RustとWASMで同じ契約を使用できます。",
+  "#492：filesystem resourceの不在を正常な取得結果として扱い、候補stateを安全に採用または破棄できる基礎を追加しました。",
+  "#495：tableの``cols``属性にある空のcolumn specを既定列として保持し、明示した列数どおりに解析するよう修正しました。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -94,19 +95,20 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。v0.32.0の9から更新しました。Worker protocol versionは${protocol.workerProtocolVersion}のままです。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。Worker protocol versionは${protocol.workerProtocolVersion}で、どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  "WASM protocolの``renderInputs.generatedBibliography``へ任意の構造化入力を追加しました。見出し、citation key、表示文字列および任意のlabelを渡し、文字列はAsciiDocやHTMLとして解釈しません。",
-  "Rust APIへ``GeneratedBibliography``と``GeneratedBibliographyEntry``を追加し、``RenderInputs::with_generated_bibliography``から同じ描画機能を利用できるようにしました。",
-  "Node.js向けの``parseText``は専用の``adocweave-textlint-wasm``だけに含み、Browser packageには含めません。",
+  "Rust host APIへ``FilesystemReadOutcome``と``read_utf8_outcome``、``read_target_utf8_outcome``および``reread_utf8_outcome``を追加しました。sessionとdraftの両方で``Found``と``NotFound``を区別できます。",
+  "従来の読込APIは維持し、対象fileの不在を引き続き``ResourceError::Missing``として返します。",
+  "Language Serverの初期走査では、列挙後に消えたfileを走査全体の失敗にせず、その候補だけを省略します。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
 ];
 
 const migrationNotes = [
-  `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使い、以前のschemaで作ったデータと区別してください。参考文献を生成しないrequestでは、任意項目の\`\`renderInputs.generatedBibliography\`\`を省略できます。`,
+  `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
+  "filesystemの不在を正常な結果として扱うRust consumerは、従来の読込APIから対応する``*_outcome``メソッドへ移行し、``FilesystemReadOutcome::NotFound``を処理してください。従来どおり不在をerrorにするconsumerは変更不要です。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

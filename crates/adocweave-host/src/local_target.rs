@@ -1474,6 +1474,26 @@ impl LocalTargetSession {
         }
     }
 
+    pub(crate) fn remove_cached_text(&mut self, canonical: &Path) {
+        self.text.remove(canonical);
+    }
+
+    pub(crate) fn remove_cached_text_if_unaliased(&mut self, candidate: &Path, canonical: &Path) {
+        if !self.inspections.iter().any(|(other, result)| {
+            other.as_path() != candidate
+                && result
+                    .as_ref()
+                    .is_ok_and(|other| other.as_path() == canonical)
+        }) {
+            self.text.remove(canonical);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_texts(&self) -> usize {
+        self.text.len()
+    }
+
     pub fn read_files(&self) -> usize {
         self.read_files
     }

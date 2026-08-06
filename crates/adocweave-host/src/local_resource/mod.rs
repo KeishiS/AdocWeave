@@ -84,6 +84,33 @@ pub struct LoadedFilesystemSource {
     binding: FilesystemResourceBinding,
 }
 
+/// Result of reading one authorized filesystem resource.
+///
+/// A missing target is a normal observation rather than an I/O failure. It
+/// carries no binding because there is no retained filesystem resource to
+/// release. Callers decide whether absence is allowed by their own document
+/// semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FilesystemReadOutcome {
+    Found(LoadedFilesystemSource),
+    NotFound {
+        source_id: LogicalSourceId,
+        candidate_path: PathBuf,
+    },
+}
+
+impl FilesystemReadOutcome {
+    /// Requires a loaded resource and maps absence to the legacy error type.
+    ///
+    /// This conversion does not undo state already changed by an outcome API.
+    pub fn into_loaded(self) -> Result<LoadedFilesystemSource, ResourceError> {
+        match self {
+            Self::Found(loaded) => Ok(loaded),
+            Self::NotFound { candidate_path, .. } => Err(ResourceError::Missing(candidate_path)),
+        }
+    }
+}
+
 /// Stable opaque identity of one local-filesystem session.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct LocalFilesystemSessionId(u64);
@@ -275,6 +302,12 @@ struct LocalFilesystemMutationCursor<'a> {
     session_id: LocalFilesystemSessionId,
     binding_generations: &'a Arc<AtomicU64>,
     state: &'a mut LocalFilesystemState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MissingDisposition {
+    PreserveLegacyState,
+    ApplyNotFound,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -871,6 +904,23 @@ impl LocalFilesystemSession {
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         self.invalidate_active_draft();
         self.mutation_cursor()
+            .read_utf8_preserving_missing(source_id, path)
+            .map_err(ResourceError::from)?
+            .into_loaded()
+    }
+
+    /// Reads one absolute path and reports an absent target as a normal result.
+    ///
+    /// `NotFound` immediately releases this path's live binding. Cached text is
+    /// released when its selected root has no alias; the shared charge is
+    /// released when no alias remains across all roots.
+    pub fn read_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
             .read_utf8(source_id, path)
             .map_err(ResourceError::from)
     }
@@ -884,6 +934,24 @@ impl LocalFilesystemSession {
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         self.invalidate_active_draft();
         self.mutation_cursor()
+            .read_target_utf8_preserving_missing(source_id, base, target)
+            .map_err(ResourceError::from)?
+            .into_loaded()
+    }
+
+    /// Resolves one authored target and reports absence as a normal result.
+    ///
+    /// `NotFound` immediately releases this path's live binding. Cached text is
+    /// released when its selected root has no alias; the shared charge is
+    /// released when no alias remains across all roots.
+    pub fn read_target_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemReadOutcome, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
             .read_target_utf8(source_id, base, target)
             .map_err(ResourceError::from)
     }
@@ -894,6 +962,23 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
+        self.invalidate_active_draft();
+        self.mutation_cursor()
+            .reread_utf8_preserving_missing(source_id, path)
+            .map_err(ResourceError::from)?
+            .into_loaded()
+    }
+
+    /// Reopens one absolute path and reports absence as a normal result.
+    ///
+    /// `NotFound` immediately releases this path's live binding. Cached text is
+    /// released when its selected root has no alias; the shared charge is
+    /// released when no alias remains across all roots.
+    pub fn reread_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, ResourceError> {
         self.invalidate_active_draft();
         self.mutation_cursor()
             .reread_utf8(source_id, path)
@@ -1080,7 +1165,12 @@ impl LocalFilesystemSession {
             .mutation_cursor()
             .read_utf8_with(source_id, path, false, after_open)?;
         draft.prepare_commit(self)?.commit();
-        Ok(loaded)
+        match loaded {
+            FilesystemReadOutcome::Found(loaded) => Ok(loaded),
+            FilesystemReadOutcome::NotFound { candidate_path, .. } => {
+                Err(ResourceError::Missing(candidate_path))
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1236,21 +1326,37 @@ impl LocalFilesystemMutationCursor<'_> {
             }
             .into());
         }
-        paths
-            .into_iter()
-            .map(|path| {
-                let source_id = source_id(&path)?;
-                self.read_utf8(source_id, &path)
-            })
-            .collect()
+        let mut loaded = Vec::with_capacity(paths.len());
+        for path in paths {
+            let source_id = source_id(&path)?;
+            loaded.push(
+                self.read_utf8_preserving_missing(source_id, &path)?
+                    .into_loaded()?,
+            );
+        }
+        Ok(loaded)
     }
 
     fn read_utf8(
         &mut self,
         source_id: LogicalSourceId,
         path: &Path,
-    ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.read_utf8_with(source_id, path, false, || {})
+    }
+
+    fn read_utf8_preserving_missing(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_utf8_with_disposition(
+            source_id,
+            path,
+            false,
+            || {},
+            MissingDisposition::PreserveLegacyState,
+        )
     }
 
     fn read_target_utf8(
@@ -1258,46 +1364,109 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         base: &Path,
         target: &str,
-    ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_target_utf8_with_disposition(
+            source_id,
+            base,
+            target,
+            MissingDisposition::ApplyNotFound,
+        )
+    }
+
+    fn read_target_utf8_preserving_missing(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_target_utf8_with_disposition(
+            source_id,
+            base,
+            target,
+            MissingDisposition::PreserveLegacyState,
+        )
+    }
+
+    fn read_target_utf8_with_disposition(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+        missing: MissingDisposition,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.state.meter.observe_read_operation();
         let index = self.root_index(base)?;
         let candidate = self.state.sessions[index]
             .candidate(base, target)
             .map_err(ResourceError::from)?;
+        let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
+            && self.state.candidates.contains_key(&candidate))
+        .then(|| self.state.sessions[index].candidate_rollback(&candidate));
         let binding_generation = self.reserve_binding_generation()?;
         let budget = self.state.budget;
         let charged = &self.state.charged;
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = self.state.sessions[index]
-            .read_candidate_utf8_with_capacity(
-                &candidate,
-                false,
-                true,
-                || {},
-                |canonical| {
-                    shared_read_capacity(
-                        budget,
-                        charged,
-                        candidates,
-                        limits,
-                        &candidate,
-                        canonical,
-                        &file_limit_denied,
-                    )
-                },
-            )
-            .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
+        let loaded = match self.state.sessions[index].read_candidate_utf8_with_capacity(
+            &candidate,
+            false,
+            true,
+            || {},
+            |canonical| {
+                shared_read_capacity(
+                    budget,
+                    charged,
+                    candidates,
+                    limits,
+                    &candidate,
+                    canonical,
+                    &file_limit_denied,
+                )
+            },
+        ) {
+            Ok(loaded) => loaded,
+            Err(LocalTargetError::Missing(_)) => {
+                if missing == MissingDisposition::ApplyNotFound {
+                    self.apply_not_found(&candidate, index);
+                } else if let Some(rollback) = candidate_rollback {
+                    self.state.sessions[index].rollback_candidate(rollback);
+                }
+                return Ok(FilesystemReadOutcome::NotFound {
+                    source_id,
+                    candidate_path: candidate,
+                });
+            }
+            Err(error) => {
+                return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
+            }
+        };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
-            .map(|(loaded, _)| loaded)
+            .map(|(loaded, _)| FilesystemReadOutcome::Found(loaded))
     }
 
     fn reread_utf8(
         &mut self,
         source_id: LogicalSourceId,
         path: &Path,
-    ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.reread_utf8_with_disposition(source_id, path, MissingDisposition::ApplyNotFound)
+    }
+
+    fn reread_utf8_preserving_missing(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.reread_utf8_with_disposition(source_id, path, MissingDisposition::PreserveLegacyState)
+    }
+
+    fn reread_utf8_with_disposition(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        missing: MissingDisposition,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.state.meter.observe_read_operation();
         let index = self.root_index(path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
@@ -1320,13 +1489,24 @@ impl LocalFilesystemMutationCursor<'_> {
                 )
             }) {
             Ok(loaded) => loaded,
+            Err(LocalTargetError::Missing(_)) => {
+                if missing == MissingDisposition::ApplyNotFound {
+                    self.apply_not_found(path, index);
+                } else {
+                    self.state.sessions[index].rollback_candidate(candidate_rollback);
+                }
+                return Ok(FilesystemReadOutcome::NotFound {
+                    source_id,
+                    candidate_path: path.to_owned(),
+                });
+            }
             Err(error) => {
                 self.state.sessions[index].rollback_candidate(candidate_rollback);
                 return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
             }
         };
         match self.finish_read(binding_generation, source_id, path, loaded) {
-            Ok((loaded, _)) => Ok(loaded),
+            Ok((loaded, _)) => Ok(FilesystemReadOutcome::Found(loaded)),
             Err(error) => {
                 self.state.sessions[index].rollback_cached_text(text_rollback);
                 self.state.sessions[index].rollback_candidate(candidate_rollback);
@@ -1346,7 +1526,24 @@ impl LocalFilesystemMutationCursor<'_> {
         path: &Path,
         reuse_cached_text: bool,
         after_open: impl FnOnce(),
-    ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.read_utf8_with_disposition(
+            source_id,
+            path,
+            reuse_cached_text,
+            after_open,
+            MissingDisposition::ApplyNotFound,
+        )
+    }
+
+    fn read_utf8_with_disposition(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+        reuse_cached_text: bool,
+        after_open: impl FnOnce(),
+        missing: MissingDisposition,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.state.meter.observe_read_operation();
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()).into());
@@ -1356,33 +1553,50 @@ impl LocalFilesystemMutationCursor<'_> {
         if candidate == self.state.roots[index] {
             return Err(ResourceError::NotRegularFile(candidate).into());
         }
+        let candidate_rollback = (missing == MissingDisposition::PreserveLegacyState
+            && self.state.candidates.contains_key(&candidate))
+        .then(|| self.state.sessions[index].candidate_rollback(&candidate));
         let binding_generation = self.reserve_binding_generation()?;
         let budget = self.state.budget;
         let charged = &self.state.charged;
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = self.state.sessions[index]
-            .read_candidate_utf8_with_capacity(
-                &candidate,
-                reuse_cached_text,
-                true,
-                after_open,
-                |canonical| {
-                    shared_read_capacity(
-                        budget,
-                        charged,
-                        candidates,
-                        limits,
-                        &candidate,
-                        canonical,
-                        &file_limit_denied,
-                    )
-                },
-            )
-            .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
+        let loaded = match self.state.sessions[index].read_candidate_utf8_with_capacity(
+            &candidate,
+            reuse_cached_text,
+            true,
+            after_open,
+            |canonical| {
+                shared_read_capacity(
+                    budget,
+                    charged,
+                    candidates,
+                    limits,
+                    &candidate,
+                    canonical,
+                    &file_limit_denied,
+                )
+            },
+        ) {
+            Ok(loaded) => loaded,
+            Err(LocalTargetError::Missing(_)) => {
+                if missing == MissingDisposition::ApplyNotFound {
+                    self.apply_not_found(&candidate, index);
+                } else if let Some(rollback) = candidate_rollback {
+                    self.state.sessions[index].rollback_candidate(rollback);
+                }
+                return Ok(FilesystemReadOutcome::NotFound {
+                    source_id,
+                    candidate_path: candidate,
+                });
+            }
+            Err(error) => {
+                return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
+            }
+        };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
-            .map(|(loaded, _)| loaded)
+            .map(|(loaded, _)| FilesystemReadOutcome::Found(loaded))
     }
 
     fn root_index(&self, path: &Path) -> Result<usize, FilesystemDraftError> {
@@ -1495,18 +1709,42 @@ impl LocalFilesystemMutationCursor<'_> {
     }
 
     fn release_path(&mut self, path: &Path) {
-        if let Some(binding) = self.state.candidates.remove(path)
-            && !self
+        let last_canonical = self.state.candidates.remove(path).and_then(|binding| {
+            (!self
                 .state
                 .candidates
                 .values()
-                .any(|other| other.canonical_path == binding.canonical_path)
-            && let Some(charge) = self.state.charged.remove(&binding.canonical_path)
+                .any(|other| other.canonical_path == binding.canonical_path))
+            .then_some(binding.canonical_path)
+        });
+        if let Some(canonical) = &last_canonical
+            && let Some(charge) = self.state.charged.remove(canonical)
         {
             self.state.budget.release(charge.bytes);
         }
         if let Ok(index) = self.root_index(path) {
+            if let Some(canonical) = &last_canonical {
+                self.state.sessions[index].remove_cached_text(canonical);
+            }
             self.state.sessions[index].release_candidate(path);
+        }
+    }
+
+    fn apply_not_found(&mut self, path: &Path, index: usize) {
+        let Some(binding) = self.state.candidates.remove(path) else {
+            return;
+        };
+        self.state.sessions[index].remove_cached_text_if_unaliased(path, &binding.canonical_path);
+        if self
+            .state
+            .candidates
+            .values()
+            .any(|other| other.canonical_path == binding.canonical_path)
+        {
+            return;
+        }
+        if let Some(charge) = self.state.charged.remove(&binding.canonical_path) {
+            self.state.budget.release(charge.bytes);
         }
     }
 
@@ -1604,6 +1842,23 @@ impl LocalFilesystemDraft {
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_utf8_preserving_missing(source_id, path)
+            .and_then(|outcome| outcome.into_loaded().map_err(FilesystemDraftError::from));
+        self.record(result)
+    }
+
+    /// Reads one absolute path without poisoning this draft when it is absent.
+    ///
+    /// `NotFound` changes only this draft's candidate state. Dropping the draft
+    /// preserves live state; committing it applies the absence.
+    pub fn read_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().read_utf8(source_id, path);
         self.record(result)
     }
@@ -1613,6 +1868,23 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .reread_utf8_preserving_missing(source_id, path)
+            .and_then(|outcome| outcome.into_loaded().map_err(FilesystemDraftError::from));
+        self.record(result)
+    }
+
+    /// Reopens one absolute path without poisoning this draft when it is absent.
+    ///
+    /// `NotFound` changes only this draft's candidate state. Dropping the draft
+    /// preserves live state; committing it applies the absence.
+    pub fn reread_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        path: &Path,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().reread_utf8(source_id, path);
         self.record(result)
@@ -1624,6 +1896,24 @@ impl LocalFilesystemDraft {
         base: &Path,
         target: &str,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
+        let result = self
+            .mutation_cursor()
+            .read_target_utf8_preserving_missing(source_id, base, target)
+            .and_then(|outcome| outcome.into_loaded().map_err(FilesystemDraftError::from));
+        self.record(result)
+    }
+
+    /// Resolves one authored target without poisoning this draft when it is absent.
+    ///
+    /// `NotFound` changes only this draft's candidate state. Dropping the draft
+    /// preserves live state; committing it applies the absence.
+    pub fn read_target_utf8_outcome(
+        &mut self,
+        source_id: LogicalSourceId,
+        base: &Path,
+        target: &str,
+    ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         self.ensure_operation_can_start()?;
         let result = self
             .mutation_cursor()
@@ -1809,6 +2099,15 @@ mod tests {
         draft.candidate().meter.clone()
     }
 
+    fn cached_texts(session: &LocalFilesystemSession) -> usize {
+        session
+            .state
+            .sessions
+            .iter()
+            .map(LocalTargetSession::cached_texts)
+            .sum()
+    }
+
     #[test]
     fn filesystem_draft_is_isolated_until_commit_and_drop_discards_it() {
         let root = TestDir::new("filesystem-draft-isolation");
@@ -1895,21 +2194,20 @@ mod tests {
     #[test]
     fn draft_resource_error_preserves_its_typed_source() {
         let root = TestDir::new("draft-resource-source");
-        let missing = root.path().join("missing.adoc");
         let session = policy(root.path(), 100).session().expect("session");
         let mut draft = session.draft().expect("draft");
 
         let error = draft
-            .read_utf8(source_id(), &missing)
-            .expect_err("missing resource");
+            .read_utf8(source_id(), root.path())
+            .expect_err("directory is not a resource");
 
         assert_eq!(
             error,
-            FilesystemDraftError::Resource(ResourceError::Missing(missing.clone()))
+            FilesystemDraftError::Resource(ResourceError::NotRegularFile(root.path().to_owned()))
         );
         assert_eq!(
             Error::source(&error).and_then(|source| source.downcast_ref::<ResourceError>()),
-            Some(&ResourceError::Missing(missing))
+            Some(&ResourceError::NotRegularFile(root.path().to_owned()))
         );
         assert_eq!(
             FilesystemDraftError::DraftBusy.to_string(),
@@ -1937,19 +2235,272 @@ mod tests {
     #[test]
     fn filesystem_draft_is_exclusive_and_failed_operations_poison_commit() {
         let root = TestDir::new("filesystem-draft-exclusive");
-        let missing = root.path().join("missing.adoc");
         let mut session = policy(root.path(), 100).session().expect("session");
         let mut draft = session.draft().expect("first draft");
         assert!(matches!(
             session.draft(),
             Err(FilesystemDraftError::DraftBusy)
         ));
-        assert!(draft.read_utf8(source_id(), &missing).is_err());
+        assert!(draft.read_utf8(source_id(), root.path()).is_err());
         assert!(matches!(
             draft.prepare_commit(&mut session),
             Err(FilesystemDraftError::PoisonedDraft)
         ));
         drop(session.draft().expect("poisoned draft released its lease"));
+    }
+
+    #[test]
+    fn not_found_removes_only_the_draft_binding_until_commit() {
+        let root = TestDir::new("not-found-draft-transition");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old text").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        session
+            .reread_utf8(source_id(), &path)
+            .expect("cache initial text");
+        assert_eq!(session.budget().files(), 1);
+        assert_eq!(cached_texts(&session), 1);
+
+        fs::remove_file(&path).expect("remove source");
+        let mut discarded = session.draft().expect("discarded draft");
+        assert_eq!(
+            discarded.reread_utf8_outcome(source_id(), &path),
+            Ok(FilesystemReadOutcome::NotFound {
+                source_id: source_id(),
+                candidate_path: path.clone(),
+            })
+        );
+        assert_eq!(discarded.budget().files(), 0);
+        drop(discarded);
+        assert_eq!(session.budget().files(), 1);
+        assert_eq!(cached_texts(&session), 1);
+
+        let mut committed = session.draft().expect("committed draft");
+        assert!(matches!(
+            committed.reread_utf8_outcome(source_id(), &path),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        committed
+            .prepare_commit(&mut session)
+            .expect("prepare")
+            .commit();
+        assert_eq!(session.budget().files(), 0);
+        assert_eq!(cached_texts(&session), 0);
+
+        fs::write(&path, "new text").expect("recreate source");
+        let loaded = session
+            .read_utf8(source_id(), &path)
+            .expect("read recreated source");
+        assert_eq!(loaded.source(), "new text");
+        assert_eq!(session.budget().files(), 1);
+    }
+
+    #[test]
+    fn missing_outcomes_keep_distinct_path_inspections_bounded() {
+        let root = TestDir::new("not-found-path-bound");
+        let first = root.path().join("first.adoc");
+        let second = root.path().join("second.adoc");
+        let policy = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 1,
+                max_total_bytes: 100,
+                max_resource_bytes: 100,
+            },
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+
+        assert!(matches!(
+            session.read_utf8_outcome(source_id(), &first),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        assert_eq!(
+            session.read_utf8_outcome(source_id(), &second),
+            Err(ResourceError::FileLimit { limit: 1 })
+        );
+        assert_eq!(session.state.meter.usage().read_operations, 2);
+        assert_eq!(session.state.meter.usage().read_bytes, 0);
+    }
+
+    #[test]
+    fn legacy_missing_reads_preserve_the_current_binding_and_budget() {
+        let root = TestDir::new("legacy-missing-state");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "old text").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let initial = session.read_utf8(source_id(), &path).expect("initial read");
+        let current = session
+            .reread_utf8(source_id(), &path)
+            .expect("cached reread");
+        assert_eq!(cached_texts(&session), 1);
+        fs::remove_file(&path).expect("remove source");
+
+        assert_eq!(
+            session.reread_utf8(source_id(), &path),
+            Err(ResourceError::Missing(path.clone()))
+        );
+        assert_eq!(
+            session.read_utf8(source_id(), &path),
+            Err(ResourceError::Missing(path.clone()))
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
+        assert_eq!(cached_texts(&session), 1);
+        let mut release = session.draft().expect("release draft");
+        assert_eq!(
+            release
+                .release_binding(initial.binding())
+                .expect("stale binding"),
+            FilesystemReleaseOutcome::Stale
+        );
+        assert_eq!(
+            release
+                .release_binding(current.binding())
+                .expect("current binding"),
+            FilesystemReleaseOutcome::Released
+        );
+        release
+            .prepare_commit(&mut session)
+            .expect("prepare release")
+            .commit();
+        assert_eq!(session.budget(), ResourceBudget::default());
+        assert_eq!(cached_texts(&session), 0);
+    }
+
+    #[test]
+    fn legacy_initial_and_authored_reads_preserve_state_on_missing() {
+        let root = TestDir::new("legacy-read-missing-state");
+        let absolute = root.path().join("absolute.adoc");
+        let authored = root.path().join("authored.adoc");
+        fs::write(&absolute, "one").expect("absolute source");
+        fs::write(&authored, "two").expect("authored source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let absolute_binding = session
+            .read_utf8(source_id(), &absolute)
+            .expect("absolute read")
+            .binding()
+            .clone();
+        let authored_binding = session
+            .read_target_utf8(source_id(), root.path(), "authored.adoc")
+            .expect("authored read")
+            .binding()
+            .clone();
+        fs::remove_file(&absolute).expect("remove absolute source");
+        fs::remove_file(&authored).expect("remove authored source");
+
+        assert_eq!(
+            session.read_utf8(source_id(), &absolute),
+            Err(ResourceError::Missing(absolute))
+        );
+        assert_eq!(
+            session.read_target_utf8(source_id(), root.path(), "authored.adoc"),
+            Err(ResourceError::Missing(authored))
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (2, 6));
+
+        let mut release = session.draft().expect("release draft");
+        assert_eq!(
+            release
+                .release_binding(&absolute_binding)
+                .expect("absolute binding"),
+            FilesystemReleaseOutcome::Released
+        );
+        assert_eq!(
+            release
+                .release_binding(&authored_binding)
+                .expect("authored binding"),
+            FilesystemReleaseOutcome::Released
+        );
+        release
+            .prepare_commit(&mut session)
+            .expect("prepare release")
+            .commit();
+        assert_eq!(session.budget(), ResourceBudget::default());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn not_found_releases_cached_text_only_after_the_last_alias() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDir::new("not-found-alias-cache");
+        let source = root.path().join("source.adoc");
+        let alias = root.path().join("alias.adoc");
+        fs::write(&source, "text").expect("source");
+        symlink("source.adoc", &alias).expect("alias");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session
+            .read_utf8(source_id(), &source)
+            .expect("source read");
+        session.read_utf8(source_id(), &alias).expect("alias read");
+        session
+            .reread_utf8(source_id(), &source)
+            .expect("cache source");
+        assert_eq!(cached_texts(&session), 1);
+
+        fs::remove_file(&alias).expect("remove alias");
+        assert!(matches!(
+            session.reread_utf8_outcome(source_id(), &alias),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+        assert_eq!(cached_texts(&session), 1);
+
+        fs::remove_file(&source).expect("remove source");
+        assert!(matches!(
+            session.reread_utf8_outcome(source_id(), &source),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        assert_eq!(session.budget(), ResourceBudget::default());
+        assert_eq!(cached_texts(&session), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn not_found_releases_each_root_sessions_unaliased_cache() {
+        use std::os::unix::fs::symlink;
+
+        let outer = TestDir::new("not-found-cross-root-cache");
+        let nested = outer.path().join("nested");
+        fs::create_dir(&nested).expect("nested root");
+        let source = nested.join("source.adoc");
+        let alias = outer.path().join("alias.adoc");
+        fs::write(&source, "text").expect("source");
+        symlink("nested/source.adoc", &alias).expect("outer alias");
+        let policy = LocalFilesystemPolicy::new(
+            [outer.path().to_owned(), nested],
+            FilesystemReadLimits::default(),
+        )
+        .expect("policy");
+        let mut session = policy.session().expect("session");
+        session.read_utf8(source_id(), &alias).expect("alias read");
+        session
+            .read_utf8(source_id(), &source)
+            .expect("source read");
+        session
+            .reread_utf8(source_id(), &alias)
+            .expect("cache alias session");
+        session
+            .reread_utf8(source_id(), &source)
+            .expect("cache source session");
+        assert_eq!(cached_texts(&session), 2);
+
+        fs::remove_file(&alias).expect("remove alias");
+        assert!(matches!(
+            session.reread_utf8_outcome(source_id(), &alias),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 4));
+        assert_eq!(cached_texts(&session), 1);
+
+        fs::remove_file(&source).expect("remove source");
+        assert!(matches!(
+            session.reread_utf8_outcome(source_id(), &source),
+            Ok(FilesystemReadOutcome::NotFound { .. })
+        ));
+        assert_eq!(session.budget(), ResourceBudget::default());
+        assert_eq!(cached_texts(&session), 0);
     }
 
     #[test]
@@ -2185,8 +2736,8 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_resource_counts_an_attempt_and_stops_the_poisoned_draft() {
-        let root = TestDir::new("meter-missing-then-poisoned");
+    fn a_missing_resource_counts_an_attempt_and_keeps_the_draft_usable() {
+        let root = TestDir::new("meter-missing-then-usable");
         let missing = root.path().join("missing.adoc");
         let existing = root.path().join("existing.adoc");
         fs::write(&existing, "text").expect("existing source");
@@ -2195,32 +2746,32 @@ mod tests {
         let meter = draft_meter(&draft);
 
         assert_eq!(
-            draft.read_utf8(source_id(), &missing),
-            Err(FilesystemDraftError::Resource(ResourceError::Missing(
-                missing
-            )))
+            draft.read_utf8_outcome(source_id(), &missing),
+            Ok(FilesystemReadOutcome::NotFound {
+                source_id: source_id(),
+                candidate_path: missing,
+            })
         );
         let after_failure = meter.usage();
         assert_eq!(after_failure.read_operations, 1);
         assert_eq!(after_failure.read_bytes, 0);
 
-        assert_eq!(
-            draft.read_utf8(source_id(), &existing),
-            Err(FilesystemDraftError::PoisonedDraft)
-        );
-        assert_eq!(meter.usage(), after_failure);
+        assert!(matches!(
+            draft.read_utf8_outcome(source_id(), &existing),
+            Ok(FilesystemReadOutcome::Found(_))
+        ));
+        assert_eq!(meter.usage().read_operations, 2);
     }
 
     #[test]
     fn a_poisoned_draft_starts_no_filesystem_work_at_all() {
         let root = TestDir::new("meter-poisoned-draft-entry-points");
-        let missing = root.path().join("missing.adoc");
         let existing = root.path().join("existing.adoc");
         fs::write(&existing, "text").expect("existing source");
         let session = policy(root.path(), 100).session().expect("session");
         let mut draft = session.draft().expect("draft");
         let meter = draft_meter(&draft);
-        assert!(draft.read_utf8(source_id(), &missing).is_err());
+        assert!(draft.read_utf8(source_id(), root.path()).is_err());
         let after_failure = meter.usage();
 
         assert_eq!(
@@ -2909,6 +3460,34 @@ mod tests {
     }
 
     #[test]
+    fn legacy_scan_keeps_a_disappearing_file_as_an_error() {
+        let root = TestDir::new("scan-vanished-file");
+        let path = root.path().join("vanished.adoc");
+        fs::write(&path, "text").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+
+        let result = draft.scan_utf8(|candidate| {
+            assert_eq!(candidate, path);
+            fs::remove_file(candidate).expect("remove discovered source");
+            path_source_id(candidate)
+        });
+
+        assert_eq!(
+            result,
+            Err(FilesystemDraftError::Resource(ResourceError::Missing(path)))
+        );
+        assert_eq!(draft.budget().files(), 0);
+        assert_eq!(meter.usage().read_operations, 1);
+        assert!(matches!(
+            draft.prepare_commit(&mut session),
+            Err(FilesystemDraftError::PoisonedDraft)
+        ));
+        assert_eq!(session.budget().files(), 0);
+    }
+
+    #[test]
     fn source_ids_and_platform_capability_are_explicit() {
         assert!(matches!(
             LogicalSourceId::new(""),
@@ -2935,6 +3514,83 @@ mod tests {
             session.read_utf8(source_id(), Path::new("relative.adoc")),
             Err(ResourceError::PathNotAbsolute(_))
         ));
+    }
+
+    #[test]
+    fn legacy_and_outcome_read_signatures_remain_distinct() {
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, ResourceError> = LocalFilesystemSession::read_utf8;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, ResourceError> =
+            LocalFilesystemSession::read_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, FilesystemDraftError> = LocalFilesystemDraft::read_utf8;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, FilesystemDraftError> =
+            LocalFilesystemDraft::read_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, ResourceError> = LocalFilesystemSession::reread_utf8;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, ResourceError> =
+            LocalFilesystemSession::reread_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+            &str,
+        ) -> Result<LoadedFilesystemSource, ResourceError> =
+            LocalFilesystemSession::read_target_utf8;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+            &str,
+        ) -> Result<FilesystemReadOutcome, ResourceError> =
+            LocalFilesystemSession::read_target_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, FilesystemDraftError> =
+            LocalFilesystemDraft::reread_utf8;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, FilesystemDraftError> =
+            LocalFilesystemDraft::reread_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+            &str,
+        ) -> Result<LoadedFilesystemSource, FilesystemDraftError> =
+            LocalFilesystemDraft::read_target_utf8;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+            &str,
+        ) -> Result<FilesystemReadOutcome, FilesystemDraftError> =
+            LocalFilesystemDraft::read_target_utf8_outcome;
     }
 
     #[test]

@@ -213,12 +213,6 @@ const recordedChange = {
   description: "ResolvedProjectConfigにworkspaceを追加しました。",
   migration: "構造体リテラルへworkspaceを追加します。",
 };
-const detectedGeneratedBibliographyChange = {
-  crate: "adocweave-wasm",
-  lint: "constructible_struct_adds_field",
-  item: "field WasmRenderInputs.generated_bibliography",
-  summary: "externally-constructible struct adds field",
-};
 const record = (changes = [recordedChange]) => ({
   schemaVersion: 1,
   releaseVersion: releaseManifest.packageVersion,
@@ -229,12 +223,7 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.deepEqual(validateBreakingRustApi(record()), record());
   const actual = loadBreakingRustApi();
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
-  assert.deepEqual(
-    actual.changes.map(({ crate, lint, item, summary }) => ({ crate, lint, item, summary })),
-    [detectedGeneratedBibliographyChange],
-  );
-  assert.match(actual.changes[0].description, /WasmRenderInputs/);
-  assert.match(actual.changes[0].migration, /generated_bibliography/);
+  assert.deepEqual(actual.changes, []);
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
   assert.throws(
