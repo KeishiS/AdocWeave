@@ -152,8 +152,9 @@ pub enum FilesystemReleaseOutcome {
 /// Dropping this value leaves the live resource state unchanged. Binding
 /// generations are deliberately consumed across all drafts and are never
 /// reused, including when a draft is dropped. [`Self::prepare_commit`]
-/// validates the identity and revision before a
-/// separate infallible commit installs the live resource state.
+/// validates draft-local identity and revision conditions. The prepared commit
+/// then verifies that the originating job is still active while holding its
+/// lock across the live state replacement.
 #[must_use = "a filesystem draft must be committed or dropped"]
 #[derive(Debug)]
 pub struct LocalFilesystemDraft {
@@ -172,7 +173,7 @@ struct FilesystemDraftLease {
     token: u64,
 }
 
-/// A filesystem state replacement whose commit path cannot fail.
+/// A filesystem state replacement prepared from one draft and job.
 #[must_use = "a prepared filesystem commit must be committed or dropped"]
 pub struct PreparedFilesystemCommit<'a> {
     live: &'a mut LocalFilesystemSession,
@@ -2087,7 +2088,10 @@ impl LocalFilesystemDraft {
         Ok(())
     }
 
-    /// Validates every condition which could prevent a state replacement.
+    /// Validates the draft-local conditions required before state replacement.
+    ///
+    /// [`PreparedFilesystemCommit::commit`] separately checks the job lifecycle
+    /// under the job lock because cancellation can occur after this method.
     pub fn prepare_commit(
         self,
         live: &mut LocalFilesystemSession,
