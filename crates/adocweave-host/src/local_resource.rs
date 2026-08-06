@@ -253,6 +253,10 @@ struct LocalFilesystemState {
     candidates: BTreeMap<PathBuf, FilesystemCandidateBinding>,
 }
 
+struct LocalFilesystemView<'a> {
+    state: &'a LocalFilesystemState,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FilesystemCandidateBinding {
     canonical_path: PathBuf,
@@ -628,7 +632,36 @@ impl LocalFilesystemSession {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        self.discover_adoc_paths_with_limit(Self::MAX_SCAN_ENTRIES, exclude_directory, is_cancelled)
+        LocalFilesystemView { state: &self.state }.discover_adoc_paths_with_control(
+            Self::MAX_SCAN_ENTRIES,
+            exclude_directory,
+            is_cancelled,
+        )
+    }
+
+    #[cfg(test)]
+    fn discover_adoc_paths_with_limit(
+        &self,
+        scan_entry_limit: usize,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        LocalFilesystemView { state: &self.state }.discover_adoc_paths_with_control(
+            scan_entry_limit,
+            exclude_directory,
+            is_cancelled,
+        )
+    }
+}
+
+impl LocalFilesystemView<'_> {
+    fn discover_adoc_paths_with_control(
+        &self,
+        scan_entry_limit: usize,
+        exclude_directory: impl FnMut(&Path, &Path) -> bool,
+        is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<PathBuf>, ResourceError> {
+        self.discover_adoc_paths_with_limit(scan_entry_limit, exclude_directory, is_cancelled)
     }
 
     fn discover_adoc_paths_with_limit(
@@ -800,7 +833,9 @@ impl LocalFilesystemSession {
         paths.dedup();
         Ok(paths)
     }
+}
 
+impl LocalFilesystemSession {
     /// Returns the concurrent-filesystem guarantee of all configured roots.
     pub fn race_resistance(&self) -> FilesystemRaceResistance {
         self.state
@@ -1348,14 +1383,14 @@ impl LocalFilesystemDraft {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        let candidate = LocalFilesystemSession {
-            session_id: self.session_id,
-            revision: self.base_revision,
-            active_draft: Arc::clone(&self.lease.active),
-            next_binding_generation: Arc::clone(&self.binding_generations),
-            state: self.candidate().clone(),
-        };
-        candidate.discover_adoc_paths_with_control(exclude_directory, is_cancelled)
+        LocalFilesystemView {
+            state: self.candidate(),
+        }
+        .discover_adoc_paths_with_control(
+            LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            exclude_directory,
+            is_cancelled,
+        )
     }
 
     pub fn scan_utf8(
