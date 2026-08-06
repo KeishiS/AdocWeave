@@ -1166,7 +1166,7 @@ impl LocalFilesystemSession {
         candidate: &Path,
         loaded: crate::local_target::LoadedLocalTarget,
     ) -> Result<(LoadedFilesystemSource, FilesystemAccountingRollback), ResourceError> {
-        let (canonical_path, source) = loaded.into_parts();
+        let (canonical_path, source) = loaded.into_shared_parts();
         let bytes = source.len() as u64;
         let previous_candidate = self
             .state

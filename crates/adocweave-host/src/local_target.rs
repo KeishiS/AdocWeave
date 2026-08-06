@@ -1048,7 +1048,11 @@ impl LoadedLocalTarget {
         &self.source
     }
 
-    pub fn into_parts(self) -> (PathBuf, Arc<str>) {
+    pub fn into_parts(self) -> (PathBuf, String) {
+        (self.canonical_path, self.source.to_string())
+    }
+
+    pub(crate) fn into_shared_parts(self) -> (PathBuf, Arc<str>) {
         (self.canonical_path, self.source)
     }
 }
