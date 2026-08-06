@@ -12,6 +12,7 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::filesystem_job::{FilesystemJobError, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
 use crate::io_observation::FilesystemIoMeter;
 
@@ -74,6 +75,24 @@ pub(crate) struct CandidateReadCapacity {
     pub allow_file: bool,
     pub max_total_bytes: u64,
     pub max_resource_bytes: u64,
+}
+
+#[derive(Debug)]
+pub(crate) enum CoordinatedLocalTargetError {
+    Target(LocalTargetError),
+    Job(FilesystemJobError),
+}
+
+impl From<LocalTargetError> for CoordinatedLocalTargetError {
+    fn from(source: LocalTargetError) -> Self {
+        Self::Target(source)
+    }
+}
+
+impl From<FilesystemJobError> for CoordinatedLocalTargetError {
+    fn from(source: FilesystemJobError) -> Self {
+        Self::Job(source)
+    }
 }
 
 /// Concurrent-filesystem guarantee provided by the active platform adapter.
@@ -966,6 +985,42 @@ fn read_bounded_bytes(
     Ok(bytes)
 }
 
+fn read_bounded_bytes_with_job(
+    mut reader: impl Read,
+    canonical_path: &Path,
+    max_bytes: u64,
+    meter: &FilesystemIoMeter,
+    permit: &mut FilesystemReadPermit,
+) -> Result<Vec<u8>, CoordinatedLocalTargetError> {
+    const CHUNK_SIZE: usize = 8 * 1024;
+
+    let mut bytes = Vec::new();
+    let local_limit = max_bytes.saturating_add(1);
+    while (bytes.len() as u64) < local_limit {
+        let remaining = local_limit.saturating_sub(bytes.len() as u64);
+        let requested = remaining.min(CHUNK_SIZE as u64);
+        let reservation = permit.reserve(requested)?;
+        let granted = reservation.granted() as usize;
+        if granted == 0 {
+            reservation.commit(0)?;
+            continue;
+        }
+        let mut chunk = [0_u8; CHUNK_SIZE];
+        let read = reader
+            .read(&mut chunk[..granted])
+            .map_err(|source| classify_io(canonical_path.to_owned(), source))?;
+        meter.observe_read_bytes(read);
+        if read > 0 {
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        reservation.commit(read as u64)?;
+        if read == 0 {
+            break;
+        }
+    }
+    Ok(bytes)
+}
+
 #[cfg(target_os = "linux")]
 fn read_for_comparison(
     path: &Path,
@@ -1315,6 +1370,33 @@ impl LocalTargetSession {
         ))
     }
 
+    pub(crate) fn reread_candidate_utf8_with_job_capacity(
+        &mut self,
+        candidate: &Path,
+        permit: &mut FilesystemReadPermit,
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
+    ) -> Result<(LoadedLocalTarget, LocalTargetTextRollback), CoordinatedLocalTargetError> {
+        let loaded = self.read_candidate_utf8_with_job_capacity(
+            candidate,
+            false,
+            true,
+            || {},
+            capacity,
+            permit,
+        )?;
+        let canonical_path = loaded.canonical_path.clone();
+        let previous = self
+            .text
+            .insert(canonical_path.clone(), Ok(loaded.source.clone()));
+        Ok((
+            loaded,
+            LocalTargetTextRollback {
+                canonical_path,
+                previous,
+            },
+        ))
+    }
+
     pub(crate) fn rollback_cached_text(&mut self, rollback: LocalTargetTextRollback) {
         match rollback.previous {
             Some(previous) => {
@@ -1355,39 +1437,92 @@ impl LocalTargetSession {
         after_open: impl FnOnce(),
         capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
     ) -> Result<LoadedLocalTarget, LocalTargetError> {
+        self.read_candidate_utf8_with_capacity_inner(
+            candidate,
+            reuse_cached_text,
+            follow_symlinks,
+            after_open,
+            capacity,
+            None,
+        )
+        .map_err(|error| match error {
+            CoordinatedLocalTargetError::Target(source) => source,
+            CoordinatedLocalTargetError::Job(_) => {
+                unreachable!("an uncoordinated read cannot return a filesystem job error")
+            }
+        })
+    }
+
+    pub(crate) fn read_candidate_utf8_with_job_capacity(
+        &mut self,
+        candidate: &Path,
+        reuse_cached_text: bool,
+        follow_symlinks: bool,
+        after_open: impl FnOnce(),
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
+        permit: &mut FilesystemReadPermit,
+    ) -> Result<LoadedLocalTarget, CoordinatedLocalTargetError> {
+        self.read_candidate_utf8_with_capacity_inner(
+            candidate,
+            reuse_cached_text,
+            follow_symlinks,
+            after_open,
+            capacity,
+            Some(permit),
+        )
+    }
+
+    fn read_candidate_utf8_with_capacity_inner(
+        &mut self,
+        candidate: &Path,
+        reuse_cached_text: bool,
+        follow_symlinks: bool,
+        after_open: impl FnOnce(),
+        capacity: impl FnOnce(&Path) -> CandidateReadCapacity,
+        permit: Option<&mut FilesystemReadPermit>,
+    ) -> Result<LoadedLocalTarget, CoordinatedLocalTargetError> {
         let (canonical, file) = self.open_candidate(candidate, follow_symlinks, after_open)?;
         if reuse_cached_text && let Some(result) = self.text.get(&canonical) {
-            return result.clone().map(|source| LoadedLocalTarget {
+            return Ok(result.clone().map(|source| LoadedLocalTarget {
                 canonical_path: canonical,
                 source,
-            });
+            })?);
         }
         let capacity = capacity(&canonical);
         if !capacity.allow_file {
-            return Err(LocalTargetError::ReadLimitExceeded);
+            return Err(LocalTargetError::ReadLimitExceeded.into());
         }
         let meter = self.meter.clone();
-        let result = (|| {
+        let result: Result<Arc<str>, CoordinatedLocalTargetError> = (|| {
             self.read_files += 1;
-            let bytes = read_bounded_bytes(
-                file,
-                &canonical,
-                capacity.max_resource_bytes.min(capacity.max_total_bytes),
-                &meter,
-            )?;
+            let max_bytes = capacity.max_resource_bytes.min(capacity.max_total_bytes);
+            let bytes = match permit {
+                Some(permit) => {
+                    read_bounded_bytes_with_job(file, &canonical, max_bytes, &meter, permit)?
+                }
+                None => read_bounded_bytes(file, &canonical, max_bytes, &meter)?,
+            };
             self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
             if bytes.len() as u64 > capacity.max_total_bytes {
-                return Err(LocalTargetError::ReadLimitExceeded);
+                return Err(LocalTargetError::ReadLimitExceeded.into());
             }
             if bytes.len() as u64 > capacity.max_resource_bytes {
-                return Err(LocalTargetError::ResourceTooLarge(canonical.clone()));
+                return Err(LocalTargetError::ResourceTooLarge(canonical.clone()).into());
             }
             String::from_utf8(bytes)
                 .map(Arc::<str>::from)
-                .map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()))
+                .map_err(|_| LocalTargetError::InvalidUtf8(canonical.clone()).into())
         })();
         if reuse_cached_text {
-            self.text.insert(canonical.clone(), result.clone());
+            match &result {
+                Ok(source) => {
+                    self.text.insert(canonical.clone(), Ok(Arc::clone(source)));
+                }
+                Err(CoordinatedLocalTargetError::Target(source)) => {
+                    self.text.insert(canonical.clone(), Err(source.clone()));
+                }
+                Err(CoordinatedLocalTargetError::Job(_)) => {}
+            }
         }
         result.map(|source| LoadedLocalTarget {
             canonical_path: canonical,

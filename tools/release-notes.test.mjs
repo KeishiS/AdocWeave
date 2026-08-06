@@ -70,6 +70,9 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /``read_utf8_outcome``/);
   assert.match(notes, /従来の読込APIは維持/);
   assert.match(notes, /列挙後に消えたfile/);
+  assert.match(notes, /``FilesystemJobCoordinator``/);
+  assert.match(notes, /並行処理でも残量を重複利用せず/);
+  assert.match(notes, /``session\.draft\(&job\)``/);
   assert.match(notes, /``FilesystemReadOutcome::NotFound``を処理/);
   assert.match(notes, /textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);

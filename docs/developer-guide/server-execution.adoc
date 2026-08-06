@@ -143,14 +143,22 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
-呼出側がfilesystemの読込結果と別の状態更新をまとめて採用する場合は、sessionから排他的な
-``LocalFilesystemDraft``を作り、候補上で読込とbinding解放を行います。途中の失敗または取消ではdraftを破棄します。
+呼出側がfilesystemの読込結果と別の状態更新をまとめて採用する場合は、処理全体の上限を持つ
+``FilesystemJobCoordinator``を作成し、sessionから排他的な``LocalFilesystemDraft``を作るときに渡します。
+draftは作成元のcoordinatorを保持し、候補上で読込、走査およびbinding解放を行います。
+途中の失敗または取消ではdraftを破棄します。
 ``NotFound``はdraftを失敗状態にせず、同じ候補pathの旧bindingを候補stateから除去します。選択したrootのsessionに別名が
 残らない場合は本文cacheを除去し、全rootに別名が残らない場合は共有する保持量も除去します。draftを破棄した場合は
 live stateを維持し、採用した場合だけ不在の状態を反映します。
 sessionへ直接``*_outcome`` APIを呼び出した場合は、この不在状態を直ちにlive stateへ反映します。
 採用時は``prepare_commit``でsession ID、revisionおよびleaseを検証し、その後に失敗しないcommitでlive stateを
 置き換えます。
+
+coordinatorは同じ処理に参加する全sessionで、resource取得試行数、取得byte数、directory列挙試行数、
+列挙entry数、候補stateの変更数およびsession数を共有します。fileの読込とdirectory列挙はI/Oの前に残量を予約し、
+実際に得た量だけを確定します。上限の境界では、EOFと超過を区別するために設定したprobe量だけ追加で読みます。
+draftを破棄してもjobの使用量は戻りません。同じ論理処理を再試行する場合は同じcoordinatorを使い、文書revisionや
+設定世代が変わって別の処理を始める場合は新しいcoordinatorを作ります。
 
 Linuxでは、CLIの入力・include・設定由来stylesheet、project設定の探索と読込、およびLanguage Serverの
 ワークスペース走査・読込が同じhandle相対adapterを使用します。CLIは最初に作業ディレクトリのauthorityを確立し、

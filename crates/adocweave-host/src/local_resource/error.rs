@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::filesystem_job::FilesystemJobError;
 use crate::local_target::LocalTargetError;
 
 /// An error raised while creating, mutating, or committing a filesystem draft.
@@ -13,6 +14,7 @@ pub enum FilesystemDraftError {
     InvalidDraft,
     PoisonedDraft,
     ForeignBinding,
+    Job(FilesystemJobError),
     Resource(ResourceError),
 }
 
@@ -37,6 +39,7 @@ impl fmt::Display for FilesystemDraftError {
             Self::ForeignBinding => {
                 formatter.write_str("filesystem binding belongs to another session")
             }
+            Self::Job(source) => source.fmt(formatter),
             Self::Resource(source) => source.fmt(formatter),
         }
     }
@@ -45,21 +48,32 @@ impl fmt::Display for FilesystemDraftError {
 impl Error for FilesystemDraftError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Job(source) => Some(source),
             Self::Resource(source) => Some(source),
             _ => None,
         }
     }
 }
 
+impl From<FilesystemJobError> for FilesystemDraftError {
+    fn from(source: FilesystemJobError) -> Self {
+        Self::Job(source)
+    }
+}
+
 impl From<ResourceError> for FilesystemDraftError {
     fn from(source: ResourceError) -> Self {
-        Self::Resource(source)
+        match source {
+            ResourceError::Job(source) => Self::Job(source),
+            source => Self::Resource(source),
+        }
     }
 }
 
 impl From<FilesystemDraftError> for ResourceError {
     fn from(error: FilesystemDraftError) -> Self {
         match error {
+            FilesystemDraftError::Job(source) => Self::Job(source),
             FilesystemDraftError::Resource(source) => source,
             lifecycle => Self::Unverifiable(lifecycle.to_string()),
         }
@@ -86,6 +100,7 @@ pub enum ResourceError {
     FileLimit { limit: usize },
     ScanEntryLimit { limit: usize },
     ByteLimit,
+    Job(FilesystemJobError),
     Unverifiable(String),
 }
 
@@ -148,6 +163,7 @@ impl fmt::Display for ResourceError {
                 )
             }
             Self::ByteLimit => formatter.write_str("local resource byte limit exceeded"),
+            Self::Job(source) => source.fmt(formatter),
             Self::Unverifiable(reason) => {
                 write!(formatter, "local resource cannot be verified: {reason}")
             }
@@ -155,7 +171,20 @@ impl fmt::Display for ResourceError {
     }
 }
 
-impl Error for ResourceError {}
+impl Error for ResourceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Job(source) => Some(source),
+            _ => None,
+        }
+    }
+}
+
+impl From<FilesystemJobError> for ResourceError {
+    fn from(source: FilesystemJobError) -> Self {
+        Self::Job(source)
+    }
+}
 
 impl From<LocalTargetError> for ResourceError {
     fn from(error: LocalTargetError) -> Self {
