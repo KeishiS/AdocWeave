@@ -1817,9 +1817,12 @@ mod tests {
                 "adocweave-local-target-{}-{nonce}-{sequence}",
                 std::process::id()
             ));
-            fs::create_dir_all(path.join("docs/sub")).expect("create directories");
-            fs::write(path.join("docs/guide.adoc"), "= Guide").expect("write file");
-            Self(canonical_test_root(&path))
+            fs::create_dir(&path).expect("create test root");
+            let mut directory = Self(path);
+            fs::create_dir_all(directory.0.join("docs/sub")).expect("create directories");
+            fs::write(directory.0.join("docs/guide.adoc"), "= Guide").expect("write file");
+            directory.0 = canonical_test_root(&directory.0);
+            directory
         }
     }
 

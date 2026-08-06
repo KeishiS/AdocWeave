@@ -2056,13 +2056,15 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir(&path).expect("create test directory");
+            let mut directory = Self(path);
             // `std::env::temp_dir` does not return a resolved path on every
             // platform. macOS answers with `/var/...`, which is a symbolic link
             // to `/private/var`, and Windows can answer with a shortened
             // `RUNNER~1` component. Roots are stored in resolved form, so a test
             // holding the unresolved spelling would build candidate paths that
             // the policy reports as outside its own root.
-            Self(path.canonicalize().expect("resolve the test root"))
+            directory.0 = directory.0.canonicalize().expect("resolve the test root");
+            directory
         }
 
         fn path(&self) -> &Path {
@@ -3130,8 +3132,8 @@ mod tests {
 
     /// A directory that disappears between being queued and being opened fails
     /// the scan on every platform. The failed enumeration is still counted,
-    /// because the work of attempting it was performed. The two implementations
-    /// report different errors for it, so this asserts only what both promise.
+    /// because the work of attempting it was performed. Each implementation's
+    /// stable error category and the affected path are asserted separately.
     #[test]
     fn a_failed_directory_enumeration_still_counts_the_attempt() {
         let root = TestDir::new("meter-directory-enumeration-failure");
@@ -3146,15 +3148,26 @@ mod tests {
         }
         .discover_adoc_paths_with_control(
             LocalFilesystemSession::MAX_SCAN_ENTRIES,
-            |_, _| {
+            |scan_root, relative| {
+                assert_eq!(scan_root, root.path());
+                assert_eq!(relative, Path::new("nested"));
                 // The scan has queued `nested` and is about to enumerate it.
-                let _ = fs::remove_dir_all(&nested);
+                fs::remove_dir_all(&nested).expect("remove the queued directory");
                 false
             },
             || false,
         );
 
-        assert!(result.is_err(), "a vanished directory must fail the scan");
+        #[cfg(target_os = "linux")]
+        assert_eq!(result, Err(ResourceError::Missing(nested.clone())));
+        #[cfg(not(target_os = "linux"))]
+        assert!(
+            matches!(
+                &result,
+                Err(ResourceError::Inspect { path, .. }) if path == &nested
+            ),
+            "a vanished directory must report an inspection failure for its path: {result:?}"
+        );
         assert_eq!(meter.usage().directory_read_operations, 2);
     }
 
