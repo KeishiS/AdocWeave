@@ -138,17 +138,32 @@ pub enum FilesystemReleaseOutcome {
 ///
 /// Dropping this value leaves the live resource state unchanged. Binding
 /// generations are deliberately consumed across all drafts and are never
-/// reused, including when a draft is dropped. [`Self::commit`] replaces the
-/// live resource state only after validating its identity and revision.
+/// reused, including when a draft is dropped. [`Self::prepare_commit`]
+/// validates the identity and revision before a
+/// separate infallible commit installs the live resource state.
 #[must_use = "a filesystem draft must be committed or dropped"]
 #[derive(Debug)]
 pub struct LocalFilesystemDraft {
     session_id: LocalFilesystemSessionId,
     base_revision: u64,
-    candidate: Option<LocalFilesystemState>,
-    active: Arc<AtomicBool>,
+    candidate: LocalFilesystemState,
+    lease: FilesystemDraftLease,
     binding_generations: Arc<AtomicU64>,
     poisoned: bool,
+}
+
+#[derive(Debug)]
+struct FilesystemDraftLease {
+    active: Arc<AtomicBool>,
+}
+
+/// A filesystem state replacement whose commit path cannot fail.
+#[must_use = "a prepared filesystem commit must be committed or dropped"]
+pub struct PreparedFilesystemCommit<'a> {
+    live: &'a mut LocalFilesystemSession,
+    candidate: LocalFilesystemState,
+    next_revision: u64,
+    _lease: FilesystemDraftLease,
 }
 
 /// Opaque state used to undo one filesystem reread and its command snapshot.
@@ -505,8 +520,10 @@ impl LocalFilesystemSession {
         Ok(LocalFilesystemDraft {
             session_id: self.session_id,
             base_revision: self.revision,
-            candidate: Some(self.clone_for_draft()),
-            active: Arc::clone(&self.active_draft),
+            candidate: self.clone_for_draft(),
+            lease: FilesystemDraftLease {
+                active: Arc::clone(&self.active_draft),
+            },
             binding_generations: Arc::clone(&self.next_binding_generation),
             poisoned: false,
         })
@@ -546,7 +563,7 @@ impl LocalFilesystemSession {
     ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
         let mut draft = self.draft()?;
         let loaded = draft.scan_utf8(&mut source_id)?;
-        draft.commit(self)?;
+        draft.prepare_commit(self)?.commit();
         Ok(loaded)
     }
 
@@ -793,7 +810,7 @@ impl LocalFilesystemSession {
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let mut draft = self.draft()?;
         let loaded = draft.read_utf8(source_id, path)?;
-        draft.commit(self)?;
+        draft.prepare_commit(self)?.commit();
         Ok(loaded)
     }
 
@@ -814,7 +831,7 @@ impl LocalFilesystemSession {
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let mut draft = self.draft()?;
         let loaded = draft.read_target_utf8(source_id, base, target)?;
-        draft.commit(self)?;
+        draft.prepare_commit(self)?.commit();
         Ok(loaded)
     }
 
@@ -872,7 +889,7 @@ impl LocalFilesystemSession {
     ) -> Result<LoadedFilesystemSource, ResourceError> {
         let mut draft = self.draft()?;
         let loaded = draft.reread_utf8(source_id, path)?;
-        draft.commit(self)?;
+        draft.prepare_commit(self)?.commit();
         Ok(loaded)
     }
 
@@ -1259,28 +1276,23 @@ impl LocalFilesystemSession {
 
 impl LocalFilesystemDraft {
     fn candidate(&self) -> &LocalFilesystemState {
-        self.candidate
-            .as_ref()
-            .expect("an unfinished draft owns its candidate state")
+        &self.candidate
     }
 
     fn with_candidate_mut<T>(
         &mut self,
         operation: impl FnOnce(&mut LocalFilesystemSession) -> Result<T, ResourceError>,
     ) -> Result<T, ResourceError> {
-        let state = self
-            .candidate
-            .take()
-            .expect("an unfinished draft owns its candidate state");
+        let state = self.candidate.clone();
         let mut candidate = LocalFilesystemSession {
             session_id: self.session_id,
             revision: self.base_revision,
-            active_draft: Arc::clone(&self.active),
+            active_draft: Arc::clone(&self.lease.active),
             next_binding_generation: Arc::clone(&self.binding_generations),
             state,
         };
         let result = operation(&mut candidate);
-        self.candidate = Some(candidate.state);
+        self.candidate = candidate.state;
         result
     }
 
@@ -1311,7 +1323,7 @@ impl LocalFilesystemDraft {
         let candidate = LocalFilesystemSession {
             session_id: self.session_id,
             revision: self.base_revision,
-            active_draft: Arc::clone(&self.active),
+            active_draft: Arc::clone(&self.lease.active),
             next_binding_generation: Arc::clone(&self.binding_generations),
             state: self.candidate().clone(),
         };
@@ -1377,35 +1389,46 @@ impl LocalFilesystemDraft {
             return Err(ResourceError::PoisonedDraft);
         }
         if self.session_id != live.session_id
-            || !Arc::ptr_eq(&self.active, &live.active_draft)
+            || !Arc::ptr_eq(&self.lease.active, &live.active_draft)
+            || !Arc::ptr_eq(&self.binding_generations, &live.next_binding_generation)
             || self.base_revision != live.revision
-            || !self.active.load(Ordering::Acquire)
+            || !self.lease.active.load(Ordering::Acquire)
         {
             return Err(ResourceError::InvalidDraft);
         }
         Ok(())
     }
 
-    /// Atomically replaces one live session after successful validation.
-    pub fn commit(mut self, live: &mut LocalFilesystemSession) -> Result<(), ResourceError> {
+    /// Validates every condition which could prevent a state replacement.
+    pub fn prepare_commit(
+        self,
+        live: &mut LocalFilesystemSession,
+    ) -> Result<PreparedFilesystemCommit<'_>, ResourceError> {
         self.validate(live)?;
         let next_revision = live
             .revision
             .checked_add(1)
             .ok_or(ResourceError::SessionRevisionExhausted)?;
-        let candidate = self
-            .candidate
-            .take()
-            .expect("validated draft owns its candidate state");
-        live.state = candidate;
-        live.revision = next_revision;
-        Ok(())
+        Ok(PreparedFilesystemCommit {
+            live,
+            candidate: self.candidate,
+            next_revision,
+            _lease: self.lease,
+        })
     }
 }
 
-impl Drop for LocalFilesystemDraft {
+impl Drop for FilesystemDraftLease {
     fn drop(&mut self) {
         self.active.store(false, Ordering::Release);
+    }
+}
+
+impl PreparedFilesystemCommit<'_> {
+    /// Installs the state validated by [`LocalFilesystemDraft::prepare_commit`].
+    pub fn commit(self) {
+        self.live.state = self.candidate;
+        self.live.revision = self.next_revision;
     }
 }
 
@@ -1764,7 +1787,10 @@ mod tests {
             .reread_utf8(source_id(), &path)
             .expect("replacement reread");
         let binding = loaded.binding().clone();
-        committed.commit(&mut session).expect("commit draft");
+        committed
+            .prepare_commit(&mut session)
+            .expect("prepare commit draft")
+            .commit();
         assert_eq!(session.budget().bytes(), 2);
 
         let mut released = session.draft().expect("release draft");
@@ -1773,7 +1799,10 @@ mod tests {
             FilesystemReleaseOutcome::Released
         );
         assert_eq!(session.budget().bytes(), 2);
-        released.commit(&mut session).expect("commit release");
+        released
+            .prepare_commit(&mut session)
+            .expect("prepare commit release")
+            .commit();
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -1785,11 +1814,29 @@ mod tests {
         let mut draft = session.draft().expect("first draft");
         assert!(matches!(session.draft(), Err(ResourceError::DraftBusy)));
         assert!(draft.read_utf8(source_id(), &missing).is_err());
-        assert_eq!(
-            draft.commit(&mut session),
+        assert!(matches!(
+            draft.prepare_commit(&mut session),
             Err(ResourceError::PoisonedDraft)
-        );
+        ));
         drop(session.draft().expect("poisoned draft released its lease"));
+    }
+
+    #[test]
+    fn dropping_a_prepared_commit_preserves_live_state_and_releases_lease() {
+        let root = TestDir::new("prepared-commit-drop");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "a").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        fs::write(&path, "bb").expect("replacement");
+
+        let mut draft = session.draft().expect("draft");
+        draft.reread_utf8(source_id(), &path).expect("draft read");
+        let prepared = draft.prepare_commit(&mut session).expect("prepare");
+        drop(prepared);
+
+        assert_eq!(session.budget().bytes(), 1);
+        drop(session.draft().expect("prepared drop released lease"));
     }
 
     #[test]
@@ -1804,7 +1851,10 @@ mod tests {
             .expect("first read")
             .binding()
             .clone();
-        first.commit(&mut session).expect("first commit");
+        first
+            .prepare_commit(&mut session)
+            .expect("prepare first commit")
+            .commit();
 
         fs::write(&path, "bb").expect("replacement");
         let mut second = session.draft().expect("second draft");
@@ -1813,7 +1863,10 @@ mod tests {
             .expect("second read")
             .binding()
             .clone();
-        second.commit(&mut session).expect("second commit");
+        second
+            .prepare_commit(&mut session)
+            .expect("prepare second commit")
+            .commit();
 
         let mut release = session.draft().expect("release draft");
         assert_eq!(
@@ -1828,7 +1881,10 @@ mod tests {
                 .expect("current release"),
             FilesystemReleaseOutcome::Released
         );
-        release.commit(&mut session).expect("release commit");
+        release
+            .prepare_commit(&mut session)
+            .expect("prepare release commit")
+            .commit();
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -1851,7 +1907,10 @@ mod tests {
         committed
             .read_utf8(source_id(), &path)
             .expect("committed read");
-        committed.commit(&mut session).expect("commit");
+        committed
+            .prepare_commit(&mut session)
+            .expect("prepare commit")
+            .commit();
 
         let mut release = session.draft().expect("release draft");
         assert_eq!(
