@@ -11,7 +11,7 @@
 
 release candidate tagを受理しません。通常のversion更新では機械可読なrelease intentを``preparing``にし、
 すべての変更を統合した後のfinalization Pull Requestだけが``ready``へ変更します。手動workflowには、
-このPull Requestのmerge commitを候補SHAとして渡します。workflowはreview済みのintent、未統合Pull Requestが
+このPull Requestのsquash commitを候補SHAとして渡します。workflowはreview済みのintent、未統合Pull Requestが
 ないことおよび同じSHAのmain candidateを検証し、そのSHAを公開対象として固定します。
 
 検証後はpublisher用GitHub Appが``vX.Y.Z`` tagを一度だけ作成し、同じworkflow runでstable GitHub Releaseを

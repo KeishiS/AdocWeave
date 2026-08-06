@@ -239,7 +239,7 @@ node tools/sync-release-version.mjs --check
 . ``release/intent.json``の``state``だけを``preparing``から``ready``へ変更するfinalization Pull Requestを作成し、
   必須checkの成功後にsquash mergeでmainへ統合します。versionとgenerationは変更しません。
   公開workflowが単一親の候補commitを要求するため、merge commitまたはrebase mergeは使用しません。
-. finalization Pull Requestのmerge commitに対するmain candidateが成功してから、次のように公開workflowを実行します。
+. finalization Pull Requestのsquash commitに対するmain candidateが成功してから、次のように公開workflowを実行します。
 +
 [source,console]
 ----

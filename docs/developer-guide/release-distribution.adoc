@@ -178,7 +178,7 @@ Environmentのdeployment branch制限、publisher Appの権限およびtag rules
 workflow自身では検査しません。公開担当者はdispatch前にこれらの設定をRelease checklistで確認します。
 外部actionは完全なcommit SHAへ固定します。
 
-公開処理は、finalization Pull Requestのmerge commitに対する検証済みmain candidateを再利用します。成果物を
+公開処理は、finalization Pull Requestのsquash commitに対する検証済みmain candidateを再利用します。成果物を
 再構築せず、metadataを再検証してattestationを作成してから、publisher Appが同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
@@ -306,7 +306,7 @@ generationを増やします。未公開versionのmain pushでは、配布計画
 installation E2Eを含む完全なcandidateを保存します。candidateが失敗した後の修正コミットでも同じ検査を再実行します。
 
 すべてのrelease対象変更を統合した後、finalization Pull Requestはintentのstateだけを``ready``へ変更します。
-公開workflowはこのPull Requestのmerge commit、dispatch開始時点のmain先端、main向けopen Pull Requestが0件であること、
+公開workflowはこのPull Requestのsquash commit、dispatch開始時点のmain先端、main向けopen Pull Requestが0件であること、
 同じSHAの成功済みcandidate、tagとReleaseが存在しないことを検査します。検査後はこのSHAを公開identityとして固定し、
 後からmainへcommitが追加されても対象を差し替えません。通常CIのrunは新しいcommitで取り消せますが、
 開始した公開workflowは取り消しません。
@@ -323,8 +323,9 @@ installation E2Eを含む完全なcandidateを保存します。candidateが失�
 開始時に固定したcandidateを後続runで置き換えません。
 
 tag作成前の検査またはattestationに失敗した場合は、tagとReleaseを作成しません。tag作成後にGitHub APIによる
-draft作成、asset uploadまたは公開が失敗した場合はprivate draftだけを削除し、stable tagは移動も削除もしません。
-この場合は同じversionを再利用せず、新しいpatch versionを準備します。
+draft作成、asset uploadまたは公開が失敗した場合は、このrunが作成してIDを記録できたprivate draftだけを削除し、
+stable tagは移動も削除もしません。IDを記録する前に失敗した場合は他者のdraftを誤って削除しないよう自動削除せず、
+GitHubの画面で作成者とrunを確認します。この場合は同じversionを再利用せず、新しいpatch versionを準備します。
 
 この文書と配布計画を配布仕様の基準とし、task定義とworkflow構成はこれらに適合させます。リリース作業と公開後の確認は
 xref:../../CONTRIBUTING.adoc[コントリビューションガイド]に従います。

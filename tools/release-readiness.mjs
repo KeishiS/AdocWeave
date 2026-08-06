@@ -53,7 +53,7 @@ export function validateReadinessEvidence({
   }
   if (candidateCommit?.sha !== candidateSha || candidateCommit.parents?.length !== 1 ||
       !COMMIT_SHA.test(candidateCommit.parents[0]?.sha ?? "")) {
-    fail("candidate commitは確認済みの単一親merge commitである必要があります");
+    fail("candidate commitは確認済みの単一親squash commitである必要があります");
   }
   const changedPaths = Array.isArray(candidateChangedPaths)
     ? [...candidateChangedPaths].sort()
@@ -207,7 +207,7 @@ export async function collectReadinessEvidence({
     ]);
   if (candidateCommit?.sha !== candidateSha || candidateCommit.parents?.length !== 1 ||
       !COMMIT_SHA.test(candidateCommit.parents[0]?.sha ?? "")) {
-    fail("candidate commitは確認済みの単一親merge commitである必要があります");
+    fail("candidate commitは確認済みの単一親squash commitである必要があります");
   }
   const previousContent = await requestJson(
     repository,

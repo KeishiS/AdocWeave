@@ -241,8 +241,8 @@ test("source workflow cannot publish and stable release requires reviewed dispat
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       dispatch: inputs.dispatch.replace(
-        "        description: Exact merge commit of the reviewed finalization pull request\n        required: true",
-        "        description: Exact merge commit of the reviewed finalization pull request\n        required: false",
+        "        description: Exact squash commit of the reviewed finalization pull request\n        required: true",
+        "        description: Exact squash commit of the reviewed finalization pull request\n        required: false",
       ),
     }),
     /candidate_sha must be a required string/,

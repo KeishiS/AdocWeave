@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: Exact merge commit of the reviewed finalization pull request
+        description: Exact squash commit of the reviewed finalization pull request
         required: true
         type: string
       finalization_pr:
