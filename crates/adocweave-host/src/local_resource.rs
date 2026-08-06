@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
@@ -154,7 +154,8 @@ pub struct LocalFilesystemDraft {
 
 #[derive(Debug)]
 struct FilesystemDraftLease {
-    active: Arc<AtomicBool>,
+    active: Arc<AtomicU64>,
+    token: u64,
 }
 
 /// A filesystem state replacement whose commit path cannot fail.
@@ -237,7 +238,7 @@ impl Eq for LoadedFilesystemSource {}
 pub struct LocalFilesystemSession {
     session_id: LocalFilesystemSessionId,
     revision: u64,
-    active_draft: Arc<AtomicBool>,
+    active_draft: Arc<AtomicU64>,
     next_binding_generation: Arc<AtomicU64>,
     state: LocalFilesystemState,
 }
@@ -500,7 +501,7 @@ impl LocalFilesystemAccess {
         Ok(LocalFilesystemSession {
             session_id: LocalFilesystemSessionId(session_id),
             revision: 0,
-            active_draft: Arc::new(AtomicBool::new(false)),
+            active_draft: Arc::new(AtomicU64::new(0)),
             next_binding_generation: Arc::new(AtomicU64::new(1)),
             state: LocalFilesystemState {
                 next_generation: 1,
@@ -560,8 +561,12 @@ impl LocalFilesystemSession {
 
     /// Creates an isolated candidate state without changing this live session.
     pub fn draft(&self) -> Result<LocalFilesystemDraft, ResourceError> {
+        let token = self
+            .revision
+            .checked_add(1)
+            .ok_or(ResourceError::SessionRevisionExhausted)?;
         self.active_draft
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .compare_exchange(0, token, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| ResourceError::DraftBusy)?;
         Ok(LocalFilesystemDraft {
             session_id: self.session_id,
@@ -569,6 +574,7 @@ impl LocalFilesystemSession {
             candidate: self.clone_for_draft(),
             lease: FilesystemDraftLease {
                 active: Arc::clone(&self.active_draft),
+                token,
             },
             binding_generations: Arc::clone(&self.next_binding_generation),
             poisoned: false,
@@ -1054,8 +1060,12 @@ impl LocalFilesystemSession {
         }
     }
 
-    fn invalidate_active_draft(&self) {
-        self.active_draft.store(false, Ordering::Release);
+    fn invalidate_active_draft(&mut self) {
+        if self.active_draft.load(Ordering::Acquire) != 0
+            && let Some(revision) = self.revision.checked_add(1)
+        {
+            self.revision = revision;
+        }
     }
 
     #[cfg(test)]
@@ -1617,7 +1627,7 @@ impl LocalFilesystemDraft {
             || !Arc::ptr_eq(&self.lease.active, &live.active_draft)
             || !Arc::ptr_eq(&self.binding_generations, &live.next_binding_generation)
             || self.base_revision != live.revision
-            || !self.lease.active.load(Ordering::Acquire)
+            || self.lease.active.load(Ordering::Acquire) != self.lease.token
         {
             return Err(ResourceError::InvalidDraft);
         }
@@ -1645,7 +1655,9 @@ impl LocalFilesystemDraft {
 
 impl Drop for FilesystemDraftLease {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+        let _ = self
+            .active
+            .compare_exchange(self.token, 0, Ordering::AcqRel, Ordering::Acquire);
     }
 }
 
@@ -2084,10 +2096,12 @@ mod tests {
             .expect("initial read");
         let draft = released.draft().expect("draft before release");
         released.release(&path);
+        assert!(matches!(released.draft(), Err(ResourceError::DraftBusy)));
         assert!(matches!(
             draft.prepare_commit(&mut released),
             Err(ResourceError::InvalidDraft)
         ));
+        drop(released.draft().expect("invalid draft released its lease"));
         assert_eq!(released.budget(), ResourceBudget::default());
 
         let mut reread = policy(root.path(), 100).session().expect("session");
@@ -2120,6 +2134,32 @@ mod tests {
             Err(ResourceError::InvalidDraft)
         ));
         assert_eq!(rolled_back.budget().bytes(), 2);
+    }
+
+    #[test]
+    fn draft_rejects_a_foreign_session_and_exhausted_revision() {
+        let first_root = TestDir::new("draft-first-session");
+        let second_root = TestDir::new("draft-second-session");
+        let mut first = policy(first_root.path(), 100)
+            .session()
+            .expect("first session");
+        let mut second = policy(second_root.path(), 100)
+            .session()
+            .expect("second session");
+
+        let draft = first.draft().expect("draft");
+        assert!(matches!(
+            draft.prepare_commit(&mut second),
+            Err(ResourceError::InvalidDraft)
+        ));
+        drop(first.draft().expect("foreign prepare released the lease"));
+
+        first.revision = u64::MAX;
+        assert!(matches!(
+            first.draft(),
+            Err(ResourceError::SessionRevisionExhausted)
+        ));
+        assert_eq!(first.active_draft.load(Ordering::Acquire), 0);
     }
 
     #[test]
