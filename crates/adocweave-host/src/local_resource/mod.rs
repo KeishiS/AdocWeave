@@ -3135,6 +3135,32 @@ mod tests {
     }
 
     #[test]
+    fn legacy_and_outcome_read_signatures_remain_distinct() {
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, ResourceError> = LocalFilesystemSession::read_utf8;
+        let _: fn(
+            &mut LocalFilesystemSession,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, ResourceError> =
+            LocalFilesystemSession::read_utf8_outcome;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<LoadedFilesystemSource, FilesystemDraftError> = LocalFilesystemDraft::read_utf8;
+        let _: fn(
+            &mut LocalFilesystemDraft,
+            LogicalSourceId,
+            &Path,
+        ) -> Result<FilesystemReadOutcome, FilesystemDraftError> =
+            LocalFilesystemDraft::read_utf8_outcome;
+    }
+
+    #[test]
     fn failed_global_budget_charge_is_not_bypassed_by_retrying_the_same_path() {
         let first_root = TestDir::new("file-budget-first");
         let second_root = TestDir::new("file-budget-second");
