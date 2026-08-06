@@ -8,7 +8,7 @@
       "item": "variant ResourceError:Job",
       "lint": "enum_variant_added",
       "migration": "ResourceErrorを網羅的にmatchするRust consumerはResourceError::Jobを処理してください。",
-      "summary": "ResourceErrorへJob variantを追加"
+      "summary": "enum variant added on exhaustive enum"
     }
   ]
 }
