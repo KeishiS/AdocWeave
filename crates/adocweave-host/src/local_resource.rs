@@ -800,10 +800,10 @@ impl LocalFilesystemView<'_> {
                 {
                     continue;
                 }
+                self.state.meter.observe_directory_read();
                 let directory = policy
                     .open_directory_no_symlinks(&path)
                     .map_err(ResourceError::from)?;
-                self.state.meter.observe_directory_read();
                 let mut entries =
                     Dir::read_from(&directory).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
@@ -2056,7 +2056,15 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir(&path).expect("create test directory");
-            Self(path)
+            let mut directory = Self(path);
+            // `std::env::temp_dir` does not return a resolved path on every
+            // platform. macOS answers with `/var/...`, which is a symbolic link
+            // to `/private/var`, and Windows can answer with a shortened
+            // `RUNNER~1` component. Roots are stored in resolved form, so a test
+            // holding the unresolved spelling would build candidate paths that
+            // the policy reports as outside its own root.
+            directory.0 = directory.0.canonicalize().expect("resolve the test root");
+            directory
         }
 
         fn path(&self) -> &Path {
@@ -3120,6 +3128,47 @@ mod tests {
                 directory_entries: 1,
             }
         );
+    }
+
+    /// A directory that disappears between being queued and being opened fails
+    /// the scan on every platform. The failed enumeration is still counted,
+    /// because the work of attempting it was performed. Each implementation's
+    /// stable error category and the affected path are asserted separately.
+    #[test]
+    fn a_failed_directory_enumeration_still_counts_the_attempt() {
+        let root = TestDir::new("meter-directory-enumeration-failure");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        fs::write(nested.join("a.adoc"), "abc").expect("source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let meter = session.state.meter.clone();
+
+        let result = LocalFilesystemView {
+            state: &session.state,
+        }
+        .discover_adoc_paths_with_control(
+            LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            |scan_root, relative| {
+                assert_eq!(scan_root, root.path());
+                assert_eq!(relative, Path::new("nested"));
+                // The scan has queued `nested` and is about to enumerate it.
+                fs::remove_dir_all(&nested).expect("remove the queued directory");
+                false
+            },
+            || false,
+        );
+
+        #[cfg(target_os = "linux")]
+        assert_eq!(result, Err(ResourceError::Missing(nested.clone())));
+        #[cfg(not(target_os = "linux"))]
+        assert!(
+            matches!(
+                &result,
+                Err(ResourceError::Inspect { path, .. }) if path == &nested
+            ),
+            "a vanished directory must report an inspection failure for its path: {result:?}"
+        );
+        assert_eq!(meter.usage().directory_read_operations, 2);
     }
 
     /// Entries are counted as the iterator yields them, before anything decides

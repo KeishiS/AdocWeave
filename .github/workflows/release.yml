@@ -135,6 +135,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
+      - name: Darwin host unit tests
+        if: endsWith(matrix.target, '-apple-darwin')
+        shell: bash
+        run: nix develop .#ci -c cargo test -p adocweave-host --all-features
       - name: Target archive builds
         if: matrix.build == 'nix'
         env:
@@ -164,6 +168,10 @@ jobs:
           if ((& (Join-Path $distDirectory "dist.exe") --version) -ne "cargo-dist $distVersion") {
             throw "cargo-dist version mismatch"
           }
+      - name: Windows host unit tests
+        if: matrix.build == 'windows'
+        shell: pwsh
+        run: cargo test -p adocweave-host --all-features
       - name: Windows target archive builds
         if: matrix.build == 'windows'
         env:

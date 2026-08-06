@@ -521,6 +521,54 @@ export function validateReleaseWorkflowPolicy({
     fail("release builds must not bypass the locked toolchain");
   }
 
+  // adocweave-host has a separate filesystem implementation for every platform
+  // that is not Linux. Ubuntu quality jobs never compile it, so the host unit
+  // tests run on the Darwin and Windows runners that already exist for native
+  // builds. Both must run before the archive they would otherwise certify.
+  const nativeSteps = releaseJobs["build-native"]?.steps ?? [];
+  const darwinHostTests = step(releaseJobs["build-native"], (item) =>
+    item.name === "Darwin host unit tests", "Darwin host unit test step is missing");
+  if (darwinHostTests.if !== "endsWith(matrix.target, '-apple-darwin')") {
+    fail("Darwin host unit tests must be limited to Darwin targets");
+  }
+  if (darwinHostTests.shell !== "bash") {
+    fail("Darwin host unit tests must use the reviewed Bash shell");
+  }
+  if (darwinHostTests["continue-on-error"] !== undefined &&
+      darwinHostTests["continue-on-error"] !== false) {
+    fail("Darwin host unit tests must not continue after failure");
+  }
+  requireExactCommand(darwinHostTests.run, "nix develop .#ci -c cargo test -p adocweave-host --all-features",
+    "Darwin host unit tests must run the host package inside the locked closure");
+  if (nativeSteps.indexOf(darwinHostTests) >
+      nativeSteps.findIndex((item) => item.name === "Target archive builds")) {
+    fail("Darwin host unit tests must run before the archive they certify");
+  }
+
+  const windowsHostTests = step(releaseJobs["build-native"], (item) =>
+    item.name === "Windows host unit tests", "Windows host unit test step is missing");
+  if (windowsHostTests.if !== "matrix.build == 'windows'") {
+    fail("Windows host unit tests must be limited to Windows builds");
+  }
+  if (windowsHostTests.shell !== "pwsh") {
+    fail("Windows host unit tests must use the reviewed PowerShell shell");
+  }
+  if (windowsHostTests["continue-on-error"] !== undefined &&
+      windowsHostTests["continue-on-error"] !== false) {
+    fail("Windows host unit tests must not continue after failure");
+  }
+  requireExactCommand(windowsHostTests.run, "cargo test -p adocweave-host --all-features",
+    "Windows host unit tests must run the host package");
+  const windowsToolchainIndex = nativeSteps.findIndex((item) =>
+    item.name === "Fixed Windows Rust and cargo-dist installation");
+  if (nativeSteps.indexOf(windowsHostTests) < windowsToolchainIndex) {
+    fail("Windows host unit tests must follow the fixed Rust installation");
+  }
+  if (nativeSteps.indexOf(windowsHostTests) >
+      nativeSteps.findIndex((item) => item.name === "Windows target archive builds")) {
+    fail("Windows host unit tests must run before the archive they certify");
+  }
+
   const windowsVersions = step(releaseJobs["build-native"], (item) =>
     item.name === "Fixed Windows Rust and cargo-dist installation",
   "fixed Windows toolchain step is missing").run;

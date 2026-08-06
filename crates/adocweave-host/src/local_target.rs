@@ -1817,10 +1817,25 @@ mod tests {
                 "adocweave-local-target-{}-{nonce}-{sequence}",
                 std::process::id()
             ));
-            fs::create_dir_all(path.join("docs/sub")).expect("create directories");
-            fs::write(path.join("docs/guide.adoc"), "= Guide").expect("write file");
-            Self(path)
+            fs::create_dir(&path).expect("create test root");
+            let mut directory = Self(path);
+            fs::create_dir_all(directory.0.join("docs/sub")).expect("create directories");
+            fs::write(directory.0.join("docs/guide.adoc"), "= Guide").expect("write file");
+            directory.0 = canonical_test_root(&directory.0);
+            directory
         }
+    }
+
+    /// Resolves a freshly created temporary directory the way the policy does.
+    ///
+    /// `std::env::temp_dir` does not return a resolved path on every platform.
+    /// macOS answers with `/var/...`, which is a symbolic link to `/private/var`,
+    /// and Windows can answer with a shortened `RUNNER~1` component. The policy
+    /// stores the resolved form of its root and compares candidates against it,
+    /// so a test that kept the unresolved spelling would ask for paths the policy
+    /// reports as outside its own root.
+    fn canonical_test_root(path: &Path) -> PathBuf {
+        path.canonicalize().expect("resolve the test root")
     }
 
     impl Drop for TestDir {
