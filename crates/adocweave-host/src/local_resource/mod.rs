@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
 use crate::io_observation::FilesystemIoMeter;
 use crate::local_target::{
-    FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession, LocalTargetTextRollback,
+    CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetCandidateRollback,
+    LocalTargetError, LocalTargetPolicy, LocalTargetSession, LocalTargetTextRollback,
 };
 
 mod budget;
@@ -151,8 +152,9 @@ pub enum FilesystemReleaseOutcome {
 /// Dropping this value leaves the live resource state unchanged. Binding
 /// generations are deliberately consumed across all drafts and are never
 /// reused, including when a draft is dropped. [`Self::prepare_commit`]
-/// validates the identity and revision before a
-/// separate infallible commit installs the live resource state.
+/// validates draft-local identity and revision conditions. The prepared commit
+/// then verifies that the originating job is still active while holding its
+/// lock across the live state replacement.
 #[must_use = "a filesystem draft must be committed or dropped"]
 #[derive(Debug)]
 pub struct LocalFilesystemDraft {
@@ -161,6 +163,7 @@ pub struct LocalFilesystemDraft {
     candidate: LocalFilesystemState,
     lease: FilesystemDraftLease,
     binding_generations: Arc<AtomicU64>,
+    job: FilesystemJobCoordinator,
     poisoned: bool,
 }
 
@@ -170,12 +173,13 @@ struct FilesystemDraftLease {
     token: u64,
 }
 
-/// A filesystem state replacement whose commit path cannot fail.
+/// A filesystem state replacement prepared from one draft and job.
 #[must_use = "a prepared filesystem commit must be committed or dropped"]
 pub struct PreparedFilesystemCommit<'a> {
     live: &'a mut LocalFilesystemSession,
     candidate: LocalFilesystemState,
     next_revision: u64,
+    job: FilesystemJobCoordinator,
     _lease: FilesystemDraftLease,
 }
 
@@ -296,11 +300,13 @@ impl Clone for LocalFilesystemState {
 
 struct LocalFilesystemView<'a> {
     state: &'a LocalFilesystemState,
+    job: Option<(LocalFilesystemSessionId, &'a FilesystemJobCoordinator)>,
 }
 
 struct LocalFilesystemMutationCursor<'a> {
     session_id: LocalFilesystemSessionId,
     binding_generations: &'a Arc<AtomicU64>,
+    job: Option<&'a FilesystemJobCoordinator>,
     state: &'a mut LocalFilesystemState,
 }
 
@@ -593,7 +599,11 @@ impl LocalFilesystemSession {
     }
 
     /// Creates an isolated candidate state without changing this live session.
-    pub fn draft(&self) -> Result<LocalFilesystemDraft, FilesystemDraftError> {
+    pub fn draft(
+        &self,
+        job: &FilesystemJobCoordinator,
+    ) -> Result<LocalFilesystemDraft, FilesystemDraftError> {
+        job.register_session(self.session_id)?;
         let token = self
             .revision
             .checked_add(1)
@@ -611,6 +621,7 @@ impl LocalFilesystemSession {
             candidate: self.clone_for_draft(),
             lease,
             binding_generations: Arc::clone(&self.next_binding_generation),
+            job: job.clone(),
             poisoned: false,
         })
     }
@@ -683,7 +694,11 @@ impl LocalFilesystemSession {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        LocalFilesystemView { state: &self.state }.discover_adoc_paths_with_control(
+        LocalFilesystemView {
+            state: &self.state,
+            job: None,
+        }
+        .discover_adoc_paths_with_control(
             Self::MAX_SCAN_ENTRIES,
             exclude_directory,
             is_cancelled,
@@ -697,7 +712,11 @@ impl LocalFilesystemSession {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        LocalFilesystemView { state: &self.state }.discover_adoc_paths_with_control(
+        LocalFilesystemView {
+            state: &self.state,
+            job: None,
+        }
+        .discover_adoc_paths_with_control(
             scan_entry_limit,
             exclude_directory,
             is_cancelled,
@@ -750,14 +769,40 @@ impl LocalFilesystemView<'_> {
                             continue;
                         }
                         self.state.meter.observe_directory_read();
+                        let mut job_permit = self
+                            .job
+                            .map(|(session, job)| job.begin_directory_read(session))
+                            .transpose()
+                            .map_err(ResourceError::from)?;
                         let mut children = Vec::new();
-                        let directory =
+                        let mut directory =
                             fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
                                 path: path.clone(),
                                 source: source.to_string(),
                             })?;
-                        for child in directory {
+                        loop {
+                            if is_cancelled() {
+                                return Err(ResourceError::Unverifiable(
+                                    "local filesystem scan was cancelled".to_owned(),
+                                ));
+                            }
+                            let reservation = job_permit
+                                .as_mut()
+                                .map(|permit| {
+                                    permit.reserve_entry_with_cancellation(&mut is_cancelled)
+                                })
+                                .transpose()
+                                .map_err(ResourceError::from)?;
+                            let Some(child) = directory.next() else {
+                                if let Some(reservation) = reservation {
+                                    reservation.commit(0).map_err(ResourceError::from)?;
+                                }
+                                break;
+                            };
                             self.state.meter.observe_directory_entry();
+                            if let Some(reservation) = reservation {
+                                reservation.commit(1).map_err(ResourceError::from)?;
+                            }
                             let child = child.map_err(|source| ResourceError::Inspect {
                                 path: path.clone(),
                                 source: source.to_string(),
@@ -818,6 +863,11 @@ impl LocalFilesystemView<'_> {
                     continue;
                 }
                 self.state.meter.observe_directory_read();
+                let mut job_permit = self
+                    .job
+                    .map(|(session, job)| job.begin_directory_read(session))
+                    .transpose()
+                    .map_err(ResourceError::from)?;
                 let directory = policy
                     .open_directory_no_symlinks(&path)
                     .map_err(ResourceError::from)?;
@@ -827,19 +877,49 @@ impl LocalFilesystemView<'_> {
                         source: source.to_string(),
                     })?;
                 let mut children = Vec::<(OsString, FileType)>::new();
-                for child in &mut entries {
-                    self.state.meter.observe_directory_entry();
-                    let child = child.map_err(|source| ResourceError::Inspect {
-                        path: path.clone(),
-                        source: source.to_string(),
-                    })?;
+                loop {
                     if is_cancelled() {
                         return Err(ResourceError::Unverifiable(
                             "local filesystem scan was cancelled".to_owned(),
                         ));
                     }
+                    let reservation = job_permit
+                        .as_mut()
+                        .map(|permit| permit.reserve_entry_with_cancellation(&mut is_cancelled))
+                        .transpose()
+                        .map_err(ResourceError::from)?;
+                    let Some(child) = entries.next() else {
+                        if let Some(reservation) = reservation {
+                            reservation.commit(0).map_err(ResourceError::from)?;
+                        }
+                        break;
+                    };
+                    self.state.meter.observe_directory_entry();
+                    let child = match child {
+                        Ok(child) => child,
+                        Err(source) => {
+                            if let Some(reservation) = reservation {
+                                reservation.commit(1).map_err(ResourceError::from)?;
+                            }
+                            return Err(ResourceError::Inspect {
+                                path: path.clone(),
+                                source: source.to_string(),
+                            });
+                        }
+                    };
                     let name = child.file_name();
-                    if name.to_bytes() == b"." || name.to_bytes() == b".." {
+                    let implicit = name.to_bytes() == b"." || name.to_bytes() == b"..";
+                    if let Some(reservation) = reservation {
+                        reservation
+                            .commit(u64::from(!implicit))
+                            .map_err(ResourceError::from)?;
+                    }
+                    if is_cancelled() {
+                        return Err(ResourceError::Unverifiable(
+                            "local filesystem scan was cancelled".to_owned(),
+                        ));
+                    }
+                    if implicit {
                         continue;
                     }
                     let name = OsString::from_vec(name.to_bytes().to_vec());
@@ -883,6 +963,11 @@ impl LocalFilesystemView<'_> {
 }
 
 impl LocalFilesystemSession {
+    /// Returns this process-local session identity.
+    pub const fn session_id(&self) -> LocalFilesystemSessionId {
+        self.session_id
+    }
+
     /// Returns the concurrent-filesystem guarantee of all configured roots.
     pub fn race_resistance(&self) -> FilesystemRaceResistance {
         self.state
@@ -1141,6 +1226,7 @@ impl LocalFilesystemSession {
         LocalFilesystemMutationCursor {
             session_id: self.session_id,
             binding_generations: &self.next_binding_generation,
+            job: None,
             state: &mut self.state,
         }
     }
@@ -1160,11 +1246,13 @@ impl LocalFilesystemSession {
         path: &Path,
         after_open: impl FnOnce(),
     ) -> Result<LoadedFilesystemSource, ResourceError> {
-        let mut draft = self.draft()?;
+        let job = FilesystemJobCoordinator::new(crate::FilesystemJobLimits::unbounded())
+            .map_err(FilesystemDraftError::from)?;
+        let mut draft = self.draft(&job)?;
         let loaded = draft
             .mutation_cursor()
             .read_utf8_with(source_id, path, false, after_open)?;
-        draft.prepare_commit(self)?.commit();
+        draft.prepare_commit(self)?.commit()?;
         match loaded {
             FilesystemReadOutcome::Found(loaded) => Ok(loaded),
             FilesystemReadOutcome::NotFound { candidate_path, .. } => {
@@ -1311,11 +1399,30 @@ impl LocalFilesystemSession {
 }
 
 impl LocalFilesystemMutationCursor<'_> {
+    fn begin_read(&self) -> Result<Option<FilesystemReadPermit>, FilesystemDraftError> {
+        self.job
+            .map(|job| job.begin_read(self.session_id))
+            .transpose()
+            .map_err(FilesystemDraftError::from)
+    }
+
+    fn record_candidate_change(&self) -> Result<(), FilesystemDraftError> {
+        self.job
+            .map(FilesystemJobCoordinator::record_candidate_change)
+            .transpose()
+            .map(|_| ())
+            .map_err(FilesystemDraftError::from)
+    }
+
     fn scan_utf8(
         &mut self,
         mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, FilesystemDraftError> {
-        let paths = LocalFilesystemView { state: self.state }.discover_adoc_paths_with_control(
+        let paths = LocalFilesystemView {
+            state: self.state,
+            job: self.job.map(|job| (self.session_id, job)),
+        }
+        .discover_adoc_paths_with_control(
             LocalFilesystemSession::MAX_SCAN_ENTRIES,
             |_, _| false,
             || false,
@@ -1394,6 +1501,7 @@ impl LocalFilesystemMutationCursor<'_> {
         target: &str,
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        let mut permit = self.begin_read()?;
         self.state.meter.observe_read_operation();
         let index = self.root_index(base)?;
         let candidate = self.state.sessions[index]
@@ -1408,10 +1516,10 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = match self.state.sessions[index].read_candidate_utf8_with_capacity(
+        let loaded = match read_candidate_with_optional_job(
+            &mut self.state.sessions[index],
             &candidate,
             false,
-            true,
             || {},
             |canonical| {
                 shared_read_capacity(
@@ -1424,11 +1532,12 @@ impl LocalFilesystemMutationCursor<'_> {
                     &file_limit_denied,
                 )
             },
+            permit.as_mut(),
         ) {
             Ok(loaded) => loaded,
-            Err(LocalTargetError::Missing(_)) => {
+            Err(CoordinatedLocalTargetError::Target(LocalTargetError::Missing(_))) => {
                 if missing == MissingDisposition::ApplyNotFound {
-                    self.apply_not_found(&candidate, index);
+                    self.apply_not_found(&candidate, index)?;
                 } else if let Some(rollback) = candidate_rollback {
                     self.state.sessions[index].rollback_candidate(rollback);
                 }
@@ -1438,7 +1547,11 @@ impl LocalFilesystemMutationCursor<'_> {
                 });
             }
             Err(error) => {
-                return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
+                return Err(map_coordinated_read_error(
+                    error,
+                    limits,
+                    file_limit_denied.get(),
+                ));
             }
         };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
@@ -1467,6 +1580,7 @@ impl LocalFilesystemMutationCursor<'_> {
         path: &Path,
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        let mut permit = self.begin_read()?;
         self.state.meter.observe_read_operation();
         let index = self.root_index(path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
@@ -1476,8 +1590,10 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let (loaded, text_rollback) = match self.state.sessions[index]
-            .reread_candidate_utf8_with_capacity(path, |canonical| {
+        let (loaded, text_rollback) = match reread_candidate_with_optional_job(
+            &mut self.state.sessions[index],
+            path,
+            |canonical| {
                 shared_read_capacity(
                     budget,
                     charged,
@@ -1487,11 +1603,13 @@ impl LocalFilesystemMutationCursor<'_> {
                     canonical,
                     &file_limit_denied,
                 )
-            }) {
+            },
+            permit.as_mut(),
+        ) {
             Ok(loaded) => loaded,
-            Err(LocalTargetError::Missing(_)) => {
+            Err(CoordinatedLocalTargetError::Target(LocalTargetError::Missing(_))) => {
                 if missing == MissingDisposition::ApplyNotFound {
-                    self.apply_not_found(path, index);
+                    self.apply_not_found(path, index)?;
                 } else {
                     self.state.sessions[index].rollback_candidate(candidate_rollback);
                 }
@@ -1502,7 +1620,11 @@ impl LocalFilesystemMutationCursor<'_> {
             }
             Err(error) => {
                 self.state.sessions[index].rollback_candidate(candidate_rollback);
-                return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
+                return Err(map_coordinated_read_error(
+                    error,
+                    limits,
+                    file_limit_denied.get(),
+                ));
             }
         };
         match self.finish_read(binding_generation, source_id, path, loaded) {
@@ -1544,6 +1666,7 @@ impl LocalFilesystemMutationCursor<'_> {
         after_open: impl FnOnce(),
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
+        let mut permit = self.begin_read()?;
         self.state.meter.observe_read_operation();
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()).into());
@@ -1562,10 +1685,10 @@ impl LocalFilesystemMutationCursor<'_> {
         let candidates = &self.state.candidates;
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
-        let loaded = match self.state.sessions[index].read_candidate_utf8_with_capacity(
+        let loaded = match read_candidate_with_optional_job(
+            &mut self.state.sessions[index],
             &candidate,
             reuse_cached_text,
-            true,
             after_open,
             |canonical| {
                 shared_read_capacity(
@@ -1578,11 +1701,12 @@ impl LocalFilesystemMutationCursor<'_> {
                     &file_limit_denied,
                 )
             },
+            permit.as_mut(),
         ) {
             Ok(loaded) => loaded,
-            Err(LocalTargetError::Missing(_)) => {
+            Err(CoordinatedLocalTargetError::Target(LocalTargetError::Missing(_))) => {
                 if missing == MissingDisposition::ApplyNotFound {
-                    self.apply_not_found(&candidate, index);
+                    self.apply_not_found(&candidate, index)?;
                 } else if let Some(rollback) = candidate_rollback {
                     self.state.sessions[index].rollback_candidate(rollback);
                 }
@@ -1592,7 +1716,11 @@ impl LocalFilesystemMutationCursor<'_> {
                 });
             }
             Err(error) => {
-                return Err(map_shared_read_error(error, limits, file_limit_denied.get()).into());
+                return Err(map_coordinated_read_error(
+                    error,
+                    limits,
+                    file_limit_denied.get(),
+                ));
             }
         };
         self.finish_read(binding_generation, source_id, &candidate, loaded)
@@ -1650,6 +1778,7 @@ impl LocalFilesystemMutationCursor<'_> {
             bytes,
             self.state.limits,
         )?;
+        self.record_candidate_change()?;
         self.state.budget = next_budget;
         if let Some((path, _)) = &displaced_charge {
             self.state.charged.remove(path);
@@ -1704,6 +1833,7 @@ impl LocalFilesystemMutationCursor<'_> {
         {
             return Ok(FilesystemReleaseOutcome::Stale);
         }
+        self.record_candidate_change()?;
         self.release_path(&binding.candidate_path);
         Ok(FilesystemReleaseOutcome::Released)
     }
@@ -1730,10 +1860,12 @@ impl LocalFilesystemMutationCursor<'_> {
         }
     }
 
-    fn apply_not_found(&mut self, path: &Path, index: usize) {
-        let Some(binding) = self.state.candidates.remove(path) else {
-            return;
+    fn apply_not_found(&mut self, path: &Path, index: usize) -> Result<(), FilesystemDraftError> {
+        let Some(binding) = self.state.candidates.get(path).cloned() else {
+            return Ok(());
         };
+        self.record_candidate_change()?;
+        self.state.candidates.remove(path);
         self.state.sessions[index].remove_cached_text_if_unaliased(path, &binding.canonical_path);
         if self
             .state
@@ -1741,11 +1873,12 @@ impl LocalFilesystemMutationCursor<'_> {
             .values()
             .any(|other| other.canonical_path == binding.canonical_path)
         {
-            return;
+            return Ok(());
         }
         if let Some(charge) = self.state.charged.remove(&binding.canonical_path) {
             self.state.budget.release(charge.bytes);
         }
+        Ok(())
     }
 
     fn reserve_binding_generation(&self) -> Result<u64, FilesystemDraftError> {
@@ -1766,6 +1899,7 @@ impl LocalFilesystemDraft {
         LocalFilesystemMutationCursor {
             session_id: self.session_id,
             binding_generations: &self.binding_generations,
+            job: Some(&self.job),
             state: &mut self.candidate,
         }
     }
@@ -1818,6 +1952,7 @@ impl LocalFilesystemDraft {
         self.ensure_operation_can_start()?;
         LocalFilesystemView {
             state: self.candidate(),
+            job: Some((self.session_id, &self.job)),
         }
         .discover_adoc_paths_with_control(
             LocalFilesystemSession::MAX_SCAN_ENTRIES,
@@ -1940,6 +2075,7 @@ impl LocalFilesystemDraft {
 
     /// Verifies that this draft can be installed into `live` without mutation.
     fn validate(&self, live: &LocalFilesystemSession) -> Result<(), FilesystemDraftError> {
+        self.job.ensure_active_job()?;
         if self.poisoned {
             return Err(FilesystemDraftError::PoisonedDraft);
         }
@@ -1954,7 +2090,10 @@ impl LocalFilesystemDraft {
         Ok(())
     }
 
-    /// Validates every condition which could prevent a state replacement.
+    /// Validates the draft-local conditions required before state replacement.
+    ///
+    /// [`PreparedFilesystemCommit::commit`] separately checks the job lifecycle
+    /// under the job lock because cancellation can occur after this method.
     pub fn prepare_commit(
         self,
         live: &mut LocalFilesystemSession,
@@ -1968,6 +2107,7 @@ impl LocalFilesystemDraft {
             live,
             candidate: self.candidate,
             next_revision,
+            job: self.job,
             _lease: self.lease,
         })
     }
@@ -1982,10 +2122,78 @@ impl Drop for FilesystemDraftLease {
 }
 
 impl PreparedFilesystemCommit<'_> {
-    /// Installs the state validated by [`LocalFilesystemDraft::prepare_commit`].
-    pub fn commit(self) {
-        self.live.state = self.candidate;
-        self.live.revision = self.next_revision;
+    /// Installs the state while the originating job remains active.
+    pub fn commit(self) -> Result<(), FilesystemDraftError> {
+        self.job
+            .with_active_commit(|| {
+                self.live.state = self.candidate;
+                self.live.revision = self.next_revision;
+            })
+            .map_err(FilesystemDraftError::from)
+    }
+}
+
+fn read_candidate_with_optional_job(
+    session: &mut LocalTargetSession,
+    candidate: &Path,
+    reuse_cached_text: bool,
+    after_open: impl FnOnce(),
+    capacity: impl FnOnce(&Path) -> crate::local_target::CandidateReadCapacity,
+    permit: Option<&mut FilesystemReadPermit>,
+) -> Result<crate::local_target::LoadedLocalTarget, CoordinatedLocalTargetError> {
+    match permit {
+        Some(permit) => session.read_candidate_utf8_with_job_capacity(
+            candidate,
+            reuse_cached_text,
+            true,
+            after_open,
+            capacity,
+            permit,
+        ),
+        None => session
+            .read_candidate_utf8_with_capacity(
+                candidate,
+                reuse_cached_text,
+                true,
+                after_open,
+                capacity,
+            )
+            .map_err(CoordinatedLocalTargetError::Target),
+    }
+}
+
+fn reread_candidate_with_optional_job(
+    session: &mut LocalTargetSession,
+    candidate: &Path,
+    capacity: impl FnOnce(&Path) -> crate::local_target::CandidateReadCapacity,
+    permit: Option<&mut FilesystemReadPermit>,
+) -> Result<
+    (
+        crate::local_target::LoadedLocalTarget,
+        LocalTargetTextRollback,
+    ),
+    CoordinatedLocalTargetError,
+> {
+    match permit {
+        Some(permit) => {
+            session.reread_candidate_utf8_with_job_capacity(candidate, permit, capacity)
+        }
+        None => session
+            .reread_candidate_utf8_with_capacity(candidate, capacity)
+            .map_err(CoordinatedLocalTargetError::Target),
+    }
+}
+
+fn map_coordinated_read_error(
+    error: CoordinatedLocalTargetError,
+    limits: FilesystemReadLimits,
+    file_limit_denied: bool,
+) -> FilesystemDraftError {
+    match error {
+        CoordinatedLocalTargetError::Target(source) => {
+            map_shared_read_error(source, limits, file_limit_denied).into()
+        }
+        CoordinatedLocalTargetError::Job(source) => source.into(),
     }
 }
 
@@ -2041,6 +2249,24 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unbounded_job() -> FilesystemJobCoordinator {
+        FilesystemJobCoordinator::new(crate::FilesystemJobLimits::unbounded())
+            .expect("filesystem job")
+    }
+
+    fn job_limits(read_bytes: u64, directory_entries: u64) -> crate::FilesystemJobLimits {
+        crate::FilesystemJobLimits {
+            max_read_operations: 16,
+            max_read_bytes: read_bytes,
+            max_read_probe_bytes: 1,
+            max_directory_operations: 16,
+            max_directory_entries: directory_entries,
+            max_directory_probe_entries: 1,
+            max_candidate_changes: 16,
+            max_sessions: 4,
+        }
+    }
 
     struct TestDir(PathBuf);
 
@@ -2117,7 +2343,7 @@ mod tests {
         session.read_utf8(source_id(), &path).expect("initial read");
 
         fs::write(&path, "bb").expect("replacement");
-        let mut discarded = session.draft().expect("discarded draft");
+        let mut discarded = session.draft(&unbounded_job()).expect("discarded draft");
         discarded
             .reread_utf8(source_id(), &path)
             .expect("draft reread");
@@ -2126,7 +2352,7 @@ mod tests {
         drop(discarded);
         assert_eq!(session.budget().bytes(), 1);
 
-        let mut committed = session.draft().expect("committed draft");
+        let mut committed = session.draft(&unbounded_job()).expect("committed draft");
         let loaded = committed
             .reread_utf8(source_id(), &path)
             .expect("replacement reread");
@@ -2134,10 +2360,11 @@ mod tests {
         committed
             .prepare_commit(&mut session)
             .expect("prepare commit draft")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget().bytes(), 2);
 
-        let mut released = session.draft().expect("release draft");
+        let mut released = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             released.release_binding(&binding).expect("release binding"),
             FilesystemReleaseOutcome::Released
@@ -2146,7 +2373,8 @@ mod tests {
         released
             .prepare_commit(&mut session)
             .expect("prepare commit release")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -2157,7 +2385,7 @@ mod tests {
         fs::write(&path, "text").expect("source");
         let session = policy(root.path(), 100).session().expect("session");
         let clone_count = Arc::clone(&session.state.clone_count);
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         assert_eq!(clone_count.load(Ordering::Relaxed), 1);
 
         let first = draft.read_utf8(source_id(), &path).expect("read");
@@ -2183,19 +2411,23 @@ mod tests {
         FORCE_DRAFT_STATE_CLONE_PANIC.with(|forced| forced.set(true));
 
         let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = session.draft();
+            let _ = session.draft(&unbounded_job());
         }));
         FORCE_DRAFT_STATE_CLONE_PANIC.with(|forced| forced.set(false));
 
         assert!(unwind.is_err());
-        drop(session.draft().expect("unwind released draft lease"));
+        drop(
+            session
+                .draft(&unbounded_job())
+                .expect("unwind released draft lease"),
+        );
     }
 
     #[test]
     fn draft_resource_error_preserves_its_typed_source() {
         let root = TestDir::new("draft-resource-source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
 
         let error = draft
             .read_utf8(source_id(), root.path())
@@ -2224,7 +2456,7 @@ mod tests {
         let mut first = policy(root.path(), 100).session().expect("first session");
         let loaded = first.read_utf8(source_id(), &path).expect("first read");
         let second = policy(root.path(), 100).session().expect("second session");
-        let mut draft = second.draft().expect("second draft");
+        let mut draft = second.draft(&unbounded_job()).expect("second draft");
 
         assert_eq!(
             draft.release_binding(loaded.binding()),
@@ -2236,9 +2468,9 @@ mod tests {
     fn filesystem_draft_is_exclusive_and_failed_operations_poison_commit() {
         let root = TestDir::new("filesystem-draft-exclusive");
         let mut session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("first draft");
+        let mut draft = session.draft(&unbounded_job()).expect("first draft");
         assert!(matches!(
-            session.draft(),
+            session.draft(&unbounded_job()),
             Err(FilesystemDraftError::DraftBusy)
         ));
         assert!(draft.read_utf8(source_id(), root.path()).is_err());
@@ -2246,7 +2478,11 @@ mod tests {
             draft.prepare_commit(&mut session),
             Err(FilesystemDraftError::PoisonedDraft)
         ));
-        drop(session.draft().expect("poisoned draft released its lease"));
+        drop(
+            session
+                .draft(&unbounded_job())
+                .expect("poisoned draft released its lease"),
+        );
     }
 
     #[test]
@@ -2263,7 +2499,7 @@ mod tests {
         assert_eq!(cached_texts(&session), 1);
 
         fs::remove_file(&path).expect("remove source");
-        let mut discarded = session.draft().expect("discarded draft");
+        let mut discarded = session.draft(&unbounded_job()).expect("discarded draft");
         assert_eq!(
             discarded.reread_utf8_outcome(source_id(), &path),
             Ok(FilesystemReadOutcome::NotFound {
@@ -2276,7 +2512,7 @@ mod tests {
         assert_eq!(session.budget().files(), 1);
         assert_eq!(cached_texts(&session), 1);
 
-        let mut committed = session.draft().expect("committed draft");
+        let mut committed = session.draft(&unbounded_job()).expect("committed draft");
         assert!(matches!(
             committed.reread_utf8_outcome(source_id(), &path),
             Ok(FilesystemReadOutcome::NotFound { .. })
@@ -2284,7 +2520,8 @@ mod tests {
         committed
             .prepare_commit(&mut session)
             .expect("prepare")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget().files(), 0);
         assert_eq!(cached_texts(&session), 0);
 
@@ -2347,7 +2584,7 @@ mod tests {
         );
         assert_eq!((session.budget().files(), session.budget().bytes()), (1, 8));
         assert_eq!(cached_texts(&session), 1);
-        let mut release = session.draft().expect("release draft");
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             release
                 .release_binding(initial.binding())
@@ -2363,7 +2600,8 @@ mod tests {
         release
             .prepare_commit(&mut session)
             .expect("prepare release")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget(), ResourceBudget::default());
         assert_eq!(cached_texts(&session), 0);
     }
@@ -2399,7 +2637,7 @@ mod tests {
         );
         assert_eq!((session.budget().files(), session.budget().bytes()), (2, 6));
 
-        let mut release = session.draft().expect("release draft");
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             release
                 .release_binding(&absolute_binding)
@@ -2415,7 +2653,8 @@ mod tests {
         release
             .prepare_commit(&mut session)
             .expect("prepare release")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -2513,22 +2752,28 @@ mod tests {
         released
             .read_utf8(source_id(), &path)
             .expect("initial read");
-        let draft = released.draft().expect("draft before release");
+        let draft = released
+            .draft(&unbounded_job())
+            .expect("draft before release");
         released.release(&path);
         assert!(matches!(
-            released.draft(),
+            released.draft(&unbounded_job()),
             Err(FilesystemDraftError::DraftBusy)
         ));
         assert!(matches!(
             draft.prepare_commit(&mut released),
             Err(FilesystemDraftError::InvalidDraft)
         ));
-        drop(released.draft().expect("invalid draft released its lease"));
+        drop(
+            released
+                .draft(&unbounded_job())
+                .expect("invalid draft released its lease"),
+        );
         assert_eq!(released.budget(), ResourceBudget::default());
 
         let mut reread = policy(root.path(), 100).session().expect("session");
         reread.read_utf8(source_id(), &path).expect("initial read");
-        let draft = reread.draft().expect("draft before reread");
+        let draft = reread.draft(&unbounded_job()).expect("draft before reread");
         fs::write(&path, "bb").expect("replacement");
         reread
             .reread_utf8_with_rollback(source_id(), &path)
@@ -2547,7 +2792,9 @@ mod tests {
         let (_, rollback) = rolled_back
             .reread_utf8_with_rollback(source_id(), &path)
             .expect("legacy reread");
-        let draft = rolled_back.draft().expect("draft before rollback");
+        let draft = rolled_back
+            .draft(&unbounded_job())
+            .expect("draft before rollback");
         rolled_back
             .rollback_reread(rollback)
             .expect("legacy rollback");
@@ -2569,16 +2816,20 @@ mod tests {
             .session()
             .expect("second session");
 
-        let draft = first.draft().expect("draft");
+        let draft = first.draft(&unbounded_job()).expect("draft");
         assert!(matches!(
             draft.prepare_commit(&mut second),
             Err(FilesystemDraftError::InvalidDraft)
         ));
-        drop(first.draft().expect("foreign prepare released the lease"));
+        drop(
+            first
+                .draft(&unbounded_job())
+                .expect("foreign prepare released the lease"),
+        );
 
         first.revision = u64::MAX;
         assert!(matches!(
-            first.draft(),
+            first.draft(&unbounded_job()),
             Err(FilesystemDraftError::SessionRevisionExhausted)
         ));
         assert_eq!(first.active_draft.load(Ordering::Acquire), 0);
@@ -2593,13 +2844,17 @@ mod tests {
         session.read_utf8(source_id(), &path).expect("initial read");
         fs::write(&path, "bb").expect("replacement");
 
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         draft.reread_utf8(source_id(), &path).expect("draft read");
         let prepared = draft.prepare_commit(&mut session).expect("prepare");
         drop(prepared);
 
         assert_eq!(session.budget().bytes(), 1);
-        drop(session.draft().expect("prepared drop released lease"));
+        drop(
+            session
+                .draft(&unbounded_job())
+                .expect("prepared drop released lease"),
+        );
     }
 
     #[test]
@@ -2608,7 +2863,7 @@ mod tests {
         let path = root.path().join("source.adoc");
         fs::write(&path, "a").expect("source");
         let mut session = policy(root.path(), 100).session().expect("session");
-        let mut first = session.draft().expect("first draft");
+        let mut first = session.draft(&unbounded_job()).expect("first draft");
         let first_binding = first
             .read_utf8(source_id(), &path)
             .expect("first read")
@@ -2617,10 +2872,11 @@ mod tests {
         first
             .prepare_commit(&mut session)
             .expect("prepare first commit")
-            .commit();
+            .commit()
+            .expect("commit");
 
         fs::write(&path, "bb").expect("replacement");
-        let mut second = session.draft().expect("second draft");
+        let mut second = session.draft(&unbounded_job()).expect("second draft");
         let second_binding = second
             .reread_utf8(source_id(), &path)
             .expect("second read")
@@ -2629,9 +2885,10 @@ mod tests {
         second
             .prepare_commit(&mut session)
             .expect("prepare second commit")
-            .commit();
+            .commit()
+            .expect("commit");
 
-        let mut release = session.draft().expect("release draft");
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             release
                 .release_binding(&first_binding)
@@ -2647,7 +2904,8 @@ mod tests {
         release
             .prepare_commit(&mut session)
             .expect("prepare release commit")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -2658,7 +2916,7 @@ mod tests {
         fs::write(&path, "a").expect("source");
         let mut session = policy(root.path(), 100).session().expect("session");
 
-        let mut discarded = session.draft().expect("discarded draft");
+        let mut discarded = session.draft(&unbounded_job()).expect("discarded draft");
         let stale = discarded
             .read_utf8(source_id(), &path)
             .expect("discarded read")
@@ -2666,16 +2924,17 @@ mod tests {
             .clone();
         drop(discarded);
 
-        let mut committed = session.draft().expect("committed draft");
+        let mut committed = session.draft(&unbounded_job()).expect("committed draft");
         committed
             .read_utf8(source_id(), &path)
             .expect("committed read");
         committed
             .prepare_commit(&mut session)
             .expect("prepare commit")
-            .commit();
+            .commit()
+            .expect("commit");
 
-        let mut release = session.draft().expect("release draft");
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
         assert_eq!(
             release.release_binding(&stale).expect("stale release"),
             FilesystemReleaseOutcome::Stale
@@ -2691,7 +2950,7 @@ mod tests {
         session
             .next_binding_generation
             .store(u64::MAX, Ordering::Relaxed);
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let before_reads = draft.candidate().sessions[0].read_files();
         let before_inspections = draft.candidate().sessions[0].inspected_paths();
 
@@ -2712,7 +2971,7 @@ mod tests {
         let path = root.path().join("source.adoc");
         fs::write(&path, [0xff, 0xfe, 0xfd]).expect("invalid UTF-8 source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
 
         let result = draft.read_utf8(source_id(), &path);
@@ -2742,7 +3001,7 @@ mod tests {
         let existing = root.path().join("existing.adoc");
         fs::write(&existing, "text").expect("existing source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
 
         assert_eq!(
@@ -2769,7 +3028,7 @@ mod tests {
         let existing = root.path().join("existing.adoc");
         fs::write(&existing, "text").expect("existing source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
         assert!(draft.read_utf8(source_id(), root.path()).is_err());
         let after_failure = meter.usage();
@@ -2811,7 +3070,7 @@ mod tests {
         .expect("policy")
         .session()
         .expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
 
         assert_eq!(
@@ -2830,7 +3089,7 @@ mod tests {
         let path = root.path().join("source.adoc");
         fs::write(&path, "text").expect("source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
         draft
             .mutation_cursor()
@@ -2857,7 +3116,7 @@ mod tests {
         fs::write(&path, "abc").expect("source");
         let session = policy(root.path(), 100).session().expect("session");
         let session_meter = session.state.meter.clone();
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
 
         draft.read_utf8(source_id(), &path).expect("read");
         drop(draft);
@@ -2903,7 +3162,7 @@ mod tests {
             .reread_utf8_with_rollback(source_id(), &path)
             .expect("reread");
         session.rollback_reread(rollback).expect("rollback");
-        let mut release = session.draft().expect("release draft");
+        let mut release = session.draft(&unbounded_job()).expect("release draft");
 
         assert_eq!(
             release
@@ -2914,7 +3173,8 @@ mod tests {
         release
             .prepare_commit(&mut session)
             .expect("prepare release")
-            .commit();
+            .commit()
+            .expect("commit");
         assert_eq!(session.budget(), ResourceBudget::default());
     }
 
@@ -3363,6 +3623,7 @@ mod tests {
 
         let result = LocalFilesystemView {
             state: &session.state,
+            job: None,
         }
         .discover_adoc_paths_with_control(
             LocalFilesystemSession::MAX_SCAN_ENTRIES,
@@ -3385,7 +3646,7 @@ mod tests {
                 read_operations: 0,
                 read_bytes: 0,
                 directory_read_operations: 1,
-                directory_entries: 1,
+                directory_entries: 0,
             }
         );
     }
@@ -3405,6 +3666,7 @@ mod tests {
 
         let result = LocalFilesystemView {
             state: &session.state,
+            job: None,
         }
         .discover_adoc_paths_with_control(
             LocalFilesystemSession::MAX_SCAN_ENTRIES,
@@ -3443,7 +3705,7 @@ mod tests {
         fs::write(root.path().join("ignored.txt"), "ignored").expect("ignored source");
         fs::write(nested.join("b.adoc"), "de").expect("second source");
         let session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
 
         let loaded = draft.scan_utf8(path_source_id).expect("scan");
@@ -3465,7 +3727,7 @@ mod tests {
         let path = root.path().join("vanished.adoc");
         fs::write(&path, "text").expect("source");
         let mut session = policy(root.path(), 100).session().expect("session");
-        let mut draft = session.draft().expect("draft");
+        let mut draft = session.draft(&unbounded_job()).expect("draft");
         let meter = draft_meter(&draft);
 
         let result = draft.scan_utf8(|candidate| {
@@ -4423,5 +4685,173 @@ mod tests {
             (session.budget().files(), session.budget().bytes()),
             (1, 14)
         );
+    }
+
+    #[test]
+    fn drafts_share_job_usage_across_sessions_and_discarded_candidates() {
+        let root = TestDir::new("job-shared-read-budget");
+        let first_path = root.path().join("first.adoc");
+        let second_path = root.path().join("second.adoc");
+        fs::write(&first_path, "abc").expect("first source");
+        fs::write(&second_path, "de").expect("second source");
+        let policy = policy(root.path(), 100);
+        let first_session = policy.session().expect("first session");
+        let second_session = policy.session().expect("second session");
+        let job = FilesystemJobCoordinator::new(job_limits(4, 100)).expect("job");
+
+        let mut discarded = first_session.draft(&job).expect("first draft");
+        discarded
+            .read_utf8(source_id(), &first_path)
+            .expect("first read");
+        drop(discarded);
+
+        let mut rejected = second_session.draft(&job).expect("second draft");
+        assert_eq!(
+            rejected.read_utf8(source_id(), &second_path),
+            Err(FilesystemDraftError::Job(crate::FilesystemJobError::Limit(
+                crate::FilesystemJobLimit::ReadBytes { limit: 4 }
+            )))
+        );
+        assert_eq!(
+            job.usage().expect("usage"),
+            crate::FilesystemJobUsage {
+                read_operations: 2,
+                read_bytes: 4,
+                read_probe_bytes: 1,
+                candidate_changes: 1,
+                sessions: 2,
+                ..crate::FilesystemJobUsage::default()
+            }
+        );
+    }
+
+    #[test]
+    fn prepared_commit_cannot_publish_after_the_job_is_cancelled() {
+        let root = TestDir::new("job-cancel-before-commit");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "source").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        let job = FilesystemJobCoordinator::new(job_limits(100, 100)).expect("job");
+        let mut draft = session.draft(&job).expect("draft");
+        draft.read_utf8(source_id(), &path).expect("read");
+        let prepared = draft.prepare_commit(&mut session).expect("prepare");
+
+        job.cancel().expect("cancel");
+        assert_eq!(
+            prepared.commit(),
+            Err(FilesystemDraftError::Job(
+                crate::FilesystemJobError::Cancelled
+            ))
+        );
+        assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
+    }
+
+    #[test]
+    fn missing_draft_read_keeps_the_job_operation_without_bytes() {
+        let root = TestDir::new("job-missing-read");
+        let session = policy(root.path(), 100).session().expect("session");
+        let job = FilesystemJobCoordinator::new(job_limits(10, 10)).expect("job");
+        let mut draft = session.draft(&job).expect("draft");
+
+        assert!(matches!(
+            draft
+                .read_utf8_outcome(source_id(), &root.path().join("missing.adoc"))
+                .expect("missing outcome"),
+            FilesystemReadOutcome::NotFound { .. }
+        ));
+        assert_eq!(job.usage().expect("usage").read_operations, 1);
+        assert_eq!(job.usage().expect("usage").read_bytes, 0);
+    }
+
+    #[test]
+    fn candidate_change_limit_rejects_not_found_without_changing_live_state() {
+        let root = TestDir::new("job-candidate-change-limit");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "source").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session
+            .read_utf8(source_id(), &path)
+            .expect("initial live read");
+        fs::remove_file(&path).expect("remove source");
+        let mut limits = job_limits(100, 100);
+        limits.max_candidate_changes = 0;
+        let job = FilesystemJobCoordinator::new(limits).expect("job");
+        let mut draft = session.draft(&job).expect("draft");
+
+        assert_eq!(
+            draft.read_utf8_outcome(source_id(), &path),
+            Err(FilesystemDraftError::Job(crate::FilesystemJobError::Limit(
+                crate::FilesystemJobLimit::CandidateChanges { limit: 0 }
+            )))
+        );
+        drop(draft);
+        assert_eq!((session.budget().files(), session.budget().bytes()), (1, 6));
+        assert_eq!(job.usage().expect("usage").candidate_changes, 0);
+    }
+
+    #[test]
+    fn directory_job_probe_distinguishes_exact_boundary_from_excess() {
+        let root = TestDir::new("job-directory-boundary");
+        fs::write(root.path().join("a.adoc"), "a").expect("first source");
+        fs::write(root.path().join("b.adoc"), "b").expect("second source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let exact_job = FilesystemJobCoordinator::new(job_limits(100, 2)).expect("exact job");
+        let exact = session.draft(&exact_job).expect("exact draft");
+        assert_eq!(
+            exact
+                .discover_adoc_paths_with_control(|_, _| false, || false)
+                .expect("exact discovery")
+                .len(),
+            2
+        );
+        assert_eq!(exact_job.usage().expect("usage").directory_entries, 2);
+        assert_eq!(exact_job.usage().expect("usage").directory_probe_entries, 0);
+        drop(exact);
+
+        fs::write(root.path().join("c.adoc"), "c").expect("third source");
+        let excess_job = FilesystemJobCoordinator::new(job_limits(100, 2)).expect("excess job");
+        let excess = session.draft(&excess_job).expect("excess draft");
+        assert_eq!(
+            excess.discover_adoc_paths_with_control(|_, _| false, || false),
+            Err(FilesystemDraftError::Job(crate::FilesystemJobError::Limit(
+                crate::FilesystemJobLimit::DirectoryEntries { limit: 2 }
+            )))
+        );
+        assert_eq!(
+            excess_job.usage().expect("usage").directory_probe_entries,
+            1
+        );
+    }
+
+    #[test]
+    fn directory_reservation_wait_observes_scan_cancellation() {
+        let root = TestDir::new("job-directory-wait-cancellation");
+        let session = policy(root.path(), 100).session().expect("session");
+        let job = FilesystemJobCoordinator::new(job_limits(100, 1)).expect("job");
+        let draft = session.draft(&job).expect("draft");
+        let mut holder = job.begin_directory_read(session.id()).expect("holder");
+        let reservation = holder.reserve_entry().expect("held reservation");
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = std::thread::spawn(move || {
+            draft.discover_adoc_paths_with_control(
+                |_, _| false,
+                || worker_cancelled.load(Ordering::Acquire),
+            )
+        });
+
+        while job.usage().expect("usage").waiting_reservations == 0 {
+            std::thread::yield_now();
+        }
+        cancelled.store(true, Ordering::Release);
+        assert_eq!(
+            worker.join().expect("worker"),
+            Err(FilesystemDraftError::Job(
+                crate::FilesystemJobError::Cancelled
+            ))
+        );
+        drop(reservation);
+        drop(holder);
+        assert_eq!(job.cancel(), Ok(()));
     }
 }

@@ -97,6 +97,18 @@ symlink検証失敗、不正なUTF-8および上限超過は安全性や資源�
 読込結果として構築します。呼出側は監視用のcanonical pathをaccessorから参照できますが、
 診断とsource mapには論理IDを使用します。
 
+複数のsessionを使う一つの処理では、``FilesystemJobCoordinator``がresource取得試行数、取得byte数、
+directory列挙試行数、列挙entry数、候補stateの変更数および参加session数を累積します。
+``LocalFilesystemDraft``は作成時に一つのcoordinatorへ結び付け、途中で別のjobへ付け替えられないようにします。
+fileの本文を読む前とdirectory iteratorを進める前に、複製できない予約を取得します。I/Oの直後に実際に得た量を
+確定し、未使用分だけを返します。このため、並行処理、draftの破棄、``NotFound``、errorおよび再試行によって
+同じ残量を重複利用したり、実際に行った処理を取り消したりできません。
+
+通常の上限を使い切った時点では、上限と同じ大きさの入力と上限を超える入力を区別するため、明示したprobe上限の
+範囲だけ追加のI/Oを許可します。EOFならprobe予約を未使用として返し、byteまたはentryを一つでも得た場合は
+通常の上限超過としてjobを停止します。取消、上限超過または会計不整合のうち、最初に確定した終了理由を維持します。
+遅れて完了したI/Oは使用量だけを確定し、終了理由を上書きしません。
+
 == 検証方針
 
 filesystem操作を注入できるadapter contract testで、policy作成後にrootのpathを別ディレクトリへのsymlinkへ

@@ -101,6 +101,8 @@ const contractNotes = [
   "Rust host APIへ``FilesystemReadOutcome``と``read_utf8_outcome``、``read_target_utf8_outcome``および``reread_utf8_outcome``を追加しました。sessionとdraftの両方で``Found``と``NotFound``を区別できます。",
   "従来の読込APIは維持し、対象fileの不在を引き続き``ResourceError::Missing``として返します。",
   "Language Serverの初期走査では、列挙後に消えたfileを走査全体の失敗にせず、その候補だけを省略します。",
+  "Rust host APIへ``FilesystemJobCoordinator``を追加しました。一つのjobに参加する複数sessionで、resource取得、取得byte、directory列挙、entryおよび候補変更の上限を共有します。I/O前の予約により並行処理でも残量を重複利用せず、draftを破棄しても使用量を戻しません。",
+  "``LocalFilesystemDraft``は作成時にcoordinatorを必須とし、file読込とdirectory走査を同じjobへ計上します。取消や上限超過の後にI/Oが完了しても、最初の終了理由を維持したまま実際の使用量を確定します。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -109,6 +111,7 @@ const contractNotes = [
 const migrationNotes = [
   `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
   "filesystemの不在を正常な結果として扱うRust consumerは、従来の読込APIから対応する``*_outcome``メソッドへ移行し、``FilesystemReadOutcome::NotFound``を処理してください。従来どおり不在をerrorにするconsumerは変更不要です。",
+  "``LocalFilesystemSession::draft``を使うRust consumerは、処理単位で``FilesystemJobCoordinator``を作成し、``session.draft(&job)``として渡してください。同じ処理の再試行と複数sessionでは同じjobを共有し、処理が完了した後の別eventでは新しいjobを作成します。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];
