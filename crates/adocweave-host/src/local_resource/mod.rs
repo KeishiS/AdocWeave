@@ -788,7 +788,9 @@ impl LocalFilesystemView<'_> {
                             }
                             let reservation = job_permit
                                 .as_mut()
-                                .map(|permit| permit.reserve_entry())
+                                .map(|permit| {
+                                    permit.reserve_entry_with_cancellation(&mut is_cancelled)
+                                })
                                 .transpose()
                                 .map_err(ResourceError::from)?;
                             let Some(child) = directory.next() else {
@@ -883,7 +885,7 @@ impl LocalFilesystemView<'_> {
                     }
                     let reservation = job_permit
                         .as_mut()
-                        .map(|permit| permit.reserve_entry())
+                        .map(|permit| permit.reserve_entry_with_cancellation(&mut is_cancelled))
                         .transpose()
                         .map_err(ResourceError::from)?;
                     let Some(child) = entries.next() else {
@@ -4819,5 +4821,37 @@ mod tests {
             excess_job.usage().expect("usage").directory_probe_entries,
             1
         );
+    }
+
+    #[test]
+    fn directory_reservation_wait_observes_scan_cancellation() {
+        let root = TestDir::new("job-directory-wait-cancellation");
+        let session = policy(root.path(), 100).session().expect("session");
+        let job = FilesystemJobCoordinator::new(job_limits(100, 1)).expect("job");
+        let draft = session.draft(&job).expect("draft");
+        let mut holder = job.begin_directory_read(session.id()).expect("holder");
+        let reservation = holder.reserve_entry().expect("held reservation");
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = std::thread::spawn(move || {
+            draft.discover_adoc_paths_with_control(
+                |_, _| false,
+                || worker_cancelled.load(Ordering::Acquire),
+            )
+        });
+
+        while job.usage().expect("usage").waiting_reservations == 0 {
+            std::thread::yield_now();
+        }
+        cancelled.store(true, Ordering::Release);
+        assert_eq!(
+            worker.join().expect("worker"),
+            Err(FilesystemDraftError::Job(
+                crate::FilesystemJobError::Cancelled
+            ))
+        );
+        drop(reservation);
+        drop(holder);
+        assert_eq!(job.cancel(), Ok(()));
     }
 }

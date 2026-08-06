@@ -9,6 +9,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::Duration;
 
 use crate::LocalFilesystemSessionId;
 
@@ -396,9 +397,18 @@ impl FilesystemJobCoordinator {
         &self,
         kind: CapacityKind,
         requested: u64,
+        mut is_cancelled: Option<&mut dyn FnMut() -> bool>,
     ) -> Result<(CapacityClass, u64), FilesystemJobError> {
         let mut state = self.lock_active()?;
         loop {
+            drop(state);
+            if is_cancelled.as_mut().is_some_and(|check| check()) {
+                return match self.cancel() {
+                    Ok(()) => Err(FilesystemJobError::Cancelled),
+                    Err(error) => Err(error),
+                };
+            }
+            state = self.lock_active()?;
             Self::ensure_active(&state)?;
             let values = capacity_values(&state.usage, self.inner.limits, kind);
             let normal_available = values
@@ -412,11 +422,7 @@ impl FilesystemJobCoordinator {
             }
             if values.normal_committed < values.normal_limit {
                 state.usage.waiting_reservations += 1;
-                state = self
-                    .inner
-                    .changed
-                    .wait(state)
-                    .map_err(|_| FilesystemJobError::StatePoisoned)?;
+                state = self.wait_for_capacity(state, is_cancelled.is_some())?;
                 state.usage.waiting_reservations -= 1;
                 continue;
             }
@@ -431,15 +437,31 @@ impl FilesystemJobCoordinator {
             }
             if values.probe_committed < values.probe_limit {
                 state.usage.waiting_reservations += 1;
-                state = self
-                    .inner
-                    .changed
-                    .wait(state)
-                    .map_err(|_| FilesystemJobError::StatePoisoned)?;
+                state = self.wait_for_capacity(state, is_cancelled.is_some())?;
                 state.usage.waiting_reservations -= 1;
                 continue;
             }
             return Err(self.stop_at_limit(&mut state, values.probe_limit_error));
+        }
+    }
+
+    fn wait_for_capacity<'a>(
+        &self,
+        state: MutexGuard<'a, JobState>,
+        cancellation_aware: bool,
+    ) -> Result<MutexGuard<'a, JobState>, FilesystemJobError> {
+        if cancellation_aware {
+            let (state, _) = self
+                .inner
+                .changed
+                .wait_timeout(state, Duration::from_millis(10))
+                .map_err(|_| FilesystemJobError::StatePoisoned)?;
+            Ok(state)
+        } else {
+            self.inner
+                .changed
+                .wait(state)
+                .map_err(|_| FilesystemJobError::StatePoisoned)
         }
     }
 
@@ -486,7 +508,9 @@ impl FilesystemReadPermit {
         &mut self,
         requested: u64,
     ) -> Result<FilesystemCapacityReservation<'_>, FilesystemJobError> {
-        let (class, granted) = self.coordinator.reserve(CapacityKind::Read, requested)?;
+        let (class, granted) = self
+            .coordinator
+            .reserve(CapacityKind::Read, requested, None)?;
         Ok(FilesystemCapacityReservation {
             coordinator: &self.coordinator,
             kind: CapacityKind::Read,
@@ -498,10 +522,29 @@ impl FilesystemReadPermit {
 }
 
 impl FilesystemDirectoryPermit {
+    #[cfg(test)]
     pub(crate) fn reserve_entry(
         &mut self,
     ) -> Result<FilesystemCapacityReservation<'_>, FilesystemJobError> {
-        let (class, granted) = self.coordinator.reserve(CapacityKind::DirectoryEntry, 1)?;
+        let (class, granted) = self
+            .coordinator
+            .reserve(CapacityKind::DirectoryEntry, 1, None)?;
+        Ok(FilesystemCapacityReservation {
+            coordinator: &self.coordinator,
+            kind: CapacityKind::DirectoryEntry,
+            class,
+            granted,
+            active: true,
+        })
+    }
+
+    pub(crate) fn reserve_entry_with_cancellation(
+        &mut self,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<FilesystemCapacityReservation<'_>, FilesystemJobError> {
+        let (class, granted) =
+            self.coordinator
+                .reserve(CapacityKind::DirectoryEntry, 1, Some(&mut is_cancelled))?;
         Ok(FilesystemCapacityReservation {
             coordinator: &self.coordinator,
             kind: CapacityKind::DirectoryEntry,
