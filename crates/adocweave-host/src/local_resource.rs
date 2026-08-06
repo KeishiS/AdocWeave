@@ -2056,7 +2056,13 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir(&path).expect("create test directory");
-            Self(path)
+            // `std::env::temp_dir` does not return a resolved path on every
+            // platform. macOS answers with `/var/...`, which is a symbolic link
+            // to `/private/var`, and Windows can answer with a shortened
+            // `RUNNER~1` component. Roots are stored in resolved form, so a test
+            // holding the unresolved spelling would build candidate paths that
+            // the policy reports as outside its own root.
+            Self(path.canonicalize().expect("resolve the test root"))
         }
 
         fn path(&self) -> &Path {
