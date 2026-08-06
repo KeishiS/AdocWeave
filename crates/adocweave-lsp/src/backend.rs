@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use adocweave::{CancellationCheck, CancellationToken};
-use adocweave_workspace::WorkspaceAnalysis;
+use adocweave_host::FilesystemJobCoordinator;
 use async_lsp::client_monitor::ClientProcessMonitorLayer;
 use async_lsp::concurrency::ConcurrencyLayer;
 use async_lsp::lsp_types::{PublishDiagnosticsParams, Url, notification, request};
@@ -22,6 +22,7 @@ use crate::cancellation::{QueryCancellation, QueryError, QueryResult};
 use crate::lifecycle::ProtocolLifecycleLayer;
 use crate::service::LanguageService;
 use crate::state::{Adoption, AnalysisJob, WorkspaceProblem};
+use crate::workspace::{AnalyzedRoot, document_analysis_job_limits};
 use crate::workspace_scan::{
     WorkspaceRecoveryTimerUpdate, WorkspaceScanCoordinator, WorkspaceScanRecovery,
     WorkspaceScanRecoveryTimer, WorkspaceScanStart, WorkspaceScanned,
@@ -49,8 +50,45 @@ struct AnalysisTask {
 struct AnalysisCompleted {
     job: AnalysisJob,
     result: Result<adocweave::AnalysisResult, String>,
-    workspace_result: Option<Result<WorkspaceAnalysis, WorkspaceProblem>>,
-    missing_resource: Option<adocweave_workspace::ResourceId>,
+    workspace_result: Option<Result<AnalyzedRoot, WorkspaceProblem>>,
+}
+
+/// Runs one workspace analysis to completion on a worker thread.
+///
+/// Missing includes are read as the preprocessor asks for them, inside one
+/// filesystem job that bounds the reads of the whole analysis. The analysis is
+/// never restarted for an include, so a document with many of them costs one
+/// preprocess rather than one per include.
+///
+/// A run that fails is still returned rather than turned into an error here.
+/// The failure belongs to the result: adopting it is what keeps the file
+/// watcher watching the includes the run asked for, so repairing a broken
+/// include still reaches the document waiting for it.
+pub(crate) fn analyze_workspace_root(
+    workspace: &crate::workspace::WorkspaceResources,
+    job: &AnalysisJob,
+    input: &crate::workspace::WorkspaceInput,
+) -> Result<AnalyzedRoot, WorkspaceProblem> {
+    let filesystem_job = FilesystemJobCoordinator::new(document_analysis_job_limits())
+        .map_err(|error| workspace_input_problem(error.to_string()))?;
+    let analyzed = workspace
+        .analyze_root_detached(
+            input,
+            &job.request.options,
+            job.cancellation.as_ref(),
+            &filesystem_job,
+        )
+        .map_err(workspace_input_problem)?;
+    Ok(analyzed)
+}
+
+pub(crate) fn workspace_input_problem(message: String) -> WorkspaceProblem {
+    WorkspaceProblem {
+        source_id: None,
+        range: zero_range(),
+        code: "workspace-input-error".to_owned(),
+        message,
+    }
 }
 
 impl Backend {
@@ -420,6 +458,10 @@ impl Backend {
         let client = self.client.clone();
         let uri = job.uri.clone();
         let generation = job.request.revision.generation;
+        // The worker reads missing includes into this copy while the editor
+        // keeps using the current workspace. Nothing it reads becomes visible
+        // until the finished analysis is adopted.
+        let workspace_copy = self.service.workspace_copy();
         let handle = tokio::spawn(async move {
             if debounce_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
@@ -436,38 +478,20 @@ impl Backend {
                     .request
                     .analyze(worker_job.cancellation.as_ref())
                     .map_err(|error| error.to_string());
-                let mut missing_resource = None;
                 let workspace_result =
                     worker_job.workspace_problem.clone().map(Err).or_else(|| {
                         worker_job.workspace.as_ref().map(|input| {
-                            input
-                                .analyze(
-                                    &worker_job.request.options,
-                                    worker_job.cancellation.as_ref(),
-                                )
-                                .map_err(|error| {
-                                    missing_resource = error.requested_resource().cloned();
-                                    WorkspaceProblem {
-                                        source_id: error
-                                            .source_id
-                                            .as_ref()
-                                            .map(ToString::to_string),
-                                        range: error.range.unwrap_or_else(zero_range),
-                                        code: error.diagnostic_code().to_owned(),
-                                        message: error.to_string(),
-                                    }
-                                })
+                            analyze_workspace_root(&workspace_copy, &worker_job, input)
                         })
                     });
-                (result, workspace_result, missing_resource)
+                (result, workspace_result)
             })
             .await
-            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None, None));
+            .unwrap_or_else(|error| (Err(format!("analysis worker failed: {error}")), None));
             let _ = client.emit(AnalysisCompleted {
                 job,
                 result: result.0,
                 workspace_result: result.1,
-                missing_resource: result.2,
             });
         });
         self.analysis_tasks
@@ -489,28 +513,6 @@ impl Backend {
             self.schedule_analysis_immediately(retry);
             return ControlFlow::Continue(());
         }
-        let mut resolution_problem = None;
-        if let Some(target) = &completed.missing_resource {
-            match self.service.resolve_missing_include(&completed.job, target) {
-                Ok(Some(retry)) => {
-                    self.schedule_analysis_immediately(retry);
-                    return ControlFlow::Continue(());
-                }
-                Ok(None) => {}
-                Err(message) => {
-                    let original = completed
-                        .workspace_result
-                        .as_ref()
-                        .and_then(|result| result.as_ref().err());
-                    resolution_problem = Some(WorkspaceProblem {
-                        source_id: original.and_then(|problem| problem.source_id.clone()),
-                        range: original.map_or_else(zero_range, |problem| problem.range),
-                        code: "workspace-input-error".to_owned(),
-                        message,
-                    });
-                }
-            }
-        }
         let Ok(analysis) = completed.result else {
             return ControlFlow::Continue(());
         };
@@ -518,20 +520,25 @@ impl Backend {
             return ControlFlow::Continue(());
         }
         let mut publish_uris = std::collections::BTreeSet::from([completed.job.uri.clone()]);
-        if let Some(problem) = resolution_problem {
-            let _ = self
-                .service
-                .adopt_workspace_problem(&completed.job, problem);
-        } else if let Some(workspace) = completed.workspace_result {
+        if let Some(workspace) = completed.workspace_result {
             match workspace {
-                Ok(workspace) => {
+                Ok(analyzed) => {
+                    let failure = analyzed.failure();
                     publish_uris.extend(
-                        workspace
-                            .source_ids()
-                            .into_iter()
-                            .map(|source_id| source_id.to_string()),
+                        self.service
+                            .adopt_analyzed_workspace(&completed.job, analyzed),
                     );
-                    let _ = self.service.adopt_workspace(&completed.job, workspace);
+                    if let Some(failure) = failure {
+                        let _ = self.service.adopt_workspace_problem(
+                            &completed.job,
+                            WorkspaceProblem {
+                                source_id: failure.source_id,
+                                range: failure.range.unwrap_or_else(zero_range),
+                                code: failure.code,
+                                message: failure.message,
+                            },
+                        );
+                    }
                 }
                 Err(problem) => {
                     let _ = self

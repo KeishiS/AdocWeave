@@ -1,6 +1,6 @@
 //! Versioned document state and generation-checked analysis adoption.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use adocweave::preprocess::{AnalysisProjection, PreprocessedDocument};
@@ -11,7 +11,6 @@ use adocweave::{
 };
 
 use crate::workspace::WorkspaceInput;
-use adocweave_workspace::ResourceId;
 
 #[derive(Clone, Debug)]
 pub struct AnalysisJob {
@@ -20,7 +19,6 @@ pub struct AnalysisJob {
     pub cancellation: Arc<CancellationToken>,
     pub workspace: Option<WorkspaceInput>,
     pub workspace_problem: Option<WorkspaceProblem>,
-    pub include_resolution_attempts: BTreeSet<ResourceId>,
 }
 
 #[derive(Clone, Debug)]
@@ -351,7 +349,6 @@ impl DocumentStore {
             cancellation: Arc::new(CancellationToken::new()),
             workspace: None,
             workspace_problem: None,
-            include_resolution_attempts: BTreeSet::new(),
         }
     }
 }

@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use adocweave::CancellationCheck;
 #[cfg(test)]
 use adocweave::NeverCancel;
-use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
+use adocweave::preprocess::{
+    EffectiveProcessingOptions, PreprocessOptions, ProjectionLimits, SafeMode,
+};
 use adocweave_host::{
     FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
     FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemDraft, LocalFilesystemPolicy,
@@ -15,7 +17,8 @@ use adocweave_host::{
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
-    Revision, Workspace, WorkspaceAnalysis, WorkspaceLimits, WorkspaceSnapshot,
+    Revision, Workspace, WorkspaceAnalysis, WorkspaceAnalysisDraft, WorkspaceAnalysisStep,
+    WorkspaceError, WorkspaceLimits, WorkspaceSnapshot,
 };
 use async_lsp::lsp_types::Url;
 
@@ -31,6 +34,26 @@ pub(crate) const fn workspace_scan_job_limits() -> FilesystemJobLimits {
             + LocalFilesystemPolicy::MAX_ROOTS as u64,
         max_directory_entries: LocalFilesystemSession::MAX_SCAN_ENTRIES as u64,
         max_directory_probe_entries: 1,
+        max_candidate_changes: reads.max_files as u64,
+        max_sessions: reads.max_files + 2,
+    }
+}
+
+/// Bounds the include reads of one document analysis.
+///
+/// Analysing one document only ever opens include targets by exact path, so the
+/// job needs no directory allowance at all. The read allowance matches the
+/// workspace scan because a document may legitimately include every file the
+/// scan would have found.
+pub(crate) const fn document_analysis_job_limits() -> FilesystemJobLimits {
+    let reads = FilesystemReadLimits::DEFAULT;
+    FilesystemJobLimits {
+        max_read_operations: reads.max_files as u64,
+        max_read_bytes: reads.max_total_bytes,
+        max_read_probe_bytes: 1,
+        max_directory_operations: 0,
+        max_directory_entries: 0,
+        max_directory_probe_entries: 0,
         max_candidate_changes: reads.max_files as u64,
         max_sessions: reads.max_files + 2,
     }
@@ -93,20 +116,6 @@ impl WorkspaceInput {
             .get(&self.root)
             .map(adocweave_workspace::Resource::text)
     }
-
-    pub fn analyze(
-        &self,
-        analysis_options: &adocweave::AnalysisOptions,
-        cancellation: &adocweave::CancellationToken,
-    ) -> Result<WorkspaceAnalysis, adocweave_workspace::WorkspaceError> {
-        self.snapshot.analyze(
-            &self.root,
-            analysis_options,
-            &self.options,
-            ProjectionLimits::default(),
-            cancellation,
-        )
-    }
 }
 
 use adocweave_config::ProjectScopeId;
@@ -167,7 +176,6 @@ pub struct WorkspaceResources {
     include_interests: BTreeSet<ResourceId>,
     loaded_include_resources: BTreeSet<ResourceId>,
     include_dependencies: BTreeMap<ResourceId, BTreeSet<ResourceId>>,
-    pending_include_dependencies: BTreeMap<ResourceId, (u64, BTreeSet<ResourceId>)>,
     retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
     /// Project files already discovered and parsed, keyed by the directory the
     /// search started from.
@@ -203,6 +211,222 @@ struct ExistingIncludeTarget {
     path: PathBuf,
     scope: ProjectScopeId,
     plan: adocweave_config::ResolvedResourceLimitPlan,
+}
+
+/// A finished analysis together with the workspace state it needs to be adopted.
+///
+/// Analysis runs on a copy of the workspace, so every include it acquired lives
+/// here rather than in the state the editor can see. Dropping this value leaves
+/// no trace of the attempt.
+pub struct AnalyzedRoot {
+    candidate: WorkspaceResources,
+    root: ResourceId,
+    canonical_options: EffectiveProcessingOptions,
+    outcome: AnalyzedRootOutcome,
+    /// Every include target the run was allowed to look for, present or not.
+    ///
+    /// This is what the root depends on, so it is also what the file watcher
+    /// must keep watching. A run that failed still contributes here: repairing
+    /// a broken include has to produce a notification the document can act on.
+    requested_includes: BTreeSet<ResourceId>,
+}
+
+enum AnalyzedRootOutcome {
+    Complete(Box<WorkspaceAnalysisDraft>),
+    Failed(WorkspaceError),
+    /// A resource could not be read, so nothing this run produced may be kept.
+    ReadFailed(String),
+    Cancelled,
+}
+
+/// What to report about a run that produced no result.
+///
+/// This carries the pieces a diagnostic needs rather than the workspace error
+/// itself, so the code that publishes diagnostics does not have to know how
+/// analysis represents its failures.
+pub struct AnalysisFailure {
+    pub source_id: Option<String>,
+    pub range: Option<adocweave::text::TextRange>,
+    pub code: String,
+    pub message: String,
+}
+
+impl AnalyzedRoot {
+    /// Returns the failure when analysis did not produce a result.
+    pub fn failure(&self) -> Option<AnalysisFailure> {
+        match &self.outcome {
+            AnalyzedRootOutcome::Failed(error) => Some(AnalysisFailure {
+                source_id: error.source_id.as_ref().map(ToString::to_string),
+                range: error.range,
+                code: error.diagnostic_code().to_owned(),
+                message: error.to_string(),
+            }),
+            AnalyzedRootOutcome::ReadFailed(message) => Some(AnalysisFailure {
+                source_id: None,
+                range: None,
+                code: "workspace-input-error".to_owned(),
+                message: message.clone(),
+            }),
+            AnalyzedRootOutcome::Complete(_) | AnalyzedRootOutcome::Cancelled => None,
+        }
+    }
+}
+
+/// Passes a borrowed cancellation where the workspace API asks for a sized one.
+struct SharedCancellation<'a>(&'a dyn CancellationCheck);
+
+impl CancellationCheck for SharedCancellation<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+}
+
+/// How one include requested by a suspended analysis was answered.
+enum AcquiredInclude {
+    /// The resource was read and is now part of the candidate workspace.
+    Found(Arc<str>),
+    /// The resource is authoritatively absent, whether it was refused by the
+    /// configured authority or simply does not exist on disk.
+    ///
+    /// Both answers are the same to the preprocessor: no text is available and
+    /// the include cannot be executed. Keeping them apart here would only push a
+    /// distinction into the analysis that it cannot act on.
+    NotFound,
+    /// The resource exists but could not be read, so the analysis cannot go on.
+    ///
+    /// This is reported to the preprocessor rather than raised here, so the
+    /// resulting diagnostic points at the include directive that asked for it
+    /// instead of at the document as a whole.
+    Failed(String),
+}
+
+/// Reads the includes one suspended analysis asks for, into a workspace copy.
+///
+/// The whole point of this type is that nothing it reads becomes visible until
+/// the analysis finishes and is adopted. It owns the copy, the filesystem drafts
+/// it reads through, and the authority that decides which targets are allowed.
+struct IncludeAcquisition<'a> {
+    candidate: WorkspaceResources,
+    drafts: BTreeMap<ProjectScopeId, WorkspaceFilesystemCandidate>,
+    root: ResourceId,
+    root_scope: ProjectScopeId,
+    allowed_roots: Vec<PathBuf>,
+    requested: BTreeSet<ResourceId>,
+    /// The first read that failed, if any.
+    ///
+    /// A failed read leaves its draft unusable, so no part of this run may be
+    /// committed once it is set.
+    read_failure: Option<String>,
+    job: &'a FilesystemJobCoordinator,
+}
+
+impl IncludeAcquisition<'_> {
+    fn acquire(&mut self, target: &ResourceId) -> Result<AcquiredInclude, String> {
+        let admitted =
+            self.candidate
+                .admit_include_target(&self.root_scope, &self.allowed_roots, target)?;
+        let Some(admitted) = admitted else {
+            return Ok(AcquiredInclude::NotFound);
+        };
+        self.record_interest(target)?;
+        let AdmittedIncludeTarget::Existing(existing) = admitted else {
+            return Ok(AcquiredInclude::NotFound);
+        };
+        let ExistingIncludeTarget {
+            uri,
+            path,
+            scope,
+            plan,
+        } = *existing;
+        // A resource the starting snapshot already holds never reaches this
+        // point, so an identity already present in the copy means an earlier
+        // include in this same run acquired it. Its text is reused rather than
+        // read twice, which keeps repeated includes off the job's byte budget.
+        let id = uri_id(&uri)?;
+        if let Some(existing) = self.candidate.inner.get(&id) {
+            return Ok(AcquiredInclude::Found(Arc::clone(existing.text())));
+        }
+        let read = self
+            .draft_for(&scope, plan)
+            .and_then(|draft| read_scan_candidate(draft, &path));
+        let text = match read {
+            Ok(Some((_, text))) => text,
+            Ok(None) => return Ok(AcquiredInclude::NotFound),
+            Err(message) => {
+                self.read_failure.get_or_insert_with(|| message.clone());
+                return Ok(AcquiredInclude::Failed(message));
+            }
+        };
+        self.candidate
+            .admit_include_text(id, Arc::clone(&text), scope, plan)?;
+        Ok(AcquiredInclude::Found(text))
+    }
+
+    fn record_interest(&mut self, target: &ResourceId) -> Result<(), String> {
+        if !self.candidate.include_interests.contains(target)
+            && self.candidate.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+        {
+            return Err(format!(
+                "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
+            ));
+        }
+        self.candidate.include_interests.insert(target.clone());
+        self.requested.insert(target.clone());
+        Ok(())
+    }
+
+    fn draft_for(
+        &mut self,
+        scope: &ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<&mut LocalFilesystemDraft, String> {
+        let candidate = match self.drafts.entry(scope.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let session = self.candidate.session_for(scope, plan)?;
+                let draft = session
+                    .lock()
+                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
+                    .draft(self.job)
+                    .map_err(|error| error.to_string())?;
+                entry.insert(WorkspaceFilesystemCandidate {
+                    session,
+                    draft: Some(draft),
+                })
+            }
+        };
+        Ok(candidate.draft.as_mut().expect("draft is active"))
+    }
+
+    /// Commits every draft this run opened and returns the workspace copy.
+    ///
+    /// Commits happen only when the analysis produced a result. A failed or
+    /// cancelled run drops its drafts instead, which leaves the live sessions
+    /// exactly as they were.
+    fn commit(mut self) -> Result<WorkspaceResources, String> {
+        for candidate in self.drafts.values_mut() {
+            let draft = candidate.draft.take().expect("draft is active");
+            let mut session = candidate
+                .session
+                .lock()
+                .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+            draft
+                .prepare_commit(&mut session)
+                .map_err(|error| error.to_string())?
+                .commit()
+                .map_err(|error| error.to_string())?;
+        }
+        for (scope, candidate) in &self.drafts {
+            self.candidate
+                .filesystems
+                .insert(scope.clone(), Arc::clone(&candidate.session));
+        }
+        Ok(self.candidate)
+    }
+
+    fn root(&self) -> &ResourceId {
+        &self.root
+    }
 }
 
 impl PreparedWorkspaceRead {
@@ -371,7 +595,7 @@ impl WorkspaceResources {
         self.load_roots_with_limits_after_hooks_and_job(
             roots,
             limits,
-            cancellation,
+            &SharedCancellation(cancellation),
             &job,
             (|| {}, || {}, || {}),
         )
@@ -387,7 +611,7 @@ impl WorkspaceResources {
         self.load_roots_with_limits_after_hooks_and_job(
             roots,
             limits,
-            cancellation,
+            &SharedCancellation(cancellation),
             job,
             (|| {}, || {}, || {}),
         )
@@ -418,7 +642,7 @@ impl WorkspaceResources {
         self.load_roots_with_limits_after_hooks_and_job(
             roots,
             limits,
-            cancellation,
+            &SharedCancellation(cancellation),
             &job,
             (after_root_classification, after_authority, || {}),
         )
@@ -725,7 +949,6 @@ impl WorkspaceResources {
             self.include_interests.clear();
             self.loaded_include_resources.clear();
             self.include_dependencies.clear();
-            self.pending_include_dependencies.clear();
             self.retained_layers = retained_layers;
             self.next_disk_version = next_disk_version;
             Ok(())
@@ -759,7 +982,6 @@ impl WorkspaceResources {
         self.include_interests.clear();
         self.loaded_include_resources.clear();
         self.include_dependencies.clear();
-        self.pending_include_dependencies.clear();
         self.retained_layers.clear();
         self.last_load_failed_closed = true;
     }
@@ -960,7 +1182,7 @@ impl WorkspaceResources {
                 journal_relevant,
             });
         }
-        let pending_dependents = self.pending_include_dependents(&id);
+        let pending_dependents = self.include_dependents(&id);
         self.inner = inner;
         if discover_as_root {
             self.analysis_root_roles
@@ -1013,11 +1235,7 @@ impl WorkspaceResources {
         self.include_interests.remove(id);
         self.loaded_include_resources.remove(id);
         self.include_dependencies.remove(id);
-        self.pending_include_dependencies.remove(id);
         for dependencies in self.include_dependencies.values_mut() {
-            dependencies.remove(id);
-        }
-        for (_, dependencies) in self.pending_include_dependencies.values_mut() {
             dependencies.remove(id);
         }
         let pruned = self.prune_unreferenced_include_resources();
@@ -1043,12 +1261,12 @@ impl WorkspaceResources {
         self.read_workspace_resource(path, scope, plan)
     }
 
-    fn read_workspace_resource(
+    /// Returns the filesystem session that reads for one project scope.
+    fn session_for(
         &self,
-        path: &Path,
         scope: &ProjectScopeId,
         plan: adocweave_config::ResolvedResourceLimitPlan,
-    ) -> Result<PreparedWorkspaceRead, String> {
+    ) -> Result<Arc<Mutex<LocalFilesystemSession>>, String> {
         if let Some(previous) = self.project_plans.get(scope)
             && previous != &plan
         {
@@ -1056,18 +1274,53 @@ impl WorkspaceResources {
                 "workspace resource limit plan changed; a full reload is required".to_owned(),
             );
         }
-        let filesystem = if let Some(filesystem) = self.filesystems.get(scope) {
-            Arc::clone(filesystem)
-        } else {
-            let session = self
-                .filesystem_policy
-                .as_ref()
-                .ok_or_else(|| "workspace has no retained filesystem authority".to_owned())?
-                .access_existing([scope.workspace_root.clone()], plan.filesystem_reads)
-                .and_then(|access| access.session())
-                .map_err(|error| error.to_string())?;
-            Arc::new(Mutex::new(session))
-        };
+        if let Some(filesystem) = self.filesystems.get(scope) {
+            return Ok(Arc::clone(filesystem));
+        }
+        let session = self
+            .filesystem_policy
+            .as_ref()
+            .ok_or_else(|| "workspace has no retained filesystem authority".to_owned())?
+            .access_existing([scope.workspace_root.clone()], plan.filesystem_reads)
+            .and_then(|access| access.session())
+            .map_err(|error| error.to_string())?;
+        Ok(Arc::new(Mutex::new(session)))
+    }
+
+    /// Adds an already read include to this workspace copy.
+    ///
+    /// The caller passes the exact `Arc<str>` it handed to the preprocessor.
+    /// Publication compares resources by shared-text identity, so a copy of the
+    /// same bytes would be rejected as a different resource.
+    fn admit_include_text(
+        &mut self,
+        id: ResourceId,
+        text: Arc<str>,
+        scope: ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<(), String> {
+        let charge = RetainedLayerCharge::new(Some(text.len() as u64), None);
+        let retained_layers =
+            self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
+        let next_disk_version = self.next_disk_version.saturating_add(1);
+        self.inner
+            .upsert_disk(id.clone(), Revision::new(next_disk_version), text)
+            .map_err(|error| error.to_string())?;
+        self.retained_layers = retained_layers;
+        self.project_plans.insert(scope.clone(), plan);
+        self.resource_projects.insert(id.clone(), scope);
+        self.loaded_include_resources.insert(id);
+        self.next_disk_version = next_disk_version;
+        Ok(())
+    }
+
+    fn read_workspace_resource(
+        &self,
+        path: &Path,
+        scope: &ProjectScopeId,
+        plan: adocweave_config::ResolvedResourceLimitPlan,
+    ) -> Result<PreparedWorkspaceRead, String> {
+        let filesystem = self.session_for(scope, plan)?;
         let (loaded, rollback) = filesystem
             .lock()
             .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
@@ -1306,7 +1559,7 @@ impl WorkspaceResources {
         }
         let mut inner = self.inner.clone();
         let mut affected = strings(inner.remove_disk(&id));
-        affected.extend(self.pending_include_dependents(&id));
+        affected.extend(self.include_dependents(&id));
         self.release_filesystem_charge(scope.as_ref(), &path)?;
         self.inner = inner;
         self.retained_layers = retained_layers;
@@ -1365,76 +1618,11 @@ impl WorkspaceResources {
         Ok(strings(affected))
     }
 
-    /// Loads one missing include requested by a current workspace analysis.
+    /// Decides whether one include target may be read for this analysis root.
     ///
-    /// The target is still checked against the root's effective include
-    /// authority. Scan exclusions are intentionally absent from this path.
-    pub fn load_missing_include(
-        &mut self,
-        root: &Url,
-        target: &ResourceId,
-        revision_generation: u64,
-    ) -> Result<bool, String> {
-        if self.roots.is_empty() {
-            return Ok(false);
-        }
-        let root_id = uri_id(root)?;
-        let starts_new_revision = self
-            .pending_include_dependencies
-            .get(&root_id)
-            .is_none_or(|(generation, _)| *generation != revision_generation);
-        if starts_new_revision {
-            self.pending_include_dependencies
-                .insert(root_id.clone(), (revision_generation, BTreeSet::new()));
-            self.prune_unreferenced_include_resources();
-        }
-        let root_scope = self
-            .resource_projects
-            .get(&root_id)
-            .ok_or_else(|| format!("workspace project scope is missing: {root}"))?
-            .clone();
-        let config_snapshot = self.config_for_uri(root)?;
-        let project_config = config_snapshot.as_ref().map_or_else(
-            adocweave_config::ResolvedProjectConfig::default,
-            |snapshot| snapshot.config.clone(),
-        );
-        let allowed_roots = configured_include_roots(
-            &project_config,
-            &self.roots,
-            self.filesystem_policy.as_ref(),
-        )?;
-        let Some(admitted) = self.admit_include_target(&root_scope, &allowed_roots, target)? else {
-            return Ok(false);
-        };
-        if !self.include_interests.contains(target)
-            && self.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
-        {
-            return Err(format!(
-                "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
-            ));
-        }
-        self.include_interests.insert(target.clone());
-        self.pending_include_dependencies
-            .entry(root_id)
-            .or_insert_with(|| (revision_generation, BTreeSet::new()))
-            .1
-            .insert(target.clone());
-        let AdmittedIncludeTarget::Existing(existing) = admitted else {
-            return Ok(false);
-        };
-        let ExistingIncludeTarget {
-            uri,
-            path,
-            scope,
-            plan,
-        } = *existing;
-        if self.inner.get(target).is_some() {
-            return Ok(false);
-        }
-        self.insert_include_resource(uri, path, scope, plan)?;
-        Ok(true)
-    }
-
+    /// Scan exclusions are intentionally absent here: they choose which files a
+    /// workspace walk discovers on its own, not which files a document may
+    /// include by name.
     fn admit_include_target(
         &self,
         root_scope: &ProjectScopeId,
@@ -1493,48 +1681,6 @@ impl WorkspaceResources {
             }
             WorkspaceLogicalFile::Missing(_) => AdmittedIncludeTarget::Missing,
         }))
-    }
-
-    fn insert_include_resource(
-        &mut self,
-        uri: Url,
-        path: PathBuf,
-        scope: ProjectScopeId,
-        plan: adocweave_config::ResolvedResourceLimitPlan,
-    ) -> Result<(), String> {
-        let id = uri_id(&uri)?;
-        let prepared = self.read_workspace_resource(&path, &scope, plan)?;
-        let next_disk_version = self.next_disk_version.saturating_add(1);
-        let result = (|| {
-            let charge = RetainedLayerCharge::new(Some(prepared.text.len() as u64), None);
-            let retained_layers =
-                self.move_retained_charge(&id, &scope, charge, plan.retained_layers)?;
-            let mut inner = self.inner.clone();
-            inner
-                .upsert_disk(
-                    id.clone(),
-                    Revision::new(next_disk_version),
-                    Arc::clone(&prepared.text),
-                )
-                .map_err(|error| error.to_string())?;
-            Ok::<_, String>((retained_layers, inner))
-        })();
-        let (retained_layers, inner) = match result {
-            Ok(committed) => committed,
-            Err(error) => {
-                prepared.rollback()?;
-                return Err(error);
-            }
-        };
-        self.inner = inner;
-        self.retained_layers = retained_layers;
-        self.filesystems
-            .insert(scope.clone(), Arc::clone(&prepared.filesystem));
-        self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id.clone(), scope);
-        self.loaded_include_resources.insert(id);
-        self.next_disk_version = next_disk_version;
-        Ok(())
     }
 
     pub fn input(&mut self, root: &Url) -> Result<WorkspaceInput, String> {
@@ -1618,10 +1764,182 @@ impl WorkspaceResources {
             })
     }
 
+    /// Analyses one root, reading each missing include as it is requested.
+    ///
+    /// Everything happens on a copy of this workspace, so the method takes
+    /// `&self` and can run on a worker thread while the editor keeps using the
+    /// current state. One suspension is answered at a time and the same
+    /// continuation resumes, so an include never restarts the analysis.
+    ///
+    /// The reads share `job`, which bounds the work of the whole analysis rather
+    /// than of each file. Abandoning the returned value drops the filesystem
+    /// drafts and leaves no acquired resource behind.
+    pub(crate) fn analyze_root_detached(
+        &self,
+        input: &WorkspaceInput,
+        analysis_options: &adocweave::AnalysisOptions,
+        cancellation: &dyn CancellationCheck,
+        job: &FilesystemJobCoordinator,
+    ) -> Result<AnalyzedRoot, String> {
+        let options =
+            EffectiveProcessingOptions::new(analysis_options.clone(), input.options.clone())
+                .map_err(|error| error.to_string())?;
+        let root_scope = self
+            .resource_projects
+            .get(&input.root)
+            .ok_or_else(|| format!("workspace project scope is missing: {}", input.root))?
+            .clone();
+        let allowed_roots = if input.options.enable_includes {
+            configured_include_roots(
+                &input.project_config,
+                &self.roots,
+                self.filesystem_policy.as_ref(),
+            )?
+        } else {
+            Vec::new()
+        };
+        let mut acquisition = IncludeAcquisition {
+            candidate: self.clone(),
+            drafts: BTreeMap::new(),
+            root: input.root.clone(),
+            root_scope,
+            allowed_roots,
+            requested: BTreeSet::new(),
+            read_failure: None,
+            job,
+        };
+        let mut step = input.snapshot.analyze_resumable(
+            acquisition.root(),
+            &options,
+            ProjectionLimits::default(),
+            &SharedCancellation(cancellation),
+        );
+        loop {
+            match step {
+                WorkspaceAnalysisStep::Complete(draft) => {
+                    let requested_includes = acquisition.requested.clone();
+                    // A read that failed leaves its draft unusable, so a run
+                    // that got this far anyway must still keep nothing.
+                    if let Some(message) = acquisition.read_failure {
+                        return Ok(AnalyzedRoot {
+                            candidate: self.clone(),
+                            root: input.root.clone(),
+                            canonical_options: options,
+                            outcome: AnalyzedRootOutcome::ReadFailed(message),
+                            requested_includes,
+                        });
+                    }
+                    return Ok(AnalyzedRoot {
+                        candidate: acquisition.commit()?,
+                        root: input.root.clone(),
+                        canonical_options: options,
+                        outcome: AnalyzedRootOutcome::Complete(draft),
+                        requested_includes,
+                    });
+                }
+                WorkspaceAnalysisStep::Failed(error) => {
+                    return Ok(AnalyzedRoot {
+                        candidate: self.clone(),
+                        root: input.root.clone(),
+                        canonical_options: options,
+                        outcome: AnalyzedRootOutcome::Failed(error),
+                        requested_includes: acquisition.requested,
+                    });
+                }
+                WorkspaceAnalysisStep::Cancelled => {
+                    return Ok(AnalyzedRoot {
+                        candidate: self.clone(),
+                        root: input.root.clone(),
+                        canonical_options: options,
+                        outcome: AnalyzedRootOutcome::Cancelled,
+                        requested_includes: acquisition.requested,
+                    });
+                }
+                WorkspaceAnalysisStep::NeedResource(suspended) => {
+                    let target = ResourceId::new(suspended.request().target())
+                        .map_err(|error| error.to_string())?;
+                    let response = match acquisition.acquire(&target)? {
+                        AcquiredInclude::Found(text) => suspended.request().found(text),
+                        AcquiredInclude::NotFound => suspended.request().not_found(),
+                        AcquiredInclude::Failed(message) => {
+                            suspended.request().load_failed(message)
+                        }
+                    };
+                    step = suspended.resume(response, &SharedCancellation(cancellation));
+                }
+            }
+        }
+    }
+
+    /// Installs one finished analysis and the resources it acquired.
+    ///
+    /// The starting generation and the configuration are checked before
+    /// anything moves, so a workspace that changed while the analysis ran
+    /// discards the result instead of publishing a stale view.
+    pub(crate) fn apply_analyzed_root(
+        &mut self,
+        analyzed: AnalyzedRoot,
+    ) -> Result<Option<WorkspaceAnalysis>, String> {
+        let AnalyzedRoot {
+            candidate,
+            root,
+            canonical_options,
+            outcome,
+            requested_includes,
+        } = analyzed;
+        let AnalyzedRootOutcome::Complete(draft) = outcome else {
+            self.watch_requested_includes(&root, requested_includes);
+            return Ok(None);
+        };
+        if !draft.matches_canonical_context(self.generation(), &canonical_options) {
+            self.watch_requested_includes(&root, requested_includes);
+            return Ok(None);
+        }
+        *self = candidate;
+        let analysis = self
+            .inner
+            .finalize_draft(draft)
+            .map_err(|error| error.to_string())?;
+        self.accept_for_root(&root, &analysis, requested_includes)?;
+        Ok(Some(analysis))
+    }
+
+    /// Keeps watching what a run asked for even though it produced no result.
+    ///
+    /// A document whose include could not be read is exactly the document that
+    /// needs to hear about the repair. Recording the request here, rather than
+    /// when the read was attempted, keeps a run that is still in flight from
+    /// changing anything the editor can see.
+    fn watch_requested_includes(&mut self, root: &ResourceId, requested: BTreeSet<ResourceId>) {
+        for id in &requested {
+            if !self.include_interests.contains(id)
+                && self.include_interests.len() >= MAX_WATCHED_INCLUDE_RESOURCES
+            {
+                break;
+            }
+            self.include_interests.insert(id.clone());
+        }
+        let watched = requested
+            .into_iter()
+            .filter(|id| self.include_interests.contains(id))
+            .collect();
+        self.include_dependencies.insert(root.clone(), watched);
+        self.prune_unreferenced_include_resources();
+    }
+
+    /// Publishes one analysis and records what its root depends on.
+    ///
+    /// The dependency set has two sources. The analysis reports the resources it
+    /// actually used, which covers includes the starting snapshot already held.
+    /// The run reports what it asked the host for, which covers includes it
+    /// acquired and, importantly, includes that turned out to be missing. A
+    /// missing target is still something the document is waiting for, so it has
+    /// to stay watched.
     pub fn accept_for_root(
         &mut self,
         root: &ResourceId,
         analysis: &WorkspaceAnalysis,
+        requested_includes: BTreeSet<ResourceId>,
     ) -> Result<(), String> {
         if analysis.root() != root {
             return Err("workspace analysis root does not match the adoption root".to_owned());
@@ -1632,65 +1950,17 @@ impl WorkspaceResources {
         let dependencies = analysis
             .dependencies()
             .into_iter()
+            .chain(requested_includes)
             .filter(|id| self.include_interests.contains(id))
             .collect();
         self.include_dependencies.insert(root.clone(), dependencies);
-        self.pending_include_dependencies.remove(root);
         self.prune_unreferenced_include_resources();
-        Ok(())
-    }
-
-    pub fn discard_pending_include_dependencies(
-        &mut self,
-        root: &Url,
-        revision_generation: u64,
-    ) -> Result<BTreeSet<String>, String> {
-        let root = uri_id(root)?;
-        if self
-            .pending_include_dependencies
-            .get(&root)
-            .is_some_and(|(generation, _)| *generation <= revision_generation)
-        {
-            self.pending_include_dependencies.remove(&root);
-        }
-        Ok(self.prune_unreferenced_include_resources())
-    }
-
-    pub fn begin_document_revision(
-        &mut self,
-        root: &Url,
-        revision_generation: u64,
-    ) -> Result<BTreeSet<String>, String> {
-        let root = uri_id(root)?;
-        if self
-            .pending_include_dependencies
-            .get(&root)
-            .is_some_and(|(generation, _)| *generation < revision_generation)
-        {
-            self.pending_include_dependencies.remove(&root);
-        }
-        Ok(self.prune_unreferenced_include_resources())
-    }
-
-    pub fn retag_pending_include_dependencies(
-        &mut self,
-        root: &Url,
-        previous_generation: u64,
-        next_generation: u64,
-    ) -> Result<(), String> {
-        let root = uri_id(root)?;
-        if let Some((generation, _)) = self.pending_include_dependencies.get_mut(&root)
-            && *generation == previous_generation
-        {
-            *generation = next_generation;
-        }
         Ok(())
     }
 
     pub fn forget_include_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
         let root = uri_id(root)?;
         self.include_dependencies.remove(&root);
-        self.pending_include_dependencies.remove(&root);
         Ok(self.prune_unreferenced_include_resources())
     }
 
@@ -1699,11 +1969,6 @@ impl WorkspaceResources {
             .include_dependencies
             .values()
             .flat_map(BTreeSet::iter)
-            .chain(
-                self.pending_include_dependencies
-                    .values()
-                    .flat_map(|(_, dependencies)| dependencies),
-            )
             .cloned()
             .collect::<BTreeSet<_>>();
         let stale = self
@@ -1734,10 +1999,15 @@ impl WorkspaceResources {
         affected
     }
 
-    fn pending_include_dependents(&self, id: &ResourceId) -> BTreeSet<String> {
-        self.pending_include_dependencies
+    /// Returns the analysis roots that asked for one include target.
+    ///
+    /// A target that is currently missing is not a workspace resource, so the
+    /// workspace's own dependency graph cannot report it. This lookup is what
+    /// lets creating a missing include re-analyse the documents waiting for it.
+    fn include_dependents(&self, id: &ResourceId) -> BTreeSet<String> {
+        self.include_dependencies
             .iter()
-            .filter(|(_, (_, dependencies))| dependencies.contains(id))
+            .filter(|(_, dependencies)| dependencies.contains(id))
             .map(|(root, _)| root.to_string())
             .collect()
     }
@@ -2193,6 +2463,34 @@ mod tests {
         }
     }
 
+    /// Analyses one root the way an analysis worker does.
+    ///
+    /// The reads happen on a copy, so `resources` is unchanged until the result
+    /// is installed with [`WorkspaceResources::apply_analyzed_root`].
+    fn analyze_root(
+        resources: &mut WorkspaceResources,
+        root: &Url,
+    ) -> Result<AnalyzedRoot, String> {
+        let input = resources.input(root)?;
+        let job = FilesystemJobCoordinator::new(document_analysis_job_limits())
+            .map_err(|error| error.to_string())?;
+        resources.analyze_root_detached(
+            &input,
+            &adocweave::AnalysisOptions::default(),
+            &NeverCancel,
+            &job,
+        )
+    }
+
+    /// Analyses one root and installs the result, as the server does on completion.
+    fn analyze_and_apply(
+        resources: &mut WorkspaceResources,
+        root: &Url,
+    ) -> Result<Option<WorkspaceAnalysis>, String> {
+        let analyzed = analyze_root(resources, root)?;
+        resources.apply_analyzed_root(analyzed)
+    }
+
     fn write_resource_config(
         directory: &Path,
         max_files: usize,
@@ -2544,35 +2842,16 @@ mod tests {
             &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
         );
         assert!(resources.get(&included_uri).is_none());
-        let initial = resources.input(&source_uri).expect("workspace input");
-        let error = initial
-            .analyze(
-                &adocweave::AnalysisOptions::default(),
-                &adocweave::CancellationToken::new(),
-            )
-            .expect_err("include is loaded only when an open document requests it");
-        let target = error
-            .requested_resource()
-            .expect("structured missing resource")
-            .clone();
-        assert!(
-            resources
-                .load_missing_include(&source_uri, &target, 1)
-                .expect("load include")
-        );
+
+        let analysis = analyze_and_apply(&mut resources, &source_uri)
+            .expect("workspace analysis")
+            .expect("adopted analysis");
+
         assert_eq!(
             resources.inner.roots(),
-            &BTreeSet::from([uri_id(&source_uri).expect("source ID")])
+            &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
+            "an excluded include acquired during analysis must not become a root",
         );
-        let input = resources
-            .input(&source_uri)
-            .expect("updated workspace input");
-        let analysis = input
-            .analyze(
-                &adocweave::AnalysisOptions::default(),
-                &adocweave::CancellationToken::new(),
-            )
-            .expect("workspace analysis");
         assert!(analysis.analysis.source().contains("included"));
 
         std::fs::write(&included, "updated include\n").expect("updated include");
@@ -2607,13 +2886,41 @@ mod tests {
             resources.inner.roots(),
             &BTreeSet::from([uri_id(&source_uri).expect("source ID")]),
         );
-        resources
-            .discard_pending_include_dependencies(&source_uri, 1)
-            .expect("discard provisional include role");
+    }
+
+    #[test]
+    fn an_analysis_that_is_never_adopted_leaves_no_include_behind() {
+        let root = TestDirectory::new();
+        let generated = root.0.join("nested/generated");
+        std::fs::create_dir_all(&generated).expect("generated directory");
+        std::fs::write(
+            root.0.join(adocweave_config::FILE_NAME),
+            concat!(
+                "schema-version = 1\n",
+                "[resources]\ninclude = true\nroots = [\".\"]\n",
+                "[workspace.scan]\nexclude = [\"**/generated\"]\n",
+            ),
+        )
+        .expect("project configuration");
+        let source = root.0.join("root.adoc");
+        let included = generated.join("part.adoc");
+        std::fs::write(&source, "include::nested/generated/part.adoc[]\n").expect("source");
+        std::fs::write(&included, "included\n").expect("included source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let source_uri = Url::from_file_path(&source).expect("source URI");
+        let included_uri = Url::from_file_path(&included).expect("included URI");
+        let mut resources = WorkspaceResources::default();
+        resources.load_roots(&[root_uri]).expect("load workspace");
+        let before = resources.generation();
+
+        let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+        drop(analyzed);
+
         assert!(
             resources.get(&included_uri).is_none(),
-            "a terminal analysis result must release provisional includes"
+            "an abandoned analysis must not leave the include it read"
         );
+        assert_eq!(resources.generation(), before);
     }
 
     #[test]
@@ -2641,11 +2948,9 @@ mod tests {
         let mut resources = WorkspaceResources::default();
         resources.load_roots(&[root_uri]).expect("load workspace");
 
-        assert!(
-            resources
-                .load_missing_include(&source_uri, &included_id, 1)
-                .expect("load include")
-        );
+        analyze_and_apply(&mut resources, &source_uri)
+            .expect("workspace analysis")
+            .expect("adopted analysis");
         resources
             .upsert_open(included_uri.clone(), 1, "open include\n")
             .expect("open include");
@@ -2717,15 +3022,22 @@ mod tests {
         let mut resources = WorkspaceResources::default();
         resources.load_roots(&[root_uri]).expect("load workspace");
 
-        resources
-            .load_missing_include(&source_uri, &included_id, 1)
-            .expect_err("invalid UTF-8 include");
+        let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+        assert!(
+            resources
+                .apply_analyzed_root(analyzed)
+                .expect("apply failed analysis")
+                .is_none(),
+            "an unreadable include must not produce a published analysis"
+        );
+
         assert!(resources.include_interests.contains(&included_id));
         assert!(
             resources
-                .pending_include_dependencies
+                .include_dependencies
                 .get(&uri_id(&source_uri).expect("source ID"))
-                .is_some_and(|(_, dependencies)| dependencies.contains(&included_id))
+                .is_some_and(|dependencies| dependencies.contains(&included_id)),
+            "a failed read must keep the document waiting for the repair"
         );
 
         std::fs::write(&included, "repaired\n").expect("repair include");
@@ -2768,11 +3080,15 @@ mod tests {
         let mut resources = WorkspaceResources::default();
         resources.load_roots(&[root_uri]).expect("load workspace");
 
+        let analyzed = analyze_root(&mut resources, &source_uri).expect("workspace analysis");
+        resources
+            .apply_analyzed_root(analyzed)
+            .expect("apply analysis with a missing include");
         assert!(
-            !resources
-                .load_missing_include(&source_uri, &included_id, 1)
-                .expect("watch missing include")
+            resources.get(&included_uri).is_none(),
+            "the include does not exist yet"
         );
+
         std::fs::write(&included, "created\n").expect("create include");
         let update = resources
             .apply_watched_file(included_uri.clone(), WatchedFileKind::Upsert)
@@ -2797,7 +3113,7 @@ mod tests {
         )
         .expect("project configuration");
         let source = root.0.join("root.adoc");
-        std::fs::write(&source, "root\n").expect("source");
+        std::fs::write(&source, "include::missing.txt[]\n").expect("source");
         let root_uri = Url::from_directory_path(&root.0).expect("root URI");
         let source_uri = Url::from_file_path(&source).expect("source URI");
         let target_uri = Url::from_file_path(root.0.join("missing.txt")).expect("target URI");
@@ -2814,9 +3130,9 @@ mod tests {
             resources.include_interests.clone(),
         );
 
-        let error = resources
-            .load_missing_include(&source_uri, &target, 1)
-            .expect_err("interest count limit");
+        let error = analyze_root(&mut resources, &source_uri)
+            .err()
+            .expect("interest count limit");
 
         assert!(error.contains("include dependency limit"));
         assert_eq!(
@@ -2987,7 +3303,7 @@ mod tests {
         std::fs::write(&included, "trusted include\n").expect("trusted include");
         let root_uri = Url::from_directory_path(&root.0).expect("root URI");
         let document_uri = Url::from_file_path(&document).expect("document URI");
-        let include_uri = Url::from_file_path(&included).expect("include URI");
+        let _include_uri = Url::from_file_path(&included).expect("include URI");
         let mut resources = WorkspaceResources::default();
         resources
             .load_roots(std::slice::from_ref(&root_uri))
@@ -3019,15 +3335,6 @@ mod tests {
                 .expect("reloaded resource")
                 .contains("trusted reload")
         );
-        assert!(
-            resources
-                .load_missing_include(
-                    &document_uri,
-                    &ResourceId::new(include_uri.to_string()).expect("include ID"),
-                    1,
-                )
-                .expect("load include through retained root")
-        );
         resources
             .upsert_open(
                 document_uri.clone(),
@@ -3035,13 +3342,9 @@ mod tests {
                 "include::generated/part.txt[]\noverlay\n",
             )
             .expect("open through retained configuration");
-        let input = resources.input(&document_uri).expect("workspace input");
-        let analysis = input
-            .analyze(
-                &adocweave::AnalysisOptions::default(),
-                &adocweave::CancellationToken::new(),
-            )
-            .expect("workspace analysis");
+        let analysis = analyze_and_apply(&mut resources, &document_uri)
+            .expect("workspace analysis")
+            .expect("adopted analysis");
         assert!(analysis.analysis.source().contains("trusted include"));
         assert!(!analysis.analysis.source().contains("replacement include"));
 
@@ -3371,15 +3674,18 @@ mod tests {
         assert!(input.options.enable_includes);
         assert_eq!(input.snapshot.resources().count(), 1);
         assert!(input.snapshot.get(&second_id).is_none());
-        let error = input
-            .analyze(
-                &adocweave::AnalysisOptions::default(),
-                &adocweave::CancellationToken::new(),
-            )
-            .expect_err("cross-scope include is unavailable");
+        let analyzed = analyze_root(&mut resources, &first_uri).expect("workspace analysis");
+
+        // The include is refused by the root's authority, so the run answers
+        // that the resource is absent rather than leaving the preprocessor to
+        // fail on a lookup it cannot complete. The classification names what
+        // actually happened: the resource is not available to this root.
         assert_eq!(
-            error.code,
-            adocweave_workspace::WorkspaceErrorCode::Preprocess
+            analyzed
+                .failure()
+                .expect("cross-scope include is unavailable")
+                .code,
+            adocweave_workspace::WorkspaceErrorCode::MissingResource.as_str()
         );
     }
 

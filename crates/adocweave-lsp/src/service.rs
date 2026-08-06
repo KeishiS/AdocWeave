@@ -466,13 +466,6 @@ impl LanguageService {
             document.text,
             options,
         );
-        let mut affected = affected;
-        if let Ok(pruned) = self
-            .workspace
-            .begin_document_revision(&document.uri, job.request.revision.generation)
-        {
-            affected.extend(pruned);
-        }
         attach_workspace(&mut job, self.workspace.input(&document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, document.uri.as_str(), &mut jobs);
@@ -528,13 +521,6 @@ impl LanguageService {
         ) else {
             return Ok(Vec::new());
         };
-        let mut affected = affected;
-        affected.extend(
-            self.workspace.begin_document_revision(
-                &params.text_document.uri,
-                job.request.revision.generation,
-            )?,
-        );
         attach_workspace(&mut job, self.workspace.input(&params.text_document.uri));
         let mut jobs = vec![job];
         self.append_dependent_jobs(&affected, params.text_document.uri.as_str(), &mut jobs);
@@ -935,27 +921,52 @@ impl LanguageService {
         self.documents.adopt_with_format(job, result, format)
     }
 
-    pub fn adopt_workspace(
+    /// Returns a copy of the workspace for one analysis worker to read into.
+    ///
+    /// The worker acquires missing includes on this copy, so nothing it reads is
+    /// visible until [`Self::adopt_analyzed_workspace`] accepts the result.
+    pub(crate) fn workspace_copy(&self) -> crate::workspace::WorkspaceResources {
+        self.workspace.clone()
+    }
+
+    /// Installs one finished analysis together with the includes it acquired.
+    ///
+    /// Returns the resources whose diagnostics the adoption changed. The list is
+    /// empty when the workspace moved on while the worker was running, because
+    /// the result no longer describes the state the editor is showing.
+    pub fn adopt_analyzed_workspace(
         &mut self,
         job: &AnalysisJob,
-        analysis: adocweave_workspace::WorkspaceAnalysis,
-    ) -> Adoption {
+        analyzed: crate::workspace::AnalyzedRoot,
+    ) -> Vec<String> {
         if job
             .workspace
             .as_ref()
             .is_none_or(|input| !self.workspace.input_is_current(input))
         {
-            return Adoption::Stale;
+            return Vec::new();
         }
-        let root = job
-            .workspace
-            .as_ref()
-            .expect("current workspace analysis has an input")
-            .root
-            .clone();
-        if self.workspace.accept_for_root(&root, &analysis).is_err() {
-            return Adoption::Stale;
+        let Ok(Some(analysis)) = self.workspace.apply_analyzed_root(analyzed) else {
+            return Vec::new();
+        };
+        let published = analysis
+            .source_ids()
+            .into_iter()
+            .map(|source_id| source_id.to_string())
+            .collect();
+        if self.adopt_accepted_workspace(job, analysis) == Adoption::Adopted {
+            published
+        } else {
+            Vec::new()
         }
+    }
+
+    /// Hands one already accepted workspace analysis to the document store.
+    fn adopt_accepted_workspace(
+        &mut self,
+        job: &AnalysisJob,
+        analysis: adocweave_workspace::WorkspaceAnalysis,
+    ) -> Adoption {
         let resource_versions = analysis
             .resource_revisions
             .iter()
@@ -986,62 +997,8 @@ impl LanguageService {
         let workspace = self.workspace.input(&uri);
         let options = self.analysis_options_for(workspace.as_ref().ok());
         let mut retry = self.documents.reconfigure(&job.uri, options)?;
-        retry.include_resolution_attempts = job.include_resolution_attempts.clone();
         attach_workspace(&mut retry, workspace);
         Some(retry)
-    }
-
-    /// Loads one missing include requested by the current analysis and creates
-    /// a replacement job against the resulting workspace generation.
-    pub fn resolve_missing_include(
-        &mut self,
-        job: &AnalysisJob,
-        target: &adocweave_workspace::ResourceId,
-    ) -> Result<Option<AnalysisJob>, String> {
-        if !self.documents.job_is_current(job) {
-            return Ok(None);
-        }
-        let uri = job
-            .uri
-            .parse()
-            .map_err(|error| format!("analysis root URI is invalid: {error}"))?;
-        if !job
-            .workspace
-            .as_ref()
-            .is_some_and(|input| self.workspace.input_is_current(input))
-        {
-            return Ok(None);
-        }
-        let mut attempts = job.include_resolution_attempts.clone();
-        let limit = job
-            .workspace
-            .as_ref()
-            .map_or(0, |input| input.options.max_includes as usize);
-        if attempts.len() >= limit || !attempts.insert(target.clone()) {
-            return Ok(None);
-        }
-        let pending_generation = job.request.revision.generation;
-        if !self
-            .workspace
-            .load_missing_include(&uri, target, pending_generation)?
-        {
-            return Ok(None);
-        }
-        let workspace = self.workspace.input(&uri);
-        let options = self.analysis_options_for(workspace.as_ref().ok());
-        let Some(mut retry) = self.documents.reconfigure(&job.uri, options) else {
-            self.workspace
-                .discard_pending_include_dependencies(&uri, pending_generation)?;
-            return Ok(None);
-        };
-        self.workspace.retag_pending_include_dependencies(
-            &uri,
-            pending_generation,
-            retry.request.revision.generation,
-        )?;
-        retry.include_resolution_attempts = attempts;
-        attach_workspace(&mut retry, workspace);
-        Ok(Some(retry))
     }
 
     pub fn adopt_workspace_problem(
