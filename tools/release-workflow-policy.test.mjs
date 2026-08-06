@@ -1188,6 +1188,7 @@ test("native host unit tests remain exact, platform-scoped, and ordered", () => 
   const darwinStep =
     "      - name: Darwin host unit tests\n" +
     "        if: endsWith(matrix.target, '-apple-darwin')\n" +
+    "        shell: bash\n" +
     "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n";
   const windowsStep =
     "      - name: Windows host unit tests\n" +
@@ -1222,10 +1223,31 @@ test("native host unit tests remain exact, platform-scoped, and ordered", () => 
     rejects(inputs.release.replace(command, replacement), pattern);
   }
 
+  for (const [step, shell, replacement, pattern] of [
+    [darwinStep, "        shell: bash\n", "        shell: bash -e {0}\n",
+      /Darwin host unit tests must use the reviewed Bash shell/],
+    [windowsStep, "        shell: pwsh\n", "        shell: pwsh -command \". '{0}'; exit 0\"\n",
+      /Windows host unit tests must use the reviewed PowerShell shell/],
+  ]) {
+    rejects(inputs.release.replace(step, step.replace(shell, replacement)), pattern);
+  }
+
+  for (const [step, pattern] of [
+    [darwinStep, /Darwin host unit tests must not continue after failure/],
+    [windowsStep, /Windows host unit tests must not continue after failure/],
+  ]) {
+    rejects(
+      inputs.release.replace(step, step.replace("        run:", "        continue-on-error: true\n        run:")),
+      pattern,
+    );
+  }
+
   const wideningDarwin = inputs.release.replace(
     "        if: endsWith(matrix.target, '-apple-darwin')\n" +
+    "        shell: bash\n" +
     "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
     "        if: matrix.build == 'nix'\n" +
+    "        shell: bash\n" +
     "        run: nix develop .#ci -c cargo test -p adocweave-host --all-features\n",
   );
   rejects(wideningDarwin, /Darwin host unit tests must be limited to Darwin targets/);
