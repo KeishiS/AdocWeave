@@ -1,14 +1,5 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.33.0",
-  "changes": [
-    {
-      "crate": "adocweave-wasm",
-      "lint": "constructible_struct_adds_field",
-      "item": "field WasmRenderInputs.generated_bibliography",
-      "summary": "externally-constructible struct adds field",
-      "description": "公開構造体の``WasmRenderInputs``へ、構造化した参考文献を受け取る``generated_bibliography``を追加しました。Rustから構造体リテラルで生成しているコードは、そのままではコンパイルできません。",
-      "migration": "``WasmRenderInputs``の構造体リテラルへ``generated_bibliography: None``を追加してください。参考文献を生成する場合は``Some(WasmGeneratedBibliography { ... })``を指定します。"
-    }
-  ]
+  "releaseVersion": "0.34.0",
+  "changes": []
 }
