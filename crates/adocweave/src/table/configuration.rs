@@ -221,14 +221,13 @@ fn resolve_columns(
     else {
         return Ok(None);
     };
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
     let mut columns = Vec::new();
     let mut actual = 0_u64;
     let maximum_columns = maximum_columns as u64;
-    for value in value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    for value in value.split(',').map(str::trim) {
         let (count, spec) = match value.split_once('*') {
             Some((count, spec)) => match parse_unsigned(count) {
                 Ok(count) => (count, spec),
@@ -454,6 +453,80 @@ mod tests {
         assert_eq!(
             ResolvedTableConfiguration::resolve("|===", range(source), &metadata, 4),
             Err(TableConfigurationError::ColumnCount(1_000_000_000))
+        );
+    }
+
+    #[test]
+    fn empty_column_specs_resolve_to_default_columns_without_losing_position() {
+        for (value, expected_widths) in [
+            (",,", vec![None, None, None]),
+            (",2", vec![None, Some(2)]),
+            ("2,", vec![Some(2), None]),
+            ("2,,3", vec![Some(2), None, Some(3)]),
+        ] {
+            let source = format!("[cols=\"{value}\"]");
+            let metadata = BlockMetadata {
+                attributes: vec![ElementAttribute {
+                    name: Some("cols".to_owned()),
+                    value: value.to_owned(),
+                    range: range(&source),
+                }],
+                ..Default::default()
+            };
+            let configuration =
+                ResolvedTableConfiguration::resolve("|===", range(&source), &metadata, 8)
+                    .expect("empty column specs are defaults");
+            let columns = configuration.columns.expect("explicit columns");
+            assert_eq!(
+                columns
+                    .iter()
+                    .map(|column| column.width)
+                    .collect::<Vec<_>>(),
+                expected_widths,
+                "{value:?}"
+            );
+            assert!(columns.iter().enumerate().all(|(index, column)| {
+                column.index == index as u32
+                    && column.horizontal_alignment == HorizontalAlignment::Left
+                    && column.vertical_alignment == VerticalAlignment::Top
+                    && column.style == TableCellStyle::Default
+            }));
+        }
+    }
+
+    #[test]
+    fn entirely_empty_cols_attribute_keeps_column_inference() {
+        for value in ["", "   "] {
+            let source = format!("[cols=\"{value}\"]");
+            let metadata = BlockMetadata {
+                attributes: vec![ElementAttribute {
+                    name: Some("cols".to_owned()),
+                    value: value.to_owned(),
+                    range: range(&source),
+                }],
+                ..Default::default()
+            };
+            let configuration =
+                ResolvedTableConfiguration::resolve("|===", range(&source), &metadata, 8)
+                    .expect("empty cols keeps inference");
+            assert_eq!(configuration.columns, None);
+        }
+    }
+
+    #[test]
+    fn empty_column_specs_count_toward_the_column_limit() {
+        let source = "[cols=\",,,,\"]";
+        let metadata = BlockMetadata {
+            attributes: vec![ElementAttribute {
+                name: Some("cols".to_owned()),
+                value: ",,,,".to_owned(),
+                range: range(source),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            ResolvedTableConfiguration::resolve("|===", range(source), &metadata, 4),
+            Err(TableConfigurationError::ColumnCount(5))
         );
     }
 

@@ -108,6 +108,7 @@ attribution、citationを型付きpresentationへ解決します。quoteは``blo
 |対応
 |PSV／CSV／DSV／TSV、空白・制御文字・``=``を除く1文字separator、quoted multiline cell、duplication、暗黙／明示列、
 header／footer、column／row span、配置、cell styleおよびPSVのAsciiDoc block cellを型付きで扱います。
+``cols``内の空column specは既定の列として保持するため、``cols=",,"``は三列を表します。
 AsciiDoc cellは文書rootと同じblock sequence状態機械を用い、カスタムseparator delimiterによる入れ子表も扱います。
 caption、`frame`、`grid`、`stripes`、1から100までの百分率``width``および``autowidth``を解決します。
 ``width``と``autowidth``を同時に指定した場合は診断し、``autowidth``を優先します。

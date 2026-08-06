@@ -188,6 +188,15 @@
       "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
     },
     {
+      "name": "empty-table-column-specs",
+      "sourceFile": "empty-table-column-specs.adoc",
+      "expectedAstFile": "empty-table-column-specs.ast.json",
+      "expectedHtmlFile": "empty-table-column-specs.html",
+      "compatibility": "supported-subset",
+      "rationale": "cols属性の空column specを既定列として保持し、native、CLI、WASMおよびHTMLで明示した列数を共有する",
+      "contractImpact": "core-profile,core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "document-catalogs",
       "source": "footnote:n[] footnote:[anonymous] footnote:n[named] footnote:n[]\n\n<<ref>> bibanchor:ref[] indexterm:[Rust,Ownership] indexterm:[Rust,Ownership]",
       "compatibility": "supported-subset",
