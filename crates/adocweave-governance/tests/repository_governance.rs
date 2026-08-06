@@ -1051,8 +1051,14 @@ fn workspace_state_has_no_filesystem_or_host_dependency() {
         .expect("workspace manifest");
     let source =
         fs::read_to_string(root.join("crates/adocweave-workspace/src/lib.rs")).expect("workspace");
-    let host =
-        fs::read_to_string(root.join("crates/adocweave-host/src/local_resource.rs")).expect("host");
+    let mut host_files = Vec::new();
+    collect_rust_files(&root.join("crates/adocweave-host/src"), &mut host_files);
+    host_files.sort();
+    let host = host_files
+        .iter()
+        .map(|path| fs::read_to_string(path).expect("host source"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     assert!(!manifest.contains("adocweave-host"));
     for forbidden in [
