@@ -9,8 +9,9 @@ use adocweave::CancellationCheck;
 use adocweave::NeverCancel;
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
 use adocweave_host::{
-    FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession,
-    LogicalSourceId,
+    FilesystemDraftError, FilesystemJobCoordinator, FilesystemJobLimits, FilesystemReadLimits,
+    FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemDraft, LocalFilesystemPolicy,
+    LocalFilesystemSession, LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -19,6 +20,29 @@ use adocweave_workspace::{
 use async_lsp::lsp_types::Url;
 
 const MAX_WATCHED_INCLUDE_RESOURCES: usize = 10_000;
+
+pub(crate) const fn workspace_scan_job_limits() -> FilesystemJobLimits {
+    let reads = FilesystemReadLimits::DEFAULT;
+    FilesystemJobLimits {
+        max_read_operations: reads.max_files as u64,
+        max_read_bytes: reads.max_total_bytes,
+        max_read_probe_bytes: 1,
+        max_directory_operations: LocalFilesystemSession::MAX_SCAN_ENTRIES as u64
+            + LocalFilesystemPolicy::MAX_ROOTS as u64,
+        max_directory_entries: LocalFilesystemSession::MAX_SCAN_ENTRIES as u64,
+        max_directory_probe_entries: 1,
+        max_candidate_changes: reads.max_files as u64,
+        max_sessions: reads.max_files + 2,
+    }
+}
+
+const fn workspace_config_read_limits() -> FilesystemReadLimits {
+    FilesystemReadLimits {
+        max_files: FilesystemReadLimits::DEFAULT.max_files,
+        max_total_bytes: FilesystemReadLimits::DEFAULT.max_total_bytes,
+        max_resource_bytes: adocweave_config::MAX_PROJECT_FILE_BYTES,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct AnalysisRootRoles {
@@ -90,6 +114,7 @@ use adocweave_config::ProjectScopeId;
 #[derive(Debug)]
 enum ScopeConfigError {
     Config(adocweave_config::ConfigError),
+    Transient(String),
     Other(String),
 }
 
@@ -97,9 +122,8 @@ impl ScopeConfigError {
     fn preserves_previous(&self) -> bool {
         matches!(
             self,
-            Self::Config(error)
-                if error.code == adocweave_config::ConfigErrorCode::ReadFailed
-        )
+            Self::Config(error) if error.code == adocweave_config::ConfigErrorCode::ReadFailed
+        ) || matches!(self, Self::Transient(_))
     }
 }
 
@@ -107,7 +131,7 @@ impl std::fmt::Display for ScopeConfigError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Config(error) => error.fmt(formatter),
-            Self::Other(error) => formatter.write_str(error),
+            Self::Transient(error) | Self::Other(error) => formatter.write_str(error),
         }
     }
 }
@@ -164,6 +188,11 @@ struct PreparedWorkspaceRead {
     rollback: FilesystemReadRollback,
 }
 
+struct WorkspaceFilesystemCandidate {
+    session: Arc<Mutex<LocalFilesystemSession>>,
+    draft: Option<LocalFilesystemDraft>,
+}
+
 enum AdmittedIncludeTarget {
     Existing(Box<ExistingIncludeTarget>),
     Missing,
@@ -214,14 +243,38 @@ impl WorkspaceResources {
     }
 
     /// Reads roots into a detached copy and stops promptly when superseded.
+    #[cfg(test)]
     pub fn load_roots_detached_with_cancellation(
         &self,
         roots: &[Url],
         cancellation: &dyn CancellationCheck,
     ) -> LoadedRoots {
+        let job = match FilesystemJobCoordinator::new(workspace_scan_job_limits()) {
+            Ok(job) => job,
+            Err(error) => {
+                return LoadedRoots {
+                    replacement: self.clone(),
+                    error: Some(error.to_string()),
+                };
+            }
+        };
+        self.load_roots_detached_with_job(roots, cancellation, &job)
+    }
+
+    pub(crate) fn load_roots_detached_with_job(
+        &self,
+        roots: &[Url],
+        cancellation: &dyn CancellationCheck,
+        job: &FilesystemJobCoordinator,
+    ) -> LoadedRoots {
         let mut replacement = self.clone();
         let error = replacement
-            .load_roots_with_limits(roots, adapter_managed_workspace_limits(), cancellation)
+            .load_roots_with_limits_and_job(
+                roots,
+                adapter_managed_workspace_limits(),
+                cancellation,
+                job,
+            )
             .err();
         LoadedRoots { replacement, error }
     }
@@ -306,13 +359,38 @@ impl WorkspaceResources {
         Ok(())
     }
 
+    #[cfg(test)]
     fn load_roots_with_limits(
         &mut self,
         roots: &[Url],
         limits: WorkspaceLimits,
         cancellation: &dyn CancellationCheck,
     ) -> Result<(), String> {
-        self.load_roots_with_limits_after_hooks(roots, limits, cancellation, || {}, || {})
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits())
+            .map_err(|error| error.to_string())?;
+        self.load_roots_with_limits_after_hooks_and_job(
+            roots,
+            limits,
+            cancellation,
+            &job,
+            (|| {}, || {}, || {}),
+        )
+    }
+
+    fn load_roots_with_limits_and_job(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+        cancellation: &dyn CancellationCheck,
+        job: &FilesystemJobCoordinator,
+    ) -> Result<(), String> {
+        self.load_roots_with_limits_after_hooks_and_job(
+            roots,
+            limits,
+            cancellation,
+            job,
+            (|| {}, || {}, || {}),
+        )
     }
 
     #[cfg(test)]
@@ -326,6 +404,7 @@ impl WorkspaceResources {
         self.load_roots_with_limits_after_hooks(roots, limits, cancellation, || {}, after_authority)
     }
 
+    #[cfg(test)]
     fn load_roots_with_limits_after_hooks(
         &mut self,
         roots: &[Url],
@@ -334,6 +413,26 @@ impl WorkspaceResources {
         after_root_classification: impl FnOnce(),
         after_authority: impl FnOnce(),
     ) -> Result<(), String> {
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits())
+            .map_err(|error| error.to_string())?;
+        self.load_roots_with_limits_after_hooks_and_job(
+            roots,
+            limits,
+            cancellation,
+            &job,
+            (after_root_classification, after_authority, || {}),
+        )
+    }
+
+    fn load_roots_with_limits_after_hooks_and_job(
+        &mut self,
+        roots: &[Url],
+        limits: WorkspaceLimits,
+        cancellation: &dyn CancellationCheck,
+        job: &FilesystemJobCoordinator,
+        hooks: (impl FnOnce(), impl FnOnce(), impl FnOnce()),
+    ) -> Result<(), String> {
+        let (after_root_classification, after_authority, before_filesystem_commit) = hooks;
         self.last_load_failed_closed = false;
         // A reload is the only way the roots or a project file can change, so it
         // is also the only point at which a remembered configuration can go
@@ -352,6 +451,7 @@ impl WorkspaceResources {
         {
             Ok(paths) => paths,
             Err(error) => {
+                let _ = job.finish();
                 self.fail_closed(Vec::new(), limits);
                 return Err(error);
             }
@@ -364,6 +464,7 @@ impl WorkspaceResources {
             } else if path.is_file() {
                 single_file_roots.insert(path);
             } else {
+                let _ = job.finish();
                 self.fail_closed(Vec::new(), limits);
                 return Err("workspace root is neither a directory nor a regular file".to_owned());
             }
@@ -406,30 +507,46 @@ impl WorkspaceResources {
                 ));
             }
             after_authority();
-            let scan_settings = directory_roots
-                .iter()
-                .map(|root| {
-                    let snapshot = adocweave_config::discover_and_load_with_policy(
-                        root,
-                        authority
-                            .as_ref()
-                            .and_then(|policy| policy.root_policy(root))
-                            .expect("directory root has a retained policy"),
-                    )
-                    .map_err(|error| {
-                        preserve_previous
-                            .set(error.code == adocweave_config::ConfigErrorCode::ReadFailed);
-                        error.to_string()
-                    })?;
-                    Ok((
-                        root.clone(),
-                        snapshot.map_or_else(
-                            adocweave_config::WorkspaceScanSettings::default,
-                            |snapshot| snapshot.config.workspace.scan,
-                        ),
-                    ))
+            let config_session = authority
+                .as_ref()
+                .filter(|_| !paths.is_empty())
+                .map(|policy| {
+                    policy
+                        .access_existing(paths.clone(), workspace_config_read_limits())?
+                        .session()
                 })
-                .collect::<Result<BTreeMap<_, _>, String>>()?;
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let mut config_draft = config_session
+                .as_ref()
+                .map(|session| session.draft(job))
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let mut config_by_directory = BTreeMap::new();
+            let mut config_by_path = BTreeMap::new();
+            let mut scan_settings = BTreeMap::new();
+            for root in &directory_roots {
+                let snapshot = scan_config_for_path(
+                    &paths,
+                    authority.as_ref(),
+                    config_draft.as_mut(),
+                    root,
+                    root.clone(),
+                    &mut config_by_directory,
+                    &mut config_by_path,
+                )
+                .map_err(|error| {
+                    preserve_previous.set(error.preserves_previous());
+                    error.to_string()
+                })?;
+                scan_settings.insert(
+                    root.clone(),
+                    snapshot.map_or_else(
+                        adocweave_config::WorkspaceScanSettings::default,
+                        |snapshot| snapshot.config.workspace.scan,
+                    ),
+                );
+            }
             let discovery = authority
                 .as_ref()
                 .filter(|_| !directory_roots.is_empty())
@@ -443,28 +560,31 @@ impl WorkspaceResources {
                 })
                 .transpose()
                 .map_err(|error| error.to_string())?;
-            let mut candidates = match discovery.as_ref() {
-                Some(session) => session
-                    .discover_adoc_paths_with_control(
-                        |root, relative| {
-                            let directory = root.join(relative);
-                            let is_nested_workspace_root = directory != root
-                                && directory_roots.binary_search(&directory).is_ok();
-                            is_nested_workspace_root
-                                || scan_settings
-                                    .get(root)
-                                    .is_some_and(|settings| settings.excludes(relative))
-                        },
-                        || cancellation.is_cancelled(),
-                    )
-                    .map_err(|error| error.to_string())?,
+            let mut candidates = match discovery {
+                Some(session) => {
+                    let draft = session.draft(job).map_err(|error| error.to_string())?;
+                    draft
+                        .discover_adoc_paths_with_control(
+                            |root, relative| {
+                                let directory = root.join(relative);
+                                let is_nested_workspace_root = directory != root
+                                    && directory_roots.binary_search(&directory).is_ok();
+                                is_nested_workspace_root
+                                    || scan_settings
+                                        .get(root)
+                                        .is_some_and(|settings| settings.excludes(relative))
+                            },
+                            || cancellation.is_cancelled(),
+                        )
+                        .map_err(|error| error.to_string())?
+                }
                 None => Vec::new(),
             };
             candidates.extend(single_file_roots.iter().cloned());
             candidates.sort();
             candidates.dedup();
             let mut inner = Workspace::new_at_generation(limits, seed);
-            let mut filesystems = BTreeMap::new();
+            let mut filesystem_candidates = BTreeMap::new();
             let mut resource_projects = BTreeMap::new();
             let mut analysis_root_roles = BTreeMap::new();
             let mut project_plans = BTreeMap::new();
@@ -475,7 +595,15 @@ impl WorkspaceResources {
                 if cancellation.is_cancelled() {
                     return Err("workspace scan was cancelled".to_owned());
                 }
-                let config = match config_for_path_typed(&paths, authority.as_ref(), &path) {
+                let config = match scan_config_for_path(
+                    &paths,
+                    authority.as_ref(),
+                    config_draft.as_mut(),
+                    &path,
+                    path.parent().unwrap_or(&path).to_owned(),
+                    &mut config_by_directory,
+                    &mut config_by_path,
+                ) {
                     Ok(config) => config,
                     Err(error) => {
                         preserve_previous.set(error.preserves_previous());
@@ -506,7 +634,7 @@ impl WorkspaceResources {
                         "project resource limit plan changed during workspace scan".to_owned()
                     );
                 }
-                let filesystem = match filesystems.entry(scope.clone()) {
+                let filesystem = match filesystem_candidates.entry(scope.clone()) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
                         let session = authority
@@ -515,10 +643,18 @@ impl WorkspaceResources {
                             .access_existing([scope.workspace_root.clone()], plan.filesystem_reads)
                             .and_then(|access| access.session())
                             .map_err(|error| error.to_string())?;
-                        entry.insert(Arc::new(Mutex::new(session)))
+                        let draft = session.draft(job).map_err(|error| error.to_string())?;
+                        entry.insert(WorkspaceFilesystemCandidate {
+                            session: Arc::new(Mutex::new(session)),
+                            draft: Some(draft),
+                        })
                     }
                 };
-                let Some((source_id, text)) = read_scan_candidate(filesystem, &path)? else {
+                let Some((source_id, text)) = read_scan_candidate(
+                    filesystem.draft.as_mut().expect("draft is active"),
+                    &path,
+                )?
+                else {
                     continue;
                 };
                 next_disk_version = next_disk_version.saturating_add(1);
@@ -549,6 +685,33 @@ impl WorkspaceResources {
                 }
                 resource_projects.insert(id, scope);
             }
+            before_filesystem_commit();
+            if cancellation.is_cancelled() {
+                return Err("workspace scan was cancelled".to_owned());
+            }
+            drop(config_draft);
+            for candidate in filesystem_candidates.values_mut() {
+                if cancellation.is_cancelled() {
+                    return Err("workspace scan was cancelled".to_owned());
+                }
+                let draft = candidate.draft.take().expect("draft is active");
+                let mut session = candidate
+                    .session
+                    .lock()
+                    .map_err(|_| "workspace resource session lock is poisoned".to_owned())?;
+                draft
+                    .prepare_commit(&mut session)
+                    .and_then(adocweave_host::PreparedFilesystemCommit::commit)
+                    .map_err(|error| error.to_string())?;
+            }
+            if cancellation.is_cancelled() {
+                return Err("workspace scan was cancelled".to_owned());
+            }
+            job.finish().map_err(|error| error.to_string())?;
+            let filesystems = filesystem_candidates
+                .into_iter()
+                .map(|(scope, candidate)| (scope, candidate.session))
+                .collect();
             self.inner = inner;
             self.analysis_root_roles = analysis_root_roles;
             self.roots = paths.clone();
@@ -568,6 +731,11 @@ impl WorkspaceResources {
             Ok(())
         })();
         if let Err(error) = load_result {
+            if cancellation.is_cancelled() {
+                let _ = job.cancel();
+            } else {
+                let _ = job.finish();
+            }
             if !preserve_previous.get() {
                 self.fail_closed(paths, limits);
             }
@@ -1691,14 +1859,12 @@ impl WorkspaceResources {
 }
 
 fn read_scan_candidate(
-    filesystem: &Mutex<LocalFilesystemSession>,
+    filesystem: &mut LocalFilesystemDraft,
     path: &Path,
 ) -> Result<Option<(LogicalSourceId, Arc<str>)>, String> {
     let uri = Url::from_file_path(path)
         .map_err(|()| format!("cannot convert workspace path to URI: {}", path.display()))?;
     let outcome = filesystem
-        .lock()
-        .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
         .read_utf8_outcome(
             LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
             path,
@@ -1875,6 +2041,80 @@ fn config_for_path_typed(
             )
         })?;
     adocweave_config::discover_and_load_with_policy(path, policy).map_err(ScopeConfigError::Config)
+}
+
+fn scan_config_for_path(
+    roots: &[PathBuf],
+    filesystem_policy: Option<&LocalFilesystemPolicy>,
+    filesystem: Option<&mut LocalFilesystemDraft>,
+    path: &Path,
+    cache_key: PathBuf,
+    by_directory: &mut BTreeMap<PathBuf, Option<adocweave_config::ConfigSnapshot>>,
+    by_path: &mut BTreeMap<PathBuf, adocweave_config::ConfigSnapshot>,
+) -> Result<Option<adocweave_config::ConfigSnapshot>, ScopeConfigError> {
+    if let Some(cached) = by_directory.get(&cache_key) {
+        return Ok(cached.clone());
+    }
+    let boundary = roots
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count());
+    let Some(boundary) = boundary else {
+        by_directory.insert(cache_key, None);
+        return Ok(None);
+    };
+    let policy = filesystem_policy
+        .and_then(|filesystem| filesystem.root_policy(boundary))
+        .ok_or_else(|| {
+            ScopeConfigError::Other(
+                "workspace root has no retained filesystem authority".to_owned(),
+            )
+        })?;
+    let discovered =
+        adocweave_config::discover_with_policy(path, policy).map_err(ScopeConfigError::Config)?;
+    let snapshot = match discovered {
+        None => None,
+        Some(config_path) => {
+            if let Some(cached) = by_path.get(&config_path) {
+                Some(cached.clone())
+            } else {
+                let filesystem = filesystem.ok_or_else(|| {
+                    ScopeConfigError::Other(
+                        "workspace configuration has no filesystem draft".to_owned(),
+                    )
+                })?;
+                let uri = Url::from_file_path(&config_path).map_err(|()| {
+                    ScopeConfigError::Other(format!(
+                        "cannot convert project configuration path to URI: {}",
+                        config_path.display()
+                    ))
+                })?;
+                let source_id = LogicalSourceId::new(uri.to_string())
+                    .map_err(|error| ScopeConfigError::Other(error.to_string()))?;
+                let loaded = match filesystem.read_utf8_no_symlinks_outcome(source_id, &config_path)
+                {
+                    Ok(FilesystemReadOutcome::Found(loaded)) => loaded,
+                    Ok(FilesystemReadOutcome::NotFound { .. }) => {
+                        return Err(ScopeConfigError::Transient(
+                            "the project file disappeared while it was read".to_owned(),
+                        ));
+                    }
+                    Err(error @ FilesystemDraftError::Job(_)) => {
+                        return Err(ScopeConfigError::Other(error.to_string()));
+                    }
+                    Err(error) => {
+                        return Err(ScopeConfigError::Transient(error.to_string()));
+                    }
+                };
+                let snapshot = adocweave_config::ConfigSnapshot::from_filesystem_source(&loaded)
+                    .map_err(ScopeConfigError::Config)?;
+                by_path.insert(config_path, snapshot.clone());
+                Some(snapshot)
+            }
+        }
+    };
+    by_directory.insert(cache_key, snapshot.clone());
+    Ok(snapshot)
 }
 
 fn scope_and_config_for_path_typed(
@@ -2065,14 +2305,15 @@ mod tests {
         .expect("filesystem policy")
         .session()
         .expect("filesystem session");
-        let filesystem = Mutex::new(session);
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+        let mut filesystem = session.draft(&job).expect("filesystem draft");
         std::fs::remove_file(&vanished).expect("remove discovered source");
 
         assert_eq!(
-            read_scan_candidate(&filesystem, &candidates[0]).expect("vanished candidate"),
+            read_scan_candidate(&mut filesystem, &candidates[0]).expect("vanished candidate"),
             None
         );
-        let (source_id, text) = read_scan_candidate(&filesystem, &candidates[1])
+        let (source_id, text) = read_scan_candidate(&mut filesystem, &candidates[1])
             .expect("remaining candidate")
             .expect("remaining source");
         assert_eq!(
@@ -2080,6 +2321,197 @@ mod tests {
             Url::from_file_path(&remaining).unwrap().as_str()
         );
         assert_eq!(text.as_ref(), "remaining\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_config_replaced_by_a_symlink_after_discovery_is_not_read() {
+        use std::os::unix::fs::symlink;
+
+        let root = TestDirectory::new();
+        let config = root.0.join(adocweave_config::FILE_NAME);
+        let replacement = root.0.join("replacement.toml");
+        std::fs::write(&config, "schema-version = 1\n").expect("project configuration");
+        std::fs::write(&replacement, "schema-version = 1\n").expect("replacement");
+        let policy = LocalFilesystemPolicy::new([root.0.clone()], FilesystemReadLimits::DEFAULT)
+            .expect("filesystem policy");
+        let discovered = adocweave_config::discover_with_policy(
+            &root.0,
+            policy.root_policy(&root.0).expect("root policy"),
+        )
+        .expect("configuration discovery")
+        .expect("configuration path");
+        std::fs::remove_file(&config).expect("remove discovered configuration");
+        symlink(&replacement, &config).expect("replace configuration with symlink");
+        let session = policy
+            .access_existing([root.0.clone()], workspace_config_read_limits())
+            .and_then(|access| access.session())
+            .expect("configuration session");
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+        let mut draft = session.draft(&job).expect("configuration draft");
+        let source_id = LogicalSourceId::new(
+            Url::from_file_path(&discovered)
+                .expect("configuration URI")
+                .to_string(),
+        )
+        .expect("source ID");
+
+        assert!(
+            draft
+                .read_utf8_no_symlinks_outcome(source_id, &discovered)
+                .is_err()
+        );
+        let usage = job.usage().expect("job usage");
+        assert_eq!(usage.read_operations, 1);
+        assert_eq!(usage.read_bytes, 0);
+    }
+
+    #[test]
+    fn workspace_scan_accounts_for_discovery_and_multiple_project_scopes_in_one_job() {
+        let root = TestDirectory::new();
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested project");
+        std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
+        std::fs::write(
+            nested.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n",
+        )
+        .expect("nested project configuration");
+        std::fs::write(nested.join("nested.adoc"), "nested\n").expect("nested source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let resources = WorkspaceResources::default();
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+
+        let loaded = resources.load_roots_detached_with_job(
+            std::slice::from_ref(&root_uri),
+            &NeverCancel,
+            &job,
+        );
+
+        assert_eq!(loaded.error, None);
+        let usage = job.usage().expect("job usage");
+        assert_eq!(usage.sessions, 4);
+        assert_eq!(usage.read_operations, 3);
+        assert_eq!(usage.read_bytes, 31);
+        assert_eq!(usage.candidate_changes, 3);
+    }
+
+    #[test]
+    fn workspace_scan_read_limit_is_shared_across_project_scopes() {
+        let root = TestDirectory::new();
+        let nested = root.0.join("nested");
+        std::fs::create_dir(&nested).expect("nested project");
+        std::fs::write(root.0.join("root.adoc"), "root\n").expect("root source");
+        std::fs::write(
+            nested.join(adocweave_config::FILE_NAME),
+            "schema-version = 1\n",
+        )
+        .expect("nested project configuration");
+        std::fs::write(nested.join("nested.adoc"), "nested\n").expect("nested source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial workspace");
+        assert!(!resources.inner.roots().is_empty());
+        let job = FilesystemJobCoordinator::new(FilesystemJobLimits {
+            max_read_operations: 2,
+            ..workspace_scan_job_limits()
+        })
+        .expect("scan job");
+
+        let loaded = resources.load_roots_detached_with_job(
+            std::slice::from_ref(&root_uri),
+            &NeverCancel,
+            &job,
+        );
+
+        assert_eq!(
+            loaded.error.as_deref(),
+            Some("filesystem job limit exceeded: read operations (2)")
+        );
+        let usage = job.usage().expect("job usage");
+        assert_eq!(usage.sessions, 4);
+        assert_eq!(usage.read_operations, 2);
+        assert_eq!(usage.candidate_changes, 2);
+        assert!(
+            resources
+                .apply_loaded_roots(loaded, &[])
+                .expect_err("job limit must fail closed")
+                .contains("filesystem job limit exceeded")
+        );
+        assert!(resources.inner.roots().is_empty());
+        assert!(resources.last_load_failed_closed());
+    }
+
+    #[test]
+    fn cancelled_workspace_scan_cancels_its_filesystem_job() {
+        let root = TestDirectory::new();
+        std::fs::write(root.0.join("document.adoc"), "document\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let resources = WorkspaceResources::default();
+        let cancellation = adocweave::CancellationToken::new();
+        cancellation.cancel();
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+
+        let loaded = resources.load_roots_detached_with_job(
+            std::slice::from_ref(&root_uri),
+            &cancellation,
+            &job,
+        );
+
+        assert_eq!(
+            loaded.error.as_deref(),
+            Some("local resource cannot be verified: local filesystem scan was cancelled")
+        );
+        assert_eq!(
+            job.finish(),
+            Err(adocweave_host::FilesystemJobError::Cancelled)
+        );
+        assert!(resources.inner.roots().is_empty());
+    }
+
+    #[test]
+    fn cancellation_after_the_last_read_discards_the_candidate_before_commit() {
+        let root = TestDirectory::new();
+        let document = root.0.join("document.adoc");
+        std::fs::write(&document, "before\n").expect("source");
+        let root_uri = Url::from_directory_path(&root.0).expect("root URI");
+        let document_uri = Url::from_file_path(&document).expect("document URI");
+        let mut resources = WorkspaceResources::default();
+        resources
+            .load_roots(std::slice::from_ref(&root_uri))
+            .expect("initial workspace");
+        let previous = resources
+            .get(&document_uri)
+            .expect("previous source")
+            .text()
+            .clone();
+        std::fs::write(&document, "after\n").expect("replacement source");
+        let mut replacement = resources.clone();
+        let cancellation = adocweave::CancellationToken::new();
+        let job = FilesystemJobCoordinator::new(workspace_scan_job_limits()).expect("scan job");
+
+        let error = replacement
+            .load_roots_with_limits_after_hooks_and_job(
+                std::slice::from_ref(&root_uri),
+                adapter_managed_workspace_limits(),
+                &cancellation,
+                &job,
+                (|| {}, || {}, || cancellation.cancel()),
+            )
+            .expect_err("cancelled candidate");
+
+        assert_eq!(error, "workspace scan was cancelled");
+        assert_eq!(
+            job.finish(),
+            Err(adocweave_host::FilesystemJobError::Cancelled)
+        );
+        assert_eq!(
+            resources.get(&document_uri).map(|resource| resource.text()),
+            Some(&previous)
+        );
+        assert!(replacement.inner.roots().is_empty());
     }
 
     #[test]

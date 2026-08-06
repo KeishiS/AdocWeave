@@ -11,10 +11,15 @@ pub struct FilesystemReadLimits {
 
 impl Default for FilesystemReadLimits {
     fn default() -> Self {
-        Self {
-            max_files: 10_000,
-            max_total_bytes: 50 * 1024 * 1024,
-            max_resource_bytes: 10 * 1024 * 1024,
-        }
+        Self::DEFAULT
     }
+}
+
+impl FilesystemReadLimits {
+    /// Built-in limits used when a consumer supplies no project override.
+    pub const DEFAULT: Self = Self {
+        max_files: 10_000,
+        max_total_bytes: 50 * 1024 * 1024,
+        max_resource_bytes: 10 * 1024 * 1024,
+    };
 }

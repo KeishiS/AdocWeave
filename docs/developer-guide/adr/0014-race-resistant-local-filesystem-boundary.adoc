@@ -109,6 +109,18 @@ fileの本文を読む前とdirectory iteratorを進める前に、複製でき�
 通常の上限超過としてjobを停止します。取消、上限超過または会計不整合のうち、最初に確定した終了理由を維持します。
 遅れて完了したI/Oは使用量だけを確定し、終了理由を上書きしません。
 
+Language Serverの初期ワークスペース走査では、ディレクトリ列挙用sessionと、各project scopeの本文読込用sessionを
+一つのcoordinatorへ参加させます。各project scopeでは走査中の全読込を一つのdraftへ蓄積し、候補Workspaceの
+構築が成功した後にだけ候補sessionへ反映します。計画中はliveのWorkspaceとsessionを変更しません。
+置換要求で棄却した走査と取消した走査は候補全体を破棄します。受理した走査が安全性またはresource上限の検査に
+失敗した場合は、従来どおり空の信頼済みstateをfail closedで採用します。
+
+初期走査のjob上限は、本文読込10,000回、取得本文50 MiB、directory entry 100,000件、候補変更10,000回、
+参加session 10,002件とします。上限直後のEOFを確認するため、本文とdirectory entryにそれぞれ1単位のprobeを
+設けます。directoryを開く試行は100,128回までとし、entry上限に空の走査root 128件を加えた場合も扱えます。
+project設定の探索後に読む``.adocweave.toml``とAsciiDoc本文は同じ読込回数・byte上限を共有します。
+project設定にあるsession単位の上限は引き続き適用し、job上限は複数project scopeの合計に適用します。
+
 == 検証方針
 
 filesystem操作を注入できるadapter contract testで、policy作成後にrootのpathを別ディレクトリへのsymlinkへ

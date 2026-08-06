@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adocweave::CancellationToken;
+use adocweave::{CancellationCheck, CancellationToken};
+use adocweave_host::{FilesystemJobCoordinator, FilesystemJobError};
 use async_lsp::lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent, Url};
 
 use crate::service::{LanguageService, WorkspaceFileChanges};
@@ -98,19 +99,60 @@ enum WorkspaceScanPhase {
 
 struct ActiveWorkspaceScan {
     sequence: u64,
-    cancellation: Arc<CancellationToken>,
+    cancellation: Arc<WorkspaceScanCancellation>,
     accept_result: bool,
     rejection: Option<String>,
 }
 
 pub(super) struct WorkspaceScanStart {
     sequence: u64,
-    cancellation: Arc<CancellationToken>,
+    cancellation: Arc<WorkspaceScanCancellation>,
 }
 
 impl WorkspaceScanStart {
-    pub(super) fn into_parts(self) -> (u64, Arc<CancellationToken>) {
+    pub(super) fn into_parts(self) -> (u64, Arc<WorkspaceScanCancellation>) {
         (self.sequence, self.cancellation)
+    }
+}
+
+pub(super) struct WorkspaceScanCancellation {
+    token: CancellationToken,
+    filesystem_job: Result<FilesystemJobCoordinator, FilesystemJobError>,
+}
+
+impl WorkspaceScanCancellation {
+    fn new() -> Self {
+        Self {
+            token: CancellationToken::new(),
+            filesystem_job: FilesystemJobCoordinator::new(
+                crate::workspace::workspace_scan_job_limits(),
+            ),
+        }
+    }
+
+    pub(super) fn cancel(&self) {
+        // Stop the job before making cancellation visible to the worker. Once
+        // the token is true, the job is therefore already terminal and cannot
+        // race to `Finished` after the worker's final token check.
+        if let Ok(job) = &self.filesystem_job {
+            let _ = job.cancel();
+        }
+        self.token.cancel();
+    }
+
+    pub(super) fn filesystem_job(&self) -> Result<&FilesystemJobCoordinator, String> {
+        self.filesystem_job.as_ref().map_err(ToString::to_string)
+    }
+
+    #[cfg(test)]
+    fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+}
+
+impl CancellationCheck for WorkspaceScanCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
     }
 }
 
@@ -212,7 +254,7 @@ impl WorkspaceScanCoordinator {
     fn start(&mut self) -> WorkspaceScanStart {
         debug_assert!(matches!(self.phase, WorkspaceScanPhase::Idle));
         self.sequence = self.sequence.saturating_add(1);
-        let cancellation = Arc::new(CancellationToken::new());
+        let cancellation = Arc::new(WorkspaceScanCancellation::new());
         self.phase = WorkspaceScanPhase::Running(ActiveWorkspaceScan {
             sequence: self.sequence,
             cancellation: Arc::clone(&cancellation),
@@ -571,7 +613,6 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use adocweave::CancellationCheck;
     use serde_json::json;
 
     use super::*;
@@ -612,12 +653,21 @@ mod tests {
     fn replacement_scans_are_coalesced_without_overlapping_workers() {
         let mut coordinator = WorkspaceScanCoordinator::default();
         let old = coordinator.request_replacement().expect("initial scan");
+        let old_filesystem_job = old
+            .cancellation
+            .filesystem_job()
+            .expect("filesystem job")
+            .clone();
 
         for _ in 0..100 {
             assert!(coordinator.request_replacement().is_none());
         }
 
         assert!(old.cancellation.is_cancelled());
+        assert_eq!(
+            old_filesystem_job.finish(),
+            Err(FilesystemJobError::Cancelled)
+        );
         assert!(!coordinator.accepts_active_result());
         let completion = coordinator
             .complete_active(old.sequence)

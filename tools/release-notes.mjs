@@ -52,7 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#492：filesystem resourceの不在を正常な取得結果として扱い、候補stateを安全に採用または破棄できる基礎を追加しました。",
+  "#492：filesystem resourceの不在を正常な取得結果として扱い、Language Serverの初期走査を複数sessionで共有するjob上限とdraftへ移行しました。",
   "#495：tableの``cols``属性にある空のcolumn specを既定列として保持し、明示した列数どおりに解析するよう修正しました。",
 ];
 
@@ -103,6 +103,8 @@ const contractNotes = [
   "Language Serverの初期走査では、列挙後に消えたfileを走査全体の失敗にせず、その候補だけを省略します。",
   "Rust host APIへ``FilesystemJobCoordinator``を追加しました。一つのjobに参加する複数sessionで、resource取得、取得byte、directory列挙、entryおよび候補変更の上限を共有します。I/O前の予約により並行処理でも残量を重複利用せず、draftを破棄しても使用量を戻しません。",
   "``LocalFilesystemDraft``は作成時にcoordinatorを必須とし、file読込とdirectory走査を同じjobへ計上します。取消や上限超過の後にI/Oが完了しても、最初の終了理由を維持したまま実際の使用量を確定します。",
+  "policyを定義するfileを読むRust consumer向けに、jobへ計上しながらroot内を含むsymlinkを拒否する``LocalFilesystemDraft::read_utf8_no_symlinks_outcome``を追加しました。",
+  "Language Serverの初期ワークスペース走査は、ディレクトリ列挙、project設定の読込および全project scopeの本文読込を一つのfilesystem jobへ計上します。各scopeの変更はdraftへ隔離し、候補Workspaceの構築後にだけ採用します。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -132,6 +134,7 @@ const knownConstraints = [
   "Language Serverはworkspaceの走査を初期化の応答後に、要求へ応答するthreadの外で行います。走査中もほかの要求へ応答しますが、走査の完了前は、開いた文書の解析にworkspace内のほかの文書が反映されません。走査の完了後に再解析します。",
   "Linuxでfilesystemのhandle相対競合耐性を利用するには、``/proc/self/fd``を読み取れる実行環境が必要です。利用できない場合や、開いたfileのpathとidentityを確認できない場合は、安全性の低いpath検査へ切り替えず、``local-target-unverifiable``としてworkspaceの読込を拒否します。macOSとWindowsは、同時変更のない静的なfilesystem snapshotだけを前提とします。",
   "一つのfilesystem policyが保持できるrootは128件までです。読込対象を増やす場合は、設定のrootを必要な上位directoryへまとめてください。",
+  "Language Serverの初期ワークスペース走査は、複数project scopeの合計で設定と本文の読込10,000回、取得内容50 MiB、directory entry 100,000件、候補変更10,000回、参加session 10,002件までです。project設定のsession単位の上限も別に適用します。",
   "``workspace.scan.exclude``はLanguage Serverの初期走査だけに適用します。CLI入力、明示的に開いた文書、file watcherの通知およびinclude先を拒否する設定ではありません。",
 ];
 

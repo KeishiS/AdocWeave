@@ -18,8 +18,8 @@ use adocweave::output::html::{HtmlDocumentMode, RenderPolicy};
 use adocweave::preprocess::PreprocessOptions;
 use adocweave::{AnalysisOptions, SyntaxMode};
 use adocweave_host::{
-    FilesystemReadLimits, LoadedLocalTarget, LocalTargetError, LocalTargetPolicy,
-    LocalTargetSession,
+    FilesystemReadLimits, LoadedFilesystemSource, LoadedLocalTarget, LocalTargetError,
+    LocalTargetPolicy, LocalTargetSession,
 };
 use adocweave_workspace::RetainedResourceLimits;
 use serde::Deserialize;
@@ -204,14 +204,22 @@ impl ConfigSnapshot {
     }
 
     fn from_loaded(loaded: LoadedLocalTarget) -> Result<Self, ConfigError> {
-        let path = loaded.canonical_path().to_owned();
+        Self::from_source(loaded.canonical_path().to_owned(), loaded.source())
+    }
+
+    /// Parses a configuration from a source already read through a retained
+    /// filesystem authority.
+    pub fn from_filesystem_source(loaded: &LoadedFilesystemSource) -> Result<Self, ConfigError> {
+        Self::from_source(loaded.canonical_path().to_owned(), loaded.source())
+    }
+
+    fn from_source(path: PathBuf, source: &str) -> Result<Self, ConfigError> {
         let directory = path.parent().ok_or_else(|| {
             ConfigError::new(
                 ConfigErrorCode::ReadFailed,
                 "the project file has no parent directory",
             )
         })?;
-        let source = loaded.source();
         let content_sha256 = Sha256::digest(source.as_bytes()).into();
         let config = ResolvedProjectConfig::parse(source, directory)?;
         Ok(Self {
@@ -227,7 +235,21 @@ impl ConfigSnapshot {
 /// The boundary must exist. A missing `start` searches from its nearest
 /// existing parent, while an existing file starts from its parent.
 pub fn discover(start: &Path, boundary: &Path) -> Result<Option<PathBuf>, ConfigError> {
-    let mut search = config_search(start, boundary)?;
+    discover_from_search(config_search(start, boundary)?)
+}
+
+/// Finds the nearest project file through an already opened root policy.
+///
+/// The policy's root is the search boundary. The returned path identifies the
+/// project file but does not read its contents.
+pub fn discover_with_policy(
+    start: &Path,
+    policy: &LocalTargetPolicy,
+) -> Result<Option<PathBuf>, ConfigError> {
+    discover_from_search(config_search_with_policy(start, policy.clone())?)
+}
+
+fn discover_from_search(mut search: ConfigSearch) -> Result<Option<PathBuf>, ConfigError> {
     loop {
         let candidate = search.directory.join(FILE_NAME);
         match search.policy.inspect_candidate_no_symlinks(&candidate) {
