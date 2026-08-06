@@ -91,7 +91,7 @@ struct FilesystemProvenance {
 }
 
 /// Immutable UTF-8 source paired with its logical identity.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LoadedFilesystemSource {
     source_id: LogicalSourceId,
     source: Arc<str>,
@@ -212,7 +212,21 @@ impl LoadedFilesystemSource {
     pub fn into_parts(self) -> (LogicalSourceId, Arc<str>) {
         (self.source_id, self.source)
     }
+
+    pub fn into_bound_parts(self) -> (LogicalSourceId, Arc<str>, FilesystemResourceBinding) {
+        (self.source_id, self.source, self.binding)
+    }
 }
+
+impl PartialEq for LoadedFilesystemSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.source_id == other.source_id
+            && self.source == other.source
+            && self.provenance == other.provenance
+    }
+}
+
+impl Eq for LoadedFilesystemSource {}
 
 /// Per-command filesystem capability shared by all native resource consumers.
 ///
@@ -559,12 +573,10 @@ impl LocalFilesystemSession {
     /// paths do not become semantic source IDs.
     pub fn scan_utf8(
         &mut self,
-        mut source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
+        source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, ResourceError> {
-        let mut draft = self.draft()?;
-        let loaded = draft.scan_utf8(&mut source_id)?;
-        draft.prepare_commit(self)?.commit();
-        Ok(loaded)
+        self.invalidate_active_draft();
+        self.scan_utf8_in_place(source_id)
     }
 
     fn scan_utf8_in_place(
@@ -808,10 +820,8 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
-        let mut draft = self.draft()?;
-        let loaded = draft.read_utf8(source_id, path)?;
-        draft.prepare_commit(self)?.commit();
-        Ok(loaded)
+        self.invalidate_active_draft();
+        self.read_utf8_in_place(source_id, path)
     }
 
     fn read_utf8_in_place(
@@ -829,10 +839,8 @@ impl LocalFilesystemSession {
         base: &Path,
         target: &str,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
-        let mut draft = self.draft()?;
-        let loaded = draft.read_target_utf8(source_id, base, target)?;
-        draft.prepare_commit(self)?.commit();
-        Ok(loaded)
+        self.invalidate_active_draft();
+        self.read_target_utf8_in_place(source_id, base, target)
     }
 
     fn read_target_utf8_in_place(
@@ -887,10 +895,8 @@ impl LocalFilesystemSession {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, ResourceError> {
-        let mut draft = self.draft()?;
-        let loaded = draft.reread_utf8(source_id, path)?;
-        draft.prepare_commit(self)?.commit();
-        Ok(loaded)
+        self.invalidate_active_draft();
+        self.reread_utf8_in_place(source_id, path)
     }
 
     fn reread_utf8_in_place(
@@ -1012,6 +1018,10 @@ impl LocalFilesystemSession {
         {
             return Err(ResourceError::InvalidRollback);
         }
+        let candidate_restore = match &rollback.accounting.previous_candidate {
+            Some(previous) => Some((previous.clone(), self.reserve_binding_generation()?)),
+            None => None,
+        };
         match rollback.accounting.previous_charge {
             Some(previous) => {
                 self.state
@@ -1030,9 +1040,8 @@ impl LocalFilesystemSession {
             self.state.budget.restore_charge(charge.bytes);
             self.state.charged.insert(path, charge);
         }
-        match rollback.accounting.previous_candidate {
-            Some(previous) => {
-                let generation = self.reserve_binding_generation()?;
+        match candidate_restore {
+            Some((previous, generation)) => {
                 self.state.candidates.insert(
                     rollback.candidate_path.clone(),
                     FilesystemCandidateBinding {
@@ -2012,6 +2021,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rollback_reserves_its_binding_generation_before_mutating_state() {
+        let root = TestDir::new("rollback-binding-generation-exhausted");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "a").expect("source");
+        let mut session = policy(root.path(), 100).session().expect("session");
+        session.read_utf8(source_id(), &path).expect("initial read");
+        fs::write(&path, "bb").expect("replacement");
+        let (_, rollback) = session
+            .reread_utf8_with_rollback(source_id(), &path)
+            .expect("reread");
+        let budget = session.state.budget;
+        let charged = session.state.charged.clone();
+        let candidates = session.state.candidates.clone();
+        session
+            .next_binding_generation
+            .store(u64::MAX, Ordering::Relaxed);
+
+        assert_eq!(
+            session.rollback_reread(rollback),
+            Err(ResourceError::BindingGenerationExhausted)
+        );
+        assert_eq!(session.state.budget, budget);
+        assert_eq!(session.state.charged, charged);
+        assert_eq!(session.state.candidates, candidates);
+    }
+
+    #[test]
+    fn loaded_source_value_equality_ignores_lifecycle_bindings() {
+        let root = TestDir::new("loaded-source-value-equality");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "text").expect("source");
+        let mut first = policy(root.path(), 100).session().expect("first session");
+        let mut second = policy(root.path(), 100).session().expect("second session");
+
+        let first_loaded = first.read_utf8(source_id(), &path).expect("first read");
+        let second_loaded = second.read_utf8(source_id(), &path).expect("second read");
+
+        assert_ne!(first_loaded.binding(), second_loaded.binding());
+        assert_eq!(first_loaded, second_loaded);
+    }
+
     fn path_source_id(path: &Path) -> Result<LogicalSourceId, ResourceError> {
         LogicalSourceId::new(format!(
             "logical:{}",
@@ -2865,7 +2916,7 @@ mod tests {
             session.read_utf8(source_id(), &path),
             Err(ResourceError::ResourceTooLarge(_))
         ));
-        assert_eq!(session.state.sessions[0].inspected_paths(), 0);
+        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
 
         fs::write(&path, "ok").expect("accepted source");
         let (_, rollback) = session
@@ -2873,7 +2924,7 @@ mod tests {
             .expect("reread");
         session.rollback_reread(rollback).expect("rollback");
 
-        assert_eq!(session.state.sessions[0].inspected_paths(), 0);
+        assert_eq!(session.state.sessions[0].inspected_paths(), 1);
         assert_eq!((session.budget().files(), session.budget().bytes()), (0, 0));
     }
 

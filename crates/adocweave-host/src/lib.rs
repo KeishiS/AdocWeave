@@ -12,7 +12,7 @@ pub use local_resource::{
     DerivedFilesystemRoots, FilesystemReadLimits, FilesystemReadRollback, FilesystemReleaseOutcome,
     FilesystemResourceBinding, LoadedFilesystemSource, LocalFilesystemAccess, LocalFilesystemDraft,
     LocalFilesystemPolicy, LocalFilesystemSession, LocalFilesystemSessionId, LogicalSourceId,
-    ResourceBudget, ResourceError,
+    PreparedFilesystemCommit, ResourceBudget, ResourceError,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalBytes, LoadedLocalTarget, LocalTargetError,
