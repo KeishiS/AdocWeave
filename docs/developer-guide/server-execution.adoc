@@ -133,15 +133,19 @@ filesystem adapter、symlink判定および全rootで共有するファイル数
 ``.adoc``の通常ファイル候補を決定的な順序で列挙します。Language Serverは各候補に最も近い
 ``.adocweave.toml``を解決してから、その設定の読込上限を持つsessionで本文を読みます。呼出側はpathから
 公開用の論理IDを割り当てます。個別読込では
-呼出側が``LogicalSourceId``と絶対pathを同時に渡します。どちらの読込結果も
-``LoadedFilesystemSource``として返します。
-この値は論理ID、不変な本文および世代付きresource bindingを一回の読込結果として保持します。bindingは読込に
+呼出側が``LogicalSourceId``と絶対pathを同時に渡します。単一resourceの読込結果は
+``FilesystemReadOutcome``として返します。対象が存在する``Found``は``LoadedFilesystemSource``を保持し、
+対象fileの不在を確認した``NotFound``は論理IDと候補pathを保持します。権限不足、root外のpath、symlink検証失敗、
+不正なUTF-8および上限超過は``NotFound``へ変換せず、従来どおりerrorとして返します。
+``LoadedFilesystemSource``は論理ID、不変な本文および世代付きresource bindingを一回の読込結果として保持します。bindingは読込に
 使用したsession、候補path、canonical pathおよびgenerationを対応付けます。検査に使ったcanonical pathはfieldとして
 直接構築できないprovenanceへ分離しますが、依存関係の監視を行うadapterはaccessorから参照できます。
 相対pathだけを渡して複数rootのどれかを暗黙に選ぶAPIは提供しません。
 
 呼出側がfilesystemの読込結果と別の状態更新をまとめて採用する場合は、sessionから排他的な
 ``LocalFilesystemDraft``を作り、候補上で読込とbinding解放を行います。途中の失敗または取消ではdraftを破棄します。
+``NotFound``はdraftを失敗状態にせず、同じ候補pathの旧bindingと、最後の別名である場合の本文および保持量を候補stateから
+除去します。draftを破棄した場合はlive stateを維持し、採用した場合だけ不在の状態を反映します。
 採用時は``prepare_commit``でsession ID、revisionおよびleaseを検証し、その後に失敗しないcommitでlive stateを
 置き換えます。
 

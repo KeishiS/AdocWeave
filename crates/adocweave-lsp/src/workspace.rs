@@ -9,7 +9,8 @@ use adocweave::CancellationCheck;
 use adocweave::NeverCancel;
 use adocweave::preprocess::{PreprocessOptions, ProjectionLimits, SafeMode};
 use adocweave_host::{
-    FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession, LogicalSourceId,
+    FilesystemReadOutcome, FilesystemReadRollback, LocalFilesystemPolicy, LocalFilesystemSession,
+    LogicalSourceId,
 };
 use adocweave_workspace::{
     Generation, ResourceId, RetainedLayerCharge, RetainedResourceBudget, RetainedResourceLimits,
@@ -523,11 +524,14 @@ impl WorkspaceResources {
                 let file = filesystem
                     .lock()
                     .map_err(|_| "workspace resource session lock is poisoned".to_owned())?
-                    .read_utf8(
+                    .read_utf8_outcome(
                         LogicalSourceId::new(uri.to_string()).map_err(|error| error.to_string())?,
                         &path,
                     )
                     .map_err(|error| error.to_string())?;
+                let FilesystemReadOutcome::Found(file) = file else {
+                    continue;
+                };
                 next_disk_version = next_disk_version.saturating_add(1);
                 let (source_id, text) = file.into_parts();
                 let id = ResourceId::new(source_id.as_str()).map_err(|error| error.to_string())?;
