@@ -225,7 +225,7 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
   assert.deepEqual(
     actual.changes.map(({ crate, lint, item }) => ({ crate, lint, item })),
-    [{ crate: "adocweave-host", lint: "enum_variant_added", item: "ResourceError:Job" }],
+    [{ crate: "adocweave-host", lint: "enum_variant_added", item: "variant ResourceError:Job" }],
   );
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
