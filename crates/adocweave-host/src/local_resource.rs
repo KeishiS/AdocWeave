@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::io_observation::FilesystemIoMeter;
 use crate::local_target::{
     FilesystemRaceResistance, LocalTargetCandidateRollback, LocalTargetError, LocalTargetPolicy,
     LocalTargetSession, LocalTargetTextRollback,
@@ -251,6 +252,10 @@ struct LocalFilesystemState {
     budget: ResourceBudget,
     charged: BTreeMap<PathBuf, FilesystemCharge>,
     candidates: BTreeMap<PathBuf, FilesystemCandidateBinding>,
+    /// Shared with every [`LocalTargetSession`] above and with any draft cloned
+    /// from this state, so discovery and reads land in one set of counters and a
+    /// discarded draft does not un-count the work it performed.
+    meter: FilesystemIoMeter,
     #[cfg(test)]
     clone_count: Arc<AtomicU64>,
 }
@@ -271,6 +276,7 @@ impl Clone for LocalFilesystemState {
             budget: self.budget,
             charged: self.charged.clone(),
             candidates: self.candidates.clone(),
+            meter: self.meter.clone(),
             #[cfg(test)]
             clone_count: Arc::clone(&self.clone_count),
         }
@@ -487,12 +493,13 @@ impl LocalFilesystemAccess {
 
     /// Creates a session with a fresh shared budget for these selected roots.
     pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
+        let meter = FilesystemIoMeter::detached();
         let sessions = self
             .root_policies
             .iter()
             .cloned()
             .map(|policy| {
-                LocalTargetSession::new(
+                LocalTargetSession::metered(
                     policy,
                     self.limits.max_files,
                     FilesystemReadLimits {
@@ -500,6 +507,7 @@ impl LocalFilesystemAccess {
                         max_total_bytes: u64::MAX,
                         max_resource_bytes: self.limits.max_resource_bytes,
                     },
+                    meter.clone(),
                 )
             })
             .collect();
@@ -518,6 +526,7 @@ impl LocalFilesystemAccess {
                 budget: ResourceBudget::default(),
                 charged: BTreeMap::new(),
                 candidates: BTreeMap::new(),
+                meter,
                 #[cfg(test)]
                 clone_count: Arc::new(AtomicU64::new(0)),
             },
@@ -686,15 +695,6 @@ impl LocalFilesystemView<'_> {
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, ResourceError> {
-        self.discover_adoc_paths_with_limit(scan_entry_limit, exclude_directory, is_cancelled)
-    }
-
-    fn discover_adoc_paths_with_limit(
-        &self,
-        scan_entry_limit: usize,
-        exclude_directory: impl FnMut(&Path, &Path) -> bool,
-        is_cancelled: impl FnMut() -> bool,
-    ) -> Result<Vec<PathBuf>, ResourceError> {
         #[cfg(target_os = "linux")]
         {
             self.discover_adoc_paths_with_limit_handle_relative(
@@ -732,22 +732,25 @@ impl LocalFilesystemView<'_> {
                         {
                             continue;
                         }
+                        self.state.meter.observe_directory_read();
                         let mut children = Vec::new();
-                        for child in
+                        let directory =
                             fs::read_dir(&path).map_err(|source| ResourceError::Inspect {
                                 path: path.clone(),
                                 source: source.to_string(),
-                            })?
-                        {
+                            })?;
+                        for child in directory {
+                            self.state.meter.observe_directory_entry();
+                            let child = child.map_err(|source| ResourceError::Inspect {
+                                path: path.clone(),
+                                source: source.to_string(),
+                            })?;
                             if is_cancelled() {
                                 return Err(ResourceError::Unverifiable(
                                     "local filesystem scan was cancelled".to_owned(),
                                 ));
                             }
-                            children.push(child.map_err(|source| ResourceError::Inspect {
-                                path: path.clone(),
-                                source: source.to_string(),
-                            })?);
+                            children.push(child);
                             scanned_entries += 1;
                             if scanned_entries > scan_entry_limit {
                                 return Err(ResourceError::ScanEntryLimit {
@@ -800,6 +803,7 @@ impl LocalFilesystemView<'_> {
                 let directory = policy
                     .open_directory_no_symlinks(&path)
                     .map_err(ResourceError::from)?;
+                self.state.meter.observe_directory_read();
                 let mut entries =
                     Dir::read_from(&directory).map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
@@ -807,6 +811,7 @@ impl LocalFilesystemView<'_> {
                     })?;
                 let mut children = Vec::<(OsString, FileType)>::new();
                 for child in &mut entries {
+                    self.state.meter.observe_directory_entry();
                     let child = child.map_err(|source| ResourceError::Inspect {
                         path: path.clone(),
                         source: source.to_string(),
@@ -1089,7 +1094,7 @@ impl LocalFilesystemSession {
         let mut draft = self.draft()?;
         let loaded = draft
             .mutation_cursor()
-            .read_utf8_with(source_id, path, after_open)?;
+            .read_utf8_with(source_id, path, false, after_open)?;
         draft.prepare_commit(self)?.commit();
         Ok(loaded)
     }
@@ -1261,7 +1266,7 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
-        self.read_utf8_with(source_id, path, || {})
+        self.read_utf8_with(source_id, path, false, || {})
     }
 
     fn read_target_utf8(
@@ -1270,6 +1275,7 @@ impl LocalFilesystemMutationCursor<'_> {
         base: &Path,
         target: &str,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.state.meter.observe_read_operation();
         let index = self.root_index(base)?;
         let candidate = self.state.sessions[index]
             .candidate(base, target)
@@ -1308,6 +1314,7 @@ impl LocalFilesystemMutationCursor<'_> {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.state.meter.observe_read_operation();
         let index = self.root_index(path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
         let binding_generation = self.reserve_binding_generation()?;
@@ -1344,12 +1351,19 @@ impl LocalFilesystemMutationCursor<'_> {
         }
     }
 
+    /// Acquires one resource by absolute path.
+    ///
+    /// The attempt is counted before anything can reject it, so a path outside
+    /// every root and a file the limits refuse both leave a record that work was
+    /// requested.
     fn read_utf8_with(
         &mut self,
         source_id: LogicalSourceId,
         path: &Path,
+        reuse_cached_text: bool,
         after_open: impl FnOnce(),
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.state.meter.observe_read_operation();
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()).into());
         }
@@ -1365,17 +1379,23 @@ impl LocalFilesystemMutationCursor<'_> {
         let limits = self.state.limits;
         let file_limit_denied = std::cell::Cell::new(false);
         let loaded = self.state.sessions[index]
-            .read_candidate_utf8_with_capacity(&candidate, false, true, after_open, |canonical| {
-                shared_read_capacity(
-                    budget,
-                    charged,
-                    candidates,
-                    limits,
-                    &candidate,
-                    canonical,
-                    &file_limit_denied,
-                )
-            })
+            .read_candidate_utf8_with_capacity(
+                &candidate,
+                reuse_cached_text,
+                true,
+                after_open,
+                |canonical| {
+                    shared_read_capacity(
+                        budget,
+                        charged,
+                        candidates,
+                        limits,
+                        &candidate,
+                        canonical,
+                        &file_limit_denied,
+                    )
+                },
+            )
             .map_err(|error| map_shared_read_error(error, limits, file_limit_denied.get()))?;
         self.finish_read(binding_generation, source_id, &candidate, loaded)
             .map(|(loaded, _)| loaded)
@@ -1528,6 +1548,19 @@ impl LocalFilesystemDraft {
         }
     }
 
+    /// Refuses to start work once a failure has made this draft uncommittable.
+    ///
+    /// A poisoned draft can never be installed, so any further filesystem work it
+    /// performs is spent on a result nobody can use. Refusing before the work
+    /// starts keeps that waste out of the counters, and keeps the draft from
+    /// taking binding generations that no commit will ever justify.
+    fn ensure_operation_can_start(&self) -> Result<(), FilesystemDraftError> {
+        if self.poisoned {
+            return Err(FilesystemDraftError::PoisonedDraft);
+        }
+        Ok(())
+    }
+
     fn record<T>(
         &mut self,
         result: Result<T, FilesystemDraftError>,
@@ -1550,11 +1583,17 @@ impl LocalFilesystemDraft {
         self.candidate().limits
     }
 
+    /// Lists the AsciiDoc files below the roots as this draft would see them.
+    ///
+    /// Returns [`FilesystemDraftError::PoisonedDraft`] once an earlier operation
+    /// has failed, because the listing could only feed a draft that can no longer
+    /// be committed.
     pub fn discover_adoc_paths_with_control(
         &self,
         exclude_directory: impl FnMut(&Path, &Path) -> bool,
         is_cancelled: impl FnMut() -> bool,
     ) -> Result<Vec<PathBuf>, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         LocalFilesystemView {
             state: self.candidate(),
         }
@@ -1570,6 +1609,7 @@ impl LocalFilesystemDraft {
         &mut self,
         source_id: impl FnMut(&Path) -> Result<LogicalSourceId, ResourceError>,
     ) -> Result<Vec<LoadedFilesystemSource>, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().scan_utf8(source_id);
         self.record(result)
     }
@@ -1579,6 +1619,7 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().read_utf8(source_id, path);
         self.record(result)
     }
@@ -1588,6 +1629,7 @@ impl LocalFilesystemDraft {
         source_id: LogicalSourceId,
         path: &Path,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().reread_utf8(source_id, path);
         self.record(result)
     }
@@ -1598,16 +1640,22 @@ impl LocalFilesystemDraft {
         base: &Path,
         target: &str,
     ) -> Result<LoadedFilesystemSource, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self
             .mutation_cursor()
             .read_target_utf8(source_id, base, target);
         self.record(result)
     }
 
+    /// Gives up this draft's claim on a resource it acquired earlier.
+    ///
+    /// Releasing performs no filesystem work, but it is still refused on a
+    /// poisoned draft: the candidate state it would edit is already unusable.
     pub fn release_binding(
         &mut self,
         binding: &FilesystemResourceBinding,
     ) -> Result<FilesystemReleaseOutcome, FilesystemDraftError> {
+        self.ensure_operation_can_start()?;
         let result = self.mutation_cursor().release_binding(binding);
         self.record(result)
     }
@@ -1991,6 +2039,7 @@ impl From<LocalTargetError> for ResourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io_observation::FilesystemIoUsage;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2035,6 +2084,12 @@ mod tests {
 
     fn source_id() -> LogicalSourceId {
         LogicalSourceId::new("test-source").expect("source ID")
+    }
+
+    /// The draft shares the meter of the session it was cloned from, so reading
+    /// it after the draft is gone still reports the draft's work.
+    fn draft_meter(draft: &LocalFilesystemDraft) -> FilesystemIoMeter {
+        draft.candidate().meter.clone()
     }
 
     #[test]
@@ -2381,6 +2436,166 @@ mod tests {
             draft.candidate().sessions[0].inspected_paths(),
             before_inspections
         );
+    }
+
+    #[test]
+    fn a_failed_read_keeps_the_bytes_it_already_obtained() {
+        let root = TestDir::new("meter-invalid-utf8");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, [0xff, 0xfe, 0xfd]).expect("invalid UTF-8 source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+
+        let result = draft.read_utf8(source_id(), &path);
+
+        assert_eq!(
+            result,
+            Err(FilesystemDraftError::Resource(ResourceError::InvalidUtf8 {
+                path,
+                source: "input is not valid UTF-8".to_owned(),
+            }))
+        );
+        assert_eq!(
+            meter.usage(),
+            FilesystemIoUsage {
+                read_operations: 1,
+                read_bytes: 3,
+                directory_read_operations: 0,
+                directory_entries: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_resource_counts_an_attempt_and_stops_the_poisoned_draft() {
+        let root = TestDir::new("meter-missing-then-poisoned");
+        let missing = root.path().join("missing.adoc");
+        let existing = root.path().join("existing.adoc");
+        fs::write(&existing, "text").expect("existing source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+
+        assert_eq!(
+            draft.read_utf8(source_id(), &missing),
+            Err(FilesystemDraftError::Resource(ResourceError::Missing(
+                missing
+            )))
+        );
+        let after_failure = meter.usage();
+        assert_eq!(after_failure.read_operations, 1);
+        assert_eq!(after_failure.read_bytes, 0);
+
+        assert_eq!(
+            draft.read_utf8(source_id(), &existing),
+            Err(FilesystemDraftError::PoisonedDraft)
+        );
+        assert_eq!(meter.usage(), after_failure);
+    }
+
+    #[test]
+    fn a_poisoned_draft_starts_no_filesystem_work_at_all() {
+        let root = TestDir::new("meter-poisoned-draft-entry-points");
+        let missing = root.path().join("missing.adoc");
+        let existing = root.path().join("existing.adoc");
+        fs::write(&existing, "text").expect("existing source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+        assert!(draft.read_utf8(source_id(), &missing).is_err());
+        let after_failure = meter.usage();
+
+        assert_eq!(
+            draft.scan_utf8(path_source_id),
+            Err(FilesystemDraftError::PoisonedDraft)
+        );
+        assert_eq!(
+            draft.reread_utf8(source_id(), &existing),
+            Err(FilesystemDraftError::PoisonedDraft)
+        );
+        assert_eq!(
+            draft.read_target_utf8(source_id(), root.path(), "existing.adoc"),
+            Err(FilesystemDraftError::PoisonedDraft)
+        );
+        assert_eq!(
+            draft
+                .discover_adoc_paths_with_control(|_, _| false, || false)
+                .err(),
+            Some(FilesystemDraftError::PoisonedDraft)
+        );
+        assert_eq!(meter.usage(), after_failure);
+    }
+
+    #[test]
+    fn a_capacity_rejection_counts_an_attempt_without_bytes() {
+        let root = TestDir::new("meter-capacity-rejection");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "text").expect("source");
+        let session = LocalFilesystemPolicy::new(
+            [root.path().to_owned()],
+            FilesystemReadLimits {
+                max_files: 0,
+                max_total_bytes: 100,
+                max_resource_bytes: 100,
+            },
+        )
+        .expect("policy")
+        .session()
+        .expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+
+        assert_eq!(
+            draft.read_utf8(source_id(), &path),
+            Err(FilesystemDraftError::Resource(ResourceError::FileLimit {
+                limit: 0
+            }))
+        );
+        assert_eq!(meter.usage().read_operations, 1);
+        assert_eq!(meter.usage().read_bytes, 0);
+    }
+
+    #[test]
+    fn a_cached_read_counts_the_request_without_reading_bytes() {
+        let root = TestDir::new("meter-cache-hit");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "text").expect("source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+        draft
+            .mutation_cursor()
+            .read_utf8_with(source_id(), &path, true, || {})
+            .expect("cache miss");
+        let after_miss = meter.usage();
+
+        draft
+            .mutation_cursor()
+            .read_utf8_with(source_id(), &path, true, || {})
+            .expect("cache hit");
+
+        assert_eq!(after_miss.read_operations, 1);
+        assert_eq!(after_miss.read_bytes, 4);
+        let hit = meter.usage().since(after_miss);
+        assert_eq!(hit.read_operations, 1);
+        assert_eq!(hit.read_bytes, 0);
+    }
+
+    #[test]
+    fn a_discarded_draft_leaves_its_work_counted_in_the_session() {
+        let root = TestDir::new("meter-shared-with-session");
+        let path = root.path().join("source.adoc");
+        fs::write(&path, "abc").expect("source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let session_meter = session.state.meter.clone();
+        let mut draft = session.draft().expect("draft");
+
+        draft.read_utf8(source_id(), &path).expect("read");
+        drop(draft);
+
+        assert_eq!(session_meter.usage().read_operations, 1);
+        assert_eq!(session_meter.usage().read_bytes, 3);
     }
 
     #[test]
@@ -2867,6 +3082,72 @@ mod tests {
                 "local filesystem scan was cancelled".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn a_cancelled_discovery_keeps_the_directory_work_it_performed() {
+        let root = TestDir::new("meter-scan-cancellation");
+        fs::write(root.path().join("a.adoc"), "a").expect("first source");
+        fs::write(root.path().join("b.adoc"), "b").expect("second source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let meter = session.state.meter.clone();
+        let checks = std::cell::Cell::new(0_usize);
+
+        let result = LocalFilesystemView {
+            state: &session.state,
+        }
+        .discover_adoc_paths_with_control(
+            LocalFilesystemSession::MAX_SCAN_ENTRIES,
+            |_, _| false,
+            || {
+                checks.set(checks.get() + 1);
+                checks.get() > 1
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(ResourceError::Unverifiable(
+                "local filesystem scan was cancelled".to_owned()
+            ))
+        );
+        assert_eq!(
+            meter.usage(),
+            FilesystemIoUsage {
+                read_operations: 0,
+                read_bytes: 0,
+                directory_read_operations: 1,
+                directory_entries: 1,
+            }
+        );
+    }
+
+    /// Entries are counted as the iterator yields them, before anything decides
+    /// what they are. On Linux that includes `.` and `..`, which the scan then
+    /// skips, so the entry count is higher there than the four visible names.
+    #[test]
+    fn a_scan_counts_directory_entries_and_the_files_it_reads() {
+        let root = TestDir::new("meter-scan-usage");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested directory");
+        fs::write(root.path().join("a.adoc"), "abc").expect("first source");
+        fs::write(root.path().join("ignored.txt"), "ignored").expect("ignored source");
+        fs::write(nested.join("b.adoc"), "de").expect("second source");
+        let session = policy(root.path(), 100).session().expect("session");
+        let mut draft = session.draft().expect("draft");
+        let meter = draft_meter(&draft);
+
+        let loaded = draft.scan_utf8(path_source_id).expect("scan");
+
+        assert_eq!(loaded.len(), 2);
+        let usage = meter.usage();
+        assert_eq!(usage.directory_read_operations, 2);
+        #[cfg(target_os = "linux")]
+        assert_eq!(usage.directory_entries, 8);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(usage.directory_entries, 4);
+        assert_eq!(usage.read_operations, 2);
+        assert_eq!(usage.read_bytes, 5);
     }
 
     #[test]

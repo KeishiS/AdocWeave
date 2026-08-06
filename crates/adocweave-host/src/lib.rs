@@ -4,6 +4,7 @@
 //! not depend on the parser core or workspace state.
 
 mod exit_status;
+mod io_observation;
 mod local_resource;
 mod local_target;
 
