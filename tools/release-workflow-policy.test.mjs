@@ -124,15 +124,21 @@ test("latest textlint compatibility probe stays scheduled, read-only, bounded, a
   );
 });
 
-test("build and publish workflows cannot receive repository secrets", () => {
+test("build workflows cannot receive secrets and publisher receives only its App key", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({ ...inputs, release: `${inputs.release}\nsecrets: inherit\n` }),
     /must not receive repository secrets/,
   );
   assert.throws(
-    () => validateReleaseWorkflowPolicy({ ...inputs, publish: `${inputs.publish}\nsecrets: inherit\n` }),
-    /scoped GitHub token/,
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      publish: inputs.publish.replace(
+        "secrets.RELEASE_PUBLISHER_PRIVATE_KEY",
+        "secrets.UNRELATED_PRIVATE_KEY",
+      ),
+    }),
+    /GitHub App private key|github-release environment/,
   );
 });
 
@@ -170,51 +176,75 @@ test("publisherは公開前に全assetをattestする", () => {
   );
 });
 
-test("tag runs cannot be cancelled with superseded source runs", () => {
+test("source runs are cancellable while stable release requests are serialized", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(
-        "${{ !startsWith(github.ref, 'refs/tags/') }}",
-        "${{ true }}",
-      ),
+      dispatch: inputs.dispatch.replace("cancel-in-progress: false", "cancel-in-progress: true"),
     }),
-    /without cancelling tags/,
+    /serialized without cancellation/,
   );
 });
 
-test("only stable tags trigger publication and tag-only steps stay structurally isolated", () => {
+test("source workflow cannot publish and stable release requires reviewed dispatch inputs", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       release: inputs.release.replace(
-        "- 'v[0-9]+.[0-9]+.[0-9]+'",
-        "- 'v*'",
+        "    branches:\n      - main\n",
+        "    branches:\n      - main\n    tags:\n      - 'v*'\n",
       ),
     }),
-    /only for stable semantic version tags/,
+    /must not create or publish stable tags/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(
-        "      - id: candidate\n        if: startsWith(github.ref, 'refs/tags/')",
-        "      - id: candidate\n        if: always()",
+      dispatch: inputs.dispatch.replace(
+        "        description: Exact merge commit of the reviewed finalization pull request\n        required: true",
+        "        description: Exact merge commit of the reviewed finalization pull request\n        required: false",
       ),
     }),
-    /candidate lookup must be structurally limited to tags/,
+    /candidate_sha must be a required string/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(
-        "      - name: Publication tag verification against the current main commit\n        if: startsWith(github.ref, 'refs/tags/')",
-        "      - name: Publication tag verification against the current main commit\n        if: always()",
+      dispatch: inputs.dispatch.replace(
+        "if: github.ref == 'refs/heads/main'",
+        "if: always()",
       ),
     }),
-    /tag verification must be structurally limited to tags/,
+    /default branch workflow/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      dispatch: inputs.dispatch.replace(
+        "  pull-requests: read\n",
+        "  pull-requests: read\n  packages: write\n",
+      ),
+    }),
+    /exactly the reviewed read-only set/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      dispatch: inputs.dispatch.replace(
+        "  readiness:\n",
+        "  readiness:\n    permissions:\n      contents: write\n",
+      ),
+    }),
+    /pre-publication job readiness must inherit read-only permissions/,
+  );
+  assert.throws(
+    () => validateReleaseWorkflowPolicy({
+      ...inputs,
+      dispatch: `${inputs.dispatch}\n# ` + "${{ secrets.UNRELATED_SECRET }}\n",
+    }),
+    /must not access secrets before the isolated publisher/,
   );
 });
 
@@ -248,7 +278,7 @@ test("fast planner cannot wait for Nix or omit main change detection", () => {
         "false # omitted release intent",
       ),
     }),
-    /release intent/,
+    /release candidate detection/,
   );
 });
 
@@ -434,12 +464,12 @@ test("公開後smokeはpublicationの後だけに実行し公開前gateへ入れ
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(
-        "needs: [publish]\n    runs-on: ubuntu-24.04",
-        "needs: [release-plan]\n    runs-on: ubuntu-24.04",
+      dispatch: inputs.dispatch.replace(
+        "needs: [readiness, publish]\n    runs-on: ubuntu-24.04",
+        "needs: [readiness, plan]\n    runs-on: ubuntu-24.04",
       ),
     }),
-    /downstream from publication/,
+    /must follow the selected publication/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
@@ -989,15 +1019,18 @@ test("tag publication must reuse and verify the selected main candidate", () => 
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(".[].workflow_runs[]", ".[][]"),
+      dispatch: inputs.dispatch.replace(
+        "node tools/release-readiness.mjs",
+        "node tools/release-intent.mjs",
+      ),
     }),
-    /traverse response pages/,
+    /tested helper/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
-      release: inputs.release.replace(
-        "run-id: ${{ needs.release-plan.outputs.candidate_run_id }}",
+      dispatch: inputs.dispatch.replace(
+        "run-id: ${{ needs.readiness.outputs.candidate_run_id }}",
         "run-id: ${{ github.run_id }}",
       ),
     }),

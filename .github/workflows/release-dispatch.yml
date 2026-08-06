@@ -1,0 +1,117 @@
+name: Stable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact merge commit of the reviewed finalization pull request
+        required: true
+        type: string
+      finalization_pr:
+        description: Pull request number that changed release intent to ready
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate_sha: ${{ steps.readiness.outputs.candidate_sha }}
+      candidate_run_id: ${{ steps.readiness.outputs.run_id }}
+      tag: ${{ steps.readiness.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - id: readiness
+        name: Reviewed final candidate readiness
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FINALIZATION_PR: ${{ inputs.finalization_pr }}
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/release-readiness.mjs
+
+  plan:
+    needs: [readiness]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      manifest: ${{ steps.plan.outputs.manifest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.readiness.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - id: plan
+        env:
+          CANDIDATE_TAG: ${{ needs.readiness.outputs.tag }}
+        run: |
+          tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG" --output-format=json > plan.json
+          echo "manifest=$(jq -c . plan.json)" >> "$GITHUB_OUTPUT"
+
+  reuse-candidate:
+    needs: [readiness, plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.readiness.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-candidate
+          path: artifacts
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.readiness.outputs.candidate_run_id }}
+      - name: Reused candidate verification
+        env:
+          CANDIDATE_SHA: ${{ needs.readiness.outputs.candidate_sha }}
+        run: node tools/release-metadata.mjs verify artifacts "$CANDIDATE_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate
+          if-no-files-found: error
+          retention-days: 1
+          path: artifacts/*
+
+  publish:
+    needs: [readiness, plan, reuse-candidate]
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      candidate_sha: ${{ needs.readiness.outputs.candidate_sha }}
+      plan: ${{ needs.plan.outputs.manifest }}
+      tag: ${{ needs.readiness.outputs.tag }}
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+
+  textlint-plugin-post-release-smoke:
+    needs: [readiness, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.readiness.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Published textlint asset, checksum, and one-shot npx observation
+        run: nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke

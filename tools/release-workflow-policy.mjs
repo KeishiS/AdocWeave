@@ -258,6 +258,7 @@ export function validateBrowserStartupPolicy(source) {
 
 export function validateReleaseWorkflowPolicy({
   release,
+  dispatch,
   publish,
   contract,
   smoke,
@@ -277,10 +278,12 @@ export function validateReleaseWorkflowPolicy({
   });
   validateBrowserStartupPolicy(browserStartup);
   const releaseDoc = parseWorkflow("release.yml", release);
+  const dispatchDoc = parseWorkflow("release-dispatch.yml", dispatch);
   const publishDoc = parseWorkflow("release-publish.yml", publish);
   const contractDoc = parseWorkflow("quality.yml", contract);
   const smokeDoc = parseWorkflow("native-artifact-smoke.yml", smoke);
   const releaseJobs = releaseDoc.jobs ?? {};
+  const dispatchJobs = dispatchDoc.jobs ?? {};
   const contractJobs = contractDoc.jobs ?? {};
   const publishJob = publishDoc.jobs?.publish;
 
@@ -288,18 +291,17 @@ export function validateReleaseWorkflowPolicy({
       !releaseDoc.on?.push?.branches?.includes("main")) {
     fail("release workflow must exercise pull requests and every main push");
   }
-  if (JSON.stringify(releaseDoc.on.push.tags) !==
-      JSON.stringify(["v[0-9]+.[0-9]+.[0-9]+"])) {
-    fail("release workflow must trigger only for stable semantic version tags");
+  if (releaseDoc.on.push.tags !== undefined ||
+      Object.hasOwn(releaseDoc.on ?? {}, "workflow_dispatch")) {
+    fail("source workflow must not create or publish stable tags");
   }
   requirePermission(releaseDoc, "actions", "read", "release workflow must only read Actions");
   requirePermission(releaseDoc, "contents", "read", "release workflow must only read repository contents");
   if (releaseDoc.concurrency?.group !== "ci-release-${{ github.ref }}") {
     fail("CI and release runs must be serialized per ref");
   }
-  if (releaseDoc.concurrency?.["cancel-in-progress"] !==
-      "${{ !startsWith(github.ref, 'refs/tags/') }}") {
-    fail("superseded pull request and main runs must be cancelled without cancelling tags");
+  if (releaseDoc.concurrency?.["cancel-in-progress"] !== true) {
+    fail("superseded pull request and main runs must be cancelled");
   }
   if (releaseJobs.quality?.uses !== "./.github/workflows/quality.yml" ||
       releaseJobs.quality?.if !==
@@ -316,7 +318,7 @@ export function validateReleaseWorkflowPolicy({
   const changeRun = step(changes, (item) => item.id === "changes", "fast change planner is missing").run;
   requireCommand(changeRun, 'git diff --name-only "$BASE_SHA" "$GITHUB_SHA"', "pull request planning must inspect the complete base diff");
   requireCommand(changeRun, 'git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA"', "main planning must inspect only the pushed change");
-  requireCommand(changeRun, 'git show-ref --verify --quiet "refs/tags/v$version"', "release intent must be derived from the fixed manifest version tag");
+  requireCommand(changeRun, 'git show-ref --verify --quiet "refs/tags/v$version"', "release candidate detection must compare the manifest version with existing stable tags");
   requireCommand(changeRun, "node tools/native-change-plan.mjs", "candidate planning must use the tested local planner");
   if ((changes.steps ?? []).some((item) =>
     item.uses?.startsWith("DeterminateSystems/determinate-nix-action@"))) {
@@ -355,24 +357,10 @@ export function validateReleaseWorkflowPolicy({
   "dist planning must use the locked Nix environment");
   const planRun = step(releasePlan, (item) => item.id === "plan", "release plan step is missing").run;
   requireCommand(planRun, 'tools/run-pinned-dist.sh plan --tag="$CANDIDATE_TAG"', "every dist plan must use the locked cargo-dist closure");
-  const tagRun = step(releasePlan, (item) =>
-    item.name === "Publication tag verification against the current main commit",
-  "publication tag check is missing").run;
-  const tagStep = step(releasePlan, (item) =>
-    item.name === "Publication tag verification against the current main commit",
-  "publication tag check is missing");
-  if (tagStep.if !== "startsWith(github.ref, 'refs/tags/')") {
-    fail("publication tag verification must be structurally limited to tags");
+  if ((releasePlan.steps ?? []).some((item) =>
+    item.run?.includes("git/refs") || item.run?.includes("/releases"))) {
+    fail("source release planning must remain read-only");
   }
-  requireCommand(tagRun, 'test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"', "publication tags must identify current main");
-  const candidateStep = step(releasePlan, (item) => item.id === "candidate", "main candidate lookup is missing");
-  if (candidateStep.if !== "startsWith(github.ref, 'refs/tags/')") {
-    fail("candidate lookup must be structurally limited to tags");
-  }
-  const lookup = candidateStep.run;
-  requireCommand(lookup, "actions/workflows/release.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA", "tag must select a successful main run for the same commit");
-  requireCommand(lookup, ".[].workflow_runs[]", "candidate lookup must traverse response pages");
-  requireCommand(lookup, "no successful main candidate exists", "missing main candidate must stop publication");
 
   for (const [jobName, condition] of [
     ["build-native", "needs.changes.outputs.native_required == 'true'"],
@@ -475,26 +463,7 @@ export function validateReleaseWorkflowPolicy({
   );
   requireManifestNodeVersion(textlintInstallation);
 
-  const postReleaseTextlint = releaseJobs["textlint-plugin-post-release-smoke"];
-  if (postReleaseTextlint?.if !==
-      "startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success'") {
-    fail("textlint post-release smoke must run only after successful tag publication");
-  }
-  requireNeeds(
-    postReleaseTextlint,
-    ["publish"],
-    "textlint post-release smoke must be downstream from publication",
-  );
-  const postReleaseRun = step(
-    postReleaseTextlint,
-    (item) => item.name === "Published textlint asset, checksum, and one-shot npx observation",
-    "published textlint observation step is missing",
-  ).run;
-  requireExactCommand(
-    postReleaseRun,
-    "nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke",
-    "post-release smoke must use the task that reads the real GitHub Release URL",
-  );
+  const postReleaseTextlint = dispatchJobs["textlint-plugin-post-release-smoke"];
 
   const mergeGate = releaseJobs["merge-gate"];
   if (mergeGate?.name !== "quality / verify" ||
@@ -697,26 +666,85 @@ export function validateReleaseWorkflowPolicy({
     requireCommand(nixInstall, output, `candidate must verify Nix ${output}`);
   }
 
-  requireNeeds(releaseJobs["reuse-candidate"], ["release-plan"], "tag reuse must depend on dist planning");
-  if (releaseJobs["reuse-candidate"]?.if !== "startsWith(github.ref, 'refs/tags/')") {
-    fail("only version tags may reuse a candidate");
+  if (JSON.stringify(Object.keys(dispatchDoc.on ?? {})) !== JSON.stringify(["workflow_dispatch"])) {
+    fail("stable release must only support reviewed workflow_dispatch requests");
   }
-  const reusedDownload = step(releaseJobs["reuse-candidate"], (item) =>
-    item.uses?.startsWith("actions/download-artifact@"), "tag candidate download is missing");
+  const dispatchInputs = dispatchDoc.on?.workflow_dispatch?.inputs;
+  for (const name of ["candidate_sha", "finalization_pr"]) {
+    if (dispatchInputs?.[name]?.required !== true || dispatchInputs[name].type !== "string") {
+      fail(`stable release input ${name} must be a required string`);
+    }
+  }
+  if (dispatchDoc.concurrency?.group !== "stable-release" ||
+      dispatchDoc.concurrency?.["cancel-in-progress"] !== false) {
+    fail("stable release requests must be serialized without cancellation");
+  }
+  for (const [name, value] of [["actions", "read"], ["contents", "read"], ["pull-requests", "read"]]) {
+    requirePermission(dispatchDoc, name, value, `stable release must grant only ${name}: ${value}`);
+  }
+  const dispatchPermissions = Object.fromEntries(Object.entries(dispatchDoc.permissions ?? {}).sort());
+  if (JSON.stringify(dispatchPermissions) !== JSON.stringify({
+    actions: "read",
+    contents: "read",
+    "pull-requests": "read",
+  })) {
+    fail("stable release top-level permissions must be exactly the reviewed read-only set");
+  }
+  for (const [name, job] of Object.entries(dispatchJobs)) {
+    if (name !== "publish" && job.permissions !== undefined) {
+      fail(`stable release pre-publication job ${name} must inherit read-only permissions`);
+    }
+  }
+  if (dispatch.includes("secrets.")) {
+    fail("stable release dispatcher must not access secrets before the isolated publisher");
+  }
+  const readiness = dispatchJobs.readiness;
+  if (readiness?.if !== "github.ref == 'refs/heads/main'") {
+    fail("release readiness must run only from the default branch workflow");
+  }
+  const readinessCheckout = step(readiness, (item) => item.uses?.startsWith("actions/checkout@"),
+    "release readiness checkout is missing");
+  if (readinessCheckout.with?.ref !== "${{ inputs.candidate_sha }}" ||
+      readinessCheckout.with?.["fetch-depth"] !== 0 ||
+      readinessCheckout.with?.["fetch-tags"] !== true ||
+      readinessCheckout.with?.["persist-credentials"] !== false) {
+    fail("release readiness must inspect complete history at the requested SHA without credentials");
+  }
+  const readinessRun = step(readiness, (item) => item.id === "readiness",
+    "reviewed final candidate readiness step is missing").run;
+  requireExactCommand(readinessRun, "node tools/release-readiness.mjs",
+    "release readiness must use the tested helper");
+  requireNeeds(dispatchJobs.plan, ["readiness"], "publish planning must follow readiness");
+  requireNeeds(dispatchJobs["reuse-candidate"], ["readiness", "plan"],
+    "candidate reuse must consume readiness and the immutable plan");
+  const reusedDownload = step(dispatchJobs["reuse-candidate"], (item) =>
+    item.uses?.startsWith("actions/download-artifact@"), "candidate download is missing");
   if (reusedDownload.with?.name !== "release-candidate" ||
       reusedDownload.with?.["github-token"] !== "${{ github.token }}" ||
       reusedDownload.with?.repository !== "${{ github.repository }}" ||
-      reusedDownload.with?.["run-id"] !== "${{ needs.release-plan.outputs.candidate_run_id }}") {
-    fail("tag publication must download the selected main candidate");
+      reusedDownload.with?.["run-id"] !== "${{ needs.readiness.outputs.candidate_run_id }}") {
+    fail("publication must download only the readiness-selected main candidate");
   }
-  const reuseRun = step(releaseJobs["reuse-candidate"], (item) =>
-    item.name === "Reused candidate verification", "tag candidate verification is missing").run;
-  requireCommand(reuseRun, 'release-metadata.mjs verify artifacts "$GITHUB_SHA"', "tag must verify reused candidate metadata");
-  requireNeeds(releaseJobs.publish, ["release-plan", "reuse-candidate"], "publication must consume the verified candidate");
-  if (releaseJobs.publish?.if !== "needs.release-plan.outputs.publishing == 'true'" ||
-      releaseJobs.publish?.uses !== "./.github/workflows/release-publish.yml") {
-    fail("only a publishing release plan may invoke the isolated publisher");
+  const reuseRun = step(dispatchJobs["reuse-candidate"], (item) =>
+    item.name === "Reused candidate verification", "candidate verification is missing").run;
+  requireCommand(reuseRun, 'release-metadata.mjs verify artifacts "$CANDIDATE_SHA"',
+    "publication must verify reused metadata against the frozen SHA");
+  requireNeeds(dispatchJobs.publish, ["readiness", "plan", "reuse-candidate"],
+    "publication must consume readiness, plan, and verified candidate");
+  if (dispatchJobs.publish?.uses !== "./.github/workflows/release-publish.yml" ||
+      dispatchJobs.publish?.with?.candidate_sha !== "${{ needs.readiness.outputs.candidate_sha }}" ||
+      dispatchJobs.publish?.with?.tag !== "${{ needs.readiness.outputs.tag }}" ||
+      dispatchJobs.publish?.with?.plan !== "${{ needs.plan.outputs.manifest }}") {
+    fail("publisher must receive only readiness-selected immutable inputs");
   }
+  requireNeeds(postReleaseTextlint, ["readiness", "publish"],
+    "post-release smoke must follow the selected publication");
+  const postReleaseRun = step(postReleaseTextlint,
+    (item) => item.name === "Published textlint asset, checksum, and one-shot npx observation",
+    "published textlint observation step is missing").run;
+  requireExactCommand(postReleaseRun,
+    "nix develop .#ci -c cargo make textlint-plugin-post-release-npx-smoke",
+    "post-release smoke must use the real GitHub Release URL");
 
   // The fuzz gate uses its own shell so that the nightly toolchain cargo-fuzz
   // needs stays out of every other job's closure.
@@ -919,10 +947,10 @@ export function validateReleaseWorkflowPolicy({
   if (/gh release\s+(create|upload|edit|delete)/.test(release)) {
     fail("read-only workflows must not mutate GitHub Releases");
   }
-  for (const permission of ["attestations", "contents", "id-token"]) {
-    requirePermission(publishDoc, permission, "write", `publisher is missing ${permission}: write`);
-    if (releaseJobs.publish?.permissions?.[permission] !== "write") {
-      fail(`publisher caller is missing ${permission}: write`);
+  for (const [permission, value] of [["attestations", "write"], ["contents", "read"], ["id-token", "write"]]) {
+    requirePermission(publishDoc, permission, value, `publisher is missing ${permission}: ${value}`);
+    if (dispatchJobs.publish?.permissions?.[permission] !== value) {
+      fail(`publisher caller is missing ${permission}: ${value}`);
     }
   }
   if (publishJob?.environment !== "github-release") {
@@ -950,20 +978,38 @@ export function validateReleaseWorkflowPolicy({
   if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(publication)) {
     fail("public assets must be attested before publication");
   }
+  const publisherToken = step(publishJob, (item) =>
+    item.uses?.startsWith("actions/create-github-app-token@"),
+  "publisher must obtain a scoped GitHub App token");
+  if (publisherToken.with?.["app-id"] !== "${{ vars.RELEASE_PUBLISHER_APP_ID }}" ||
+      publisherToken.with?.["private-key"] !== "${{ secrets.RELEASE_PUBLISHER_PRIVATE_KEY }}") {
+    fail("publisher App credentials must come from the github-release environment");
+  }
+  const tagCreation = step(publishJob, (item) => item.name === "Immutable stable tag creation",
+    "publisher must create the frozen stable tag");
+  requireCommand(tagCreation.run, 'gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags"',
+    "publisher must create an annotated tag object");
+  requireCommand(tagCreation.run, 'gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs"',
+    "publisher must create the stable tag ref");
+  if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(tagCreation)) {
+    fail("all release inputs must be attested before stable tag creation");
+  }
   step(publishJob, (item) => item.if === "failure()", "failed publication must clean up its draft");
   if (publishRuns.includes("/releases/tags/") ||
       /gh release\s+(upload|view|edit)/.test(publishRuns)) {
     fail("private drafts must never use the tag-only release API");
   }
-  if (JSON.stringify(publishDoc).includes('"secrets"') || publish.includes("secrets.")) {
-    fail("publisher must use the scoped GitHub token");
+  const secretReferences = [...publish.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((match) => match[1]);
+  if (JSON.stringify([...new Set(secretReferences)]) !==
+      JSON.stringify(["RELEASE_PUBLISHER_PRIVATE_KEY"])) {
+    fail("publisher must receive only the dedicated GitHub App private key");
   }
 
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
   requireTimeout(releaseJobs["installation-e2e"], 15, "installation must have a timeout");
   requireTimeout(textlintInstallation, 15, "textlint plugin installation must have a timeout");
   requireTimeout(postReleaseTextlint, 15, "textlint post-release smoke must have a timeout");
-  requireTimeout(releaseJobs["reuse-candidate"], 15, "tag reuse must have a timeout");
+  requireTimeout(dispatchJobs["reuse-candidate"], 15, "candidate reuse must have a timeout");
   requireText(dist, 'cargo-dist-version = "0.32.0"', "cargo-dist must be pinned exactly");
   requireText(dist, 'allow-dirty = ["ci"]', "workflow override must be intentional");
   requireText(dist, 'hosting = "github"', "GitHub Releases must be the only configured host");
@@ -977,6 +1023,7 @@ export function loadWorkflowPolicyInputs() {
   return {
     workflows,
     release: workflows["release.yml"],
+    dispatch: workflows["release-dispatch.yml"],
     publish: workflows["release-publish.yml"],
     contract: workflows["quality.yml"],
     smoke: workflows["native-artifact-smoke.yml"],
