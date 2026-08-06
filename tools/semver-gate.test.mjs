@@ -223,10 +223,17 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   assert.deepEqual(validateBreakingRustApi(record()), record());
   const actual = loadBreakingRustApi();
   assert.equal(actual.releaseVersion, releaseManifest.packageVersion);
-  assert.deepEqual(
-    actual.changes.map(({ crate, lint, item }) => ({ crate, lint, item })),
-    [{ crate: "adocweave-host", lint: "enum_variant_added", item: "variant ResourceError:Job" }],
-  );
+  // The gate itself compares this record against what cargo-semver-checks
+  // reports, so repeating its contents here would only make every accepted
+  // breaking change edit an unrelated test. What is worth asserting is that
+  // each entry identifies one difference and explains how to move past it.
+  assert.ok(actual.changes.length > 0);
+  for (const change of actual.changes) {
+    assert.ok(change.crate.startsWith("adocweave-"), change.crate);
+    for (const field of ["lint", "item", "summary", "description", "migration"]) {
+      assert.ok(change[field].length > 0, `${change.item}: ${field}`);
+    }
+  }
   assert.deepEqual(validateBreakingRustApi(record([])).changes, []);
   assert.throws(() => validateBreakingRustApi({ ...record(), extra: true }), /未知または不足/);
   assert.throws(
