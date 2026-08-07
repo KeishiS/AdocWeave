@@ -29,7 +29,10 @@ function apiFixture({ failPath, unboundedOpenPullRequests = false } = {}) {
   const calls = [];
   const fetchImpl = async (input) => {
     const url = new URL(String(input));
-    const path = url.pathname.replace("/repos/example/adocweave/", "");
+    const path = url.pathname.replace(/^\/repos\/example\/adocweave\/?/, "");
+    if (url.pathname.endsWith("/")) {
+      throw new Error(`GitHubはpathの末尾スラッシュを404で返します: ${url}`);
+    }
     calls.push(url);
     if (path === failPath) return jsonResponse({ message: "failure" }, 503);
     if (path === "") return jsonResponse({ default_branch: "main" });
