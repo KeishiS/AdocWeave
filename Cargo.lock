@@ -34,19 +34,8 @@ dependencies = [
  "adocweave-host",
  "adocweave-workspace",
  "serde",
- "sha2",
- "toml",
-]
-
-[[package]]
-name = "adocweave-governance"
-version = "0.36.0"
-dependencies = [
- "adocweave",
- "adocweave-config",
- "adocweave-textlint",
- "serde",
  "serde_json",
+ "sha2",
  "toml",
 ]
 

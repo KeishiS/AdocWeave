@@ -79,11 +79,9 @@ policyが保持するroot数には128件の独立した上限を設けます。�
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
 設定は解析とI/O policyへの入力であり、ワークスペース外へのアクセス権限を追加しません。
 
-``adocweave-governance``はlibraryを持たず、testだけを持ちます。このリポジトリ自身のファイルを読む検査を
-置く場所です。
-ADR索引の網羅性、ロードマップが挙げるIssue、Pull Requestテンプレートの項目、使わない語、および
-文書とfixtureの対応を保つmanifestを検査します。これらはファイルの配置に依存するため、ライブラリの
-testとしては成立しません。``cargo test -p adocweave``は構文解析と公開仕様の振る舞いだけを検査します。
+リポジトリ自身のファイルを読む規約検査は、その規約を約束するcrateの``tests/``に置きます。
+たとえば、追跡中の全文書がlosslessに解析できることは``adocweave``、設定schemaと実装の一致は
+``adocweave-config``、状態機械がfilesystemへ依存しないことは``adocweave-workspace``が検査します。
 
 利用側アプリは外部resourceの取得、pathやURLの検査、認証、キャッシュ、timeoutおよび利用者固有の
 参照索引を担当します。コアは渡された入力から決定的な解析結果を生成し、取得処理を呼び戻しません。

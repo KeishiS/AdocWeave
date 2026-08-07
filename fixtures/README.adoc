@@ -27,7 +27,7 @@ fixture rootの単一の設定源であり、このmanifestを直接読む処理
 `capabilities`は各readerがmanifestだけを使うか、参照先fixtureも読むかを示す。
 core crateはsource packageへ埋め込むmanifestだけを使い、その他のreaderはこの設定を
 読み込んでmanifestとfixture rootを別々に解決する。新しいreaderを追加するときは、
-同じ変更でこの一覧へpathとcapabilityを追加し、governance検査の期待一覧も更新する。
+同じ変更でこの一覧へpathとcapabilityを追加する。
 
 `public-conformance.json`は、利用側の適合性試験で再利用する公開fixtureのmanifestである。
 各caseで入力、投影、HTML、解析診断、描画診断、適用profileおよび対象構文を一つの対応として示し、

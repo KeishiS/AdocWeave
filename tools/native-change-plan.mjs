@@ -45,9 +45,6 @@ const GLOBAL_ROOTS = [
 const NON_RELEASE_ROOTS = [
   ".codex/",
   ".github/ISSUE_TEMPLATE/",
-  // Repository conventions checked as tests. The crate ships no library or
-  // binary, so nothing here reaches a release artifact.
-  "crates/adocweave-governance/",
   "docs/",
   "fixtures/",
   "fuzz/",
