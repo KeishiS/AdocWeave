@@ -86,6 +86,11 @@ link:../../config/japanese-terminology.json[`config/japanese-terminology.json`]�
 | profile
 | ``dist`` profile、解析profile、resource profile
 | 使いません。いずれも設定名に対応するため原綴りを保ちます
+
+| generation
+| ``DocumentRevision``の解析世代、workspaceの有効状態世代、filesystem resource bindingの世代、
+  走査回復の世代など、crateごとに別の識別子を指します
+| 「世代」。同名で意味が異なるため、文書ではどのcrateのどの状態機械の世代かを必ず特定します
 |===
 
 == 単純に置き換える語

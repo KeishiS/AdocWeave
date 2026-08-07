@@ -7,8 +7,6 @@
 [source,text]
 ----
 ソーステキスト
-  ├─ adocweave-config
-  │    └─ version付きの共有設定
   └─ adocweave-workspace
        ├─ disk resourceとopen overlay
        ├─ immutable snapshotと依存graph
@@ -21,6 +19,10 @@
                  ├─ HTMLその他の出力
                  ├─ CLIとLanguage Server
                  └─ 利用側アプリの拡張
+
+adocweave-config（version付きの共有設定）
+  └─ adocweave、adocweave-host、adocweave-workspaceの型を使い、
+     設定の探索・読込と上限計画の解決をCLIとLanguage Serverへ提供
 ----
 
 == 単一解析
@@ -77,6 +79,8 @@ policyが保持するroot数には128件の独立した上限を設けます。�
 変わらず、session identity、revisionおよびleaseを検証した後のcommitだけが候補全体を置き換えます。
 
 ``adocweave-config``は、CLIとLanguage Serverが共有する設定schema、探索および型付き設定を提供します。
+このcrateは``adocweave``、``adocweave-host``および``adocweave-workspace``の型を使う統合層であり、
+project設定の探索と読込では``adocweave-host``の検証済みsessionを通じてファイルを読みます。
 設定は解析とI/O policyへの入力であり、ワークスペース外へのアクセス権限を追加しません。
 
 リポジトリ自身のファイルを読む規約検査は、その規約を約束するcrateの``tests/``に置きます。
