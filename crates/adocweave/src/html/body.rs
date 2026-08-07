@@ -167,6 +167,33 @@ pub(super) fn plan_inlines(
     InlinePlan { nodes }
 }
 
+/// Gives back the space an inline macro or reference demanded in front of it.
+///
+/// A macro is only recognized when a space precedes it, so in a script written
+/// without spaces between words the author has to type one the sentence does
+/// not want, and it then appears in the output as a gap.
+///
+/// Only that one space is given back, and only when the running text before it
+/// belongs to such a script. Everything else the author controls already: a
+/// space after the macro can simply be left out, and a formatting pair has an
+/// unconstrained form that needs no space at all. Taking those away would be
+/// removing a space the author chose to write.
+///
+/// This is a deliberate difference from the specification, which keeps the
+/// space. It is recorded in the user guide.
+fn drop_demanded_space_between_cjk(output: &mut [InlineNode]) {
+    let Some(InlineNode::Text { value, .. }) = output.last_mut() else {
+        return;
+    };
+    let mut characters = value.chars().rev();
+    if characters.next() != Some(' ') {
+        return;
+    }
+    if characters.next().is_some_and(crate::cjk::is_cjk) {
+        value.pop();
+    }
+}
+
 pub(super) fn serialize_inlines(output: &mut String, plan: &InlinePlan) {
     serialize_nodes(output, &plan.nodes);
 }
@@ -235,9 +262,21 @@ fn plan_sequence(
                     inline_text(output, "}");
                 }
             }
-            Inline::Link(link) => plan_link(link, context, output),
-            Inline::Reference(reference) => plan_reference(reference, context, output),
-            Inline::Macro(node) => plan_standard_macro(node, context, output),
+            // A macro or reference is the one construct an author cannot write
+            // without a space in front of it, so this is where the space that
+            // the syntax demanded may be given back.
+            Inline::Link(link) => {
+                drop_demanded_space_between_cjk(output);
+                plan_link(link, context, output);
+            }
+            Inline::Reference(reference) => {
+                drop_demanded_space_between_cjk(output);
+                plan_reference(reference, context, output);
+            }
+            Inline::Macro(node) => {
+                drop_demanded_space_between_cjk(output);
+                plan_standard_macro(node, context, output);
+            }
             Inline::HardBreak { .. } => output.push(void_element("br", Vec::new(), true)),
             Inline::Passthrough { value, .. } => inline_text(output, value),
             Inline::Formula(formula) => {

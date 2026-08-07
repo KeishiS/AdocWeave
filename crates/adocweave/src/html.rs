@@ -1448,6 +1448,91 @@ mod tests {
         );
     }
 
+    /// The specification turns a line break inside a paragraph into a space.
+    /// Between two characters of a script written without word spaces, that
+    /// space is one the sentence never asked for, so it is not written.
+    #[test]
+    fn wrapped_lines_join_without_a_space_between_cjk_characters() {
+        let parsed =
+            parse("これは日本語の段落です。\n行を折り返しています。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>これは日本語の段落です。行を折り返しています。</p>\n"
+        );
+    }
+
+    /// A wrap that meets Latin text keeps its space, because a space belongs
+    /// between a Latin word and its neighbour.
+    #[test]
+    fn wrapped_lines_keep_the_space_where_a_line_meets_latin_text() {
+        let parsed = parse("日本語とEnglish\nmixed の場合。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>日本語とEnglish mixed の場合。</p>\n"
+        );
+    }
+
+    /// A formatting pair keeps the spaces beside it. The unconstrained form
+    /// removes the need for them, so a space there was chosen by the author
+    /// rather than demanded by the syntax.
+    #[test]
+    fn formatting_pairs_keep_the_spaces_the_author_wrote() {
+        let parsed =
+            parse("日本語は *強調* です。\n\n日本語は**強調**です。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>日本語は <strong>強調</strong> です。</p>\n<p>日本語は<strong>強調</strong>です。</p>\n"
+        );
+    }
+
+    #[test]
+    fn constrained_formatting_keeps_its_spaces_in_latin_text() {
+        let parsed = parse("English *bold* here.").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>English <strong>bold</strong> here.</p>\n"
+        );
+    }
+
+    #[test]
+    fn an_inline_macro_drops_the_space_that_let_it_be_written() {
+        let parsed = parse("本文は link:https://example.com[ラベル] です。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>本文は<a href=\"https://example.com\">ラベル</a> です。</p>\n"
+        );
+    }
+
+    /// The label decides nothing. What is examined is the running text before
+    /// the space, so a Latin label loses the space just the same.
+    #[test]
+    fn a_latin_label_does_not_change_the_decision() {
+        let parsed = parse("本文は link:https://example.com[Rust] です。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>本文は<a href=\"https://example.com\">Rust</a> です。</p>\n"
+        );
+    }
+
+    /// The space follows from the macro being written, not from what it turns
+    /// into. A macro the host renders as plain text demanded its space all the
+    /// same, so the result does not depend on how the host was configured.
+    #[test]
+    fn a_macro_the_host_renders_as_text_still_gives_back_its_space() {
+        let parsed = parse("画像は image:a.png[図] です。").expect("valid source");
+
+        assert_eq!(
+            render(&parsed.ast, &RenderPolicy::default()).html,
+            "<p>画像は図 です。</p>\n"
+        );
+    }
+
     #[test]
     fn resolved_block_titles_render_inline_semantics_for_captions_and_admonitions() {
         let parsed = parse(
