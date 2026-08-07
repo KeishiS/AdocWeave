@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 10,
-  "packageVersion": "0.35.0",
+  "schemaVersion": 11,
+  "packageVersion": "0.36.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
   "requestEnums": [
@@ -213,7 +213,8 @@
       "fields": [
         { "json": "citationKey", "type": "string", "required": true },
         { "json": "text", "type": "string", "required": true },
-        { "json": "label", "type": "string | null", "default": null }
+        { "json": "label", "type": "string | null", "default": null },
+        { "json": "number", "type": "u32 | null", "default": null }
       ]
     },
     "AnalysisLimits": {

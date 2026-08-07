@@ -182,6 +182,7 @@ mod tests {
                     citation_key: "k".to_owned(),
                     text: text.to_owned(),
                     label: Some("l".to_owned()),
+                    number: Some(1),
                 }],
             }),
             ..WasmRenderInputs::default()

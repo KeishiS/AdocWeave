@@ -1387,6 +1387,7 @@ mod tests {
         ResourceCapabilities, SourceLanguagePolicy, StylesheetPolicy, StylesheetSource,
         UnknownSourceLanguage, UnresolvedReferencePresentation,
     };
+    use crate::diagnostic::{Diagnostic, Severity};
     use crate::inline::Inline;
     use crate::parser::AstBlock;
     use crate::parser::parse;
@@ -1790,6 +1791,107 @@ mod tests {
         assert_eq!(output.html.matches("id=\"local\"").count(), 1);
         assert!(!output.html.contains("duplicate"));
         assert!(!output.html.contains("shadowed"));
+    }
+
+    fn numbered_bibliography_render(numbers: &[Option<u32>]) -> super::HtmlOutput {
+        let analysis = analyze("See cite:[one], cite:[two] and cite:[three].\n");
+        let keys = ["one", "two", "three"];
+        let entries = keys
+            .iter()
+            .zip(numbers)
+            .map(|(key, number)| {
+                let entry = GeneratedBibliographyEntry::new(*key, format!("Entry {key}."));
+                match number {
+                    Some(number) => entry.with_number(*number),
+                    None => entry,
+                }
+            })
+            .collect();
+        let inputs = RenderInputs::default()
+            .with_generated_bibliography(GeneratedBibliography::new("References", entries));
+
+        render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs)
+    }
+
+    fn numbering_diagnostic(output: &super::HtmlOutput) -> &Diagnostic {
+        output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.code.as_str() == "invalid-generated-bibliography-numbering"
+            })
+            .unwrap_or_else(|| panic!("numbering diagnostic, got {:?}", output.diagnostics))
+    }
+
+    #[test]
+    fn a_bibliography_numbered_from_one_becomes_an_ordered_list() {
+        let output = numbered_bibliography_render(&[Some(1), Some(2), Some(3)]);
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.html.contains("<ol>"));
+        assert!(output.html.contains("</ol>"));
+        assert!(!output.html.contains("<ul>"));
+    }
+
+    #[test]
+    fn a_bibliography_without_numbers_stays_an_unordered_list() {
+        let output = numbered_bibliography_render(&[None, None, None]);
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.html.contains("<ul>"));
+        assert!(!output.html.contains("<ol>"));
+    }
+
+    #[test]
+    fn numbering_only_some_entries_leaves_the_bibliography_unrendered() {
+        let output = numbered_bibliography_render(&[Some(1), None, Some(3)]);
+
+        let diagnostic = numbering_diagnostic(&output);
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(diagnostic.message.contains("only 2 of its 3 entries"));
+        assert!(!output.html.contains("References"));
+    }
+
+    #[test]
+    fn a_repeated_number_leaves_the_bibliography_unrendered() {
+        let output = numbered_bibliography_render(&[Some(1), Some(1), Some(3)]);
+
+        let diagnostic = numbering_diagnostic(&output);
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(diagnostic.message.contains("`two` is numbered 1 where 2"));
+        assert!(!output.html.contains("References"));
+    }
+
+    #[test]
+    fn numbers_that_do_not_start_at_one_leave_the_bibliography_unrendered() {
+        let output = numbered_bibliography_render(&[Some(4), Some(5), Some(6)]);
+
+        let diagnostic = numbering_diagnostic(&output);
+        assert!(diagnostic.message.contains("`one` is numbered 4 where 1"));
+        assert!(!output.html.contains("References"));
+    }
+
+    #[test]
+    fn a_gap_left_by_a_dropped_entry_leaves_the_bibliography_unrendered() {
+        let analysis = analyze(
+            "[bibliography]\n== Sources\n\n* bibanchor:local[] Local\n\nSee cite:[one, local, three].\n",
+        );
+        let inputs =
+            RenderInputs::default().with_generated_bibliography(GeneratedBibliography::new(
+                "References",
+                vec![
+                    GeneratedBibliographyEntry::new("one", "First.").with_number(1),
+                    GeneratedBibliographyEntry::new("local", "Shadowed.").with_number(2),
+                    GeneratedBibliographyEntry::new("three", "Third.").with_number(3),
+                ],
+            ));
+
+        let output = render_with_inputs(analysis.ast(), &RenderPolicy::default(), &inputs);
+
+        let diagnostic = numbering_diagnostic(&output);
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(diagnostic.message.contains("`three` is numbered 3 where 2"));
+        assert!(!output.html.contains("References"));
     }
 
     #[test]

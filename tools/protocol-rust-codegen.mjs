@@ -954,6 +954,7 @@ function renderInputRustType(type, reached) {
   if (type === "string | null") return "Option<String>";
   if (type === "safeInteger | null") return "Option<u64>";
   if (type === "u32") return "u32";
+  if (type === "u32 | null") return "Option<u32>";
   const nullable = type.match(/^([A-Za-z][A-Za-z0-9]*) \| null$/);
   if (nullable && reached.has(nullable[1])) {
     return `Option<${RENDER_INPUT_RUST_NAMES[nullable[1]]}>`;

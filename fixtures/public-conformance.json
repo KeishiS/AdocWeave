@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "outputContractVersion": 1,
-  "packageVersion": "0.35.0",
+  "packageVersion": "0.36.0",
   "license": "MIT OR Apache-2.0",
   "cases": [
     {

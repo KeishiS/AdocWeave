@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.34.0";
+export const PREVIOUS_RELEASE_VERSION = "0.35.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,8 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#515：段落内の改行がHTMLで空白になる動作を、改行の前後がどちらも語間に空白を置かない文字である場合にかぎり、空白を出力せず行をつなぐよう変更しました。原文のどこで折り返したかが本文の空きになりません。",
-  "#516：inline macroは直前に空白がなければ認識されません。この空白の直前が語間に空白を置かない文字である場合、空白を出力しないようにしました。日本語や中国語の文中でmacroを書いても本文に空きが残りません。",
+  "#508：利用側アプリが生成した参考文献一覧を、番号付きで描画できるようにしました。項目へ番号を渡すと``ol``として出力するため、本文の``[1]``から一覧の該当項目をたどれます。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -95,12 +94,14 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。Worker protocol versionは${protocol.workerProtocolVersion}で、どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。参考文献の項目へ番号を渡す\`\`number\`\`を追加したため、v${PREVIOUS_RELEASE_VERSION}から1つ進めました。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  "HTML出力を変更しました。語間に空白を置かない文字の直後では、記法が要求した空白を出力しません。対象は段落内の改行と、inline macroの直前の空白です。日本語、中国語、韓国語の文書で出力が変わります。",
-  "macroの直後の空白と、書式記号の前後の空白は従来どおり出力します。判断に使うのは空白の直前にある地の文の文字だけで、macroの中身やmacroがHTML要素になるかどうかは見ません。",
-  "公開Rust APIは変更していません。",
+  "Rust APIへ``GeneratedBibliographyEntry::with_number``と``number``を追加しました。番号を渡した参考文献一覧は``ol``、渡さない一覧は従来どおり``ul``として出力します。",
+  "WASM protocolの``renderInputs.generatedBibliography.entries``へ任意の``number``を追加しました。既定値はnullで、渡さない場合の動作は変わりません。",
+  "番号は一覧全体の性質として扱います。すべての項目が番号を持つか、どの項目も持たないかのどちらかで、除外を適用した後に残る番号は項目の並び順で1、2、…、nと読める必要があります。",
+  "この条件を満たさない場合は``invalid-generated-bibliography-numbering``をerror severityで報告し、参考文献一覧を出力しません。番号を捨てて``ul``へ戻す動作は用意していません。",
+  "番号の値そのものはHTMLへ書き込みません。``li``の``value``属性は使わないため、HTML出力の属性allowlistは変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -108,7 +109,7 @@ const contractNotes = [
 
 const migrationNotes = [
   `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
-  "日本語、中国語、韓国語の文書をHTMLへ変換している場合、出力の空白が変わります。生成物を比較して保存している場合は期待値を更新してください。変換結果を直接比較していない利用では対応は不要です。",
+  "番号styleの引用を使っている利用側アプリは、本文の引用表示を組み立てるときに決めた番号を、``with_number``（WASMでは``number``）で参考文献の項目へも渡してください。渡さない場合の出力は従来どおりです。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

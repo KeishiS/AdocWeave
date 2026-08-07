@@ -134,8 +134,12 @@ pub(crate) fn convert(
                         entry.citation_key,
                         entry.text,
                     );
-                    match entry.label {
+                    let generated = match entry.label {
                         Some(label) => generated.with_label(label),
+                        None => generated,
+                    };
+                    match entry.number {
+                        Some(number) => generated.with_number(number),
                         None => generated,
                     }
                 })

@@ -113,6 +113,8 @@ pub struct WasmGeneratedBibliographyEntry {
     pub text: String,
     #[serde(default)]
     pub label: Option<String>,
+    #[serde(default)]
+    pub number: Option<u32>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]

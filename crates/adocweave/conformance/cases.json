@@ -1,5 +1,5 @@
 {
-  "packageVersion": "0.35.0",
+  "packageVersion": "0.36.0",
   "cases": [
     {
       "name": "release-lf",
@@ -291,6 +291,23 @@
       },
       "compatibility": "approved-adocweave-output",
       "rationale": "host生成の参考文献本文はAsciiDocとして再解析せず、nativeとWASMで同じplain text、引用linkおよびback referenceを生成する",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
+      "name": "generated-bibliography-numbered",
+      "source": "See cite:[one] and cite:[two].\n",
+      "expectedHtmlFile": "generated-bibliography-numbered.html",
+      "renderInputs": {
+        "generatedBibliography": {
+          "title": "References",
+          "entries": [
+            { "citationKey": "one", "text": "First entry.", "number": 1 },
+            { "citationKey": "two", "text": "Second entry.", "number": 2 }
+          ]
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "番号を渡した参考文献一覧はolとして出力し、番号の値そのものはHTMLへ書き込まない",
       "contractImpact": "core-api,html,conformance,wasm-api"
     },
     {
