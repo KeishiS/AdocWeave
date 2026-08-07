@@ -35,30 +35,29 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.34.0");
-  assert.match(notes, /#515：/);
-  assert.match(notes, /空白を出力せず行をつなぐ/);
-  assert.match(notes, /#516：/);
-  assert.match(notes, /inline macroは直前に空白がなければ認識されません/);
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.35.0");
+  assert.match(notes, /#508：/);
+  assert.match(notes, /番号付きで描画/);
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /v0\.34\.0から1つ進めました/);
+  assert.match(notes, /v0\.35\.0から1つ進めました/);
   assert.match(notes, /Worker protocol versionは2で変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
-  assert.match(notes, /Rust APIの破壊的変更：ありません/);
-  assert.match(notes, /公開Rust APIは変更していません/);
-  assert.match(notes, /HTML出力を変更しました/);
-  assert.match(notes, /macroの直後の空白と、書式記号の前後の空白は従来どおり出力します/);
+  assert.match(notes, /Rust APIの破壊的変更：/);
+  assert.match(notes, /WasmGeneratedBibliographyEntryへnumber fieldを追加/);
+  assert.match(notes, /``GeneratedBibliographyEntry::with_number``/);
+  assert.match(notes, /``invalid-generated-bibliography-numbering``/);
+  assert.match(notes, /``li``の``value``属性は使わない/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
-  assert.match(notes, /0\.35\.0のpackageとAPIへ更新/);
-  assert.match(notes, /requestの``packageVersion``も``0\.35\.0``にそろえて/);
+  assert.match(notes, /0\.36\.0のpackageとAPIへ更新/);
+  assert.match(notes, /requestの``packageVersion``も``0\.36\.0``にそろえて/);
   assert.match(notes, /``schemaVersion``はrequestの項目ではありません/);
   assert.match(notes, /requestには追加しないでください/);
-  assert.doesNotMatch(notes, /``schemaVersion``を10へ更新/);
+  assert.doesNotMatch(notes, /``schemaVersion``を11へ更新/);
   assert.match(
     notes,
     new RegExp(`\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\``),
@@ -68,7 +67,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));
   assert.doesNotMatch(notes, /``npx --package``/);
   assert.doesNotMatch(notes, /再設計後のProcessor/);
-  assert.match(notes, /日本語、中国語、韓国語の文書をHTMLへ変換している場合/);
+  assert.match(notes, /番号styleの引用を使っている利用側アプリ/);
   assert.match(notes, /textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません/);
   assert.match(notes, /バージョンの異なる配布物を混ぜて使えない/);
   assert.match(notes, /sha256sum --check/);
