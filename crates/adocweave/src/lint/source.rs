@@ -1,6 +1,6 @@
 use crate::diagnostic::Applicability;
+use crate::source::LineEnding;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::LineEnding;
 
 use super::{
     EXCESSIVE_BLANK_LINES, LINE_TOO_LONG, LintContext, LintDiagnosticBody, LintDiagnosticSink,

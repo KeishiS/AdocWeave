@@ -719,7 +719,7 @@ pub(crate) fn parse_line(
 }
 
 pub(crate) fn parse_lines(
-    source_document: &crate::source_document::SourceDocument,
+    source_document: &crate::source::SourceDocument,
     line_index: usize,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<

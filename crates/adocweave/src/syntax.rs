@@ -2,8 +2,8 @@
 
 use std::fmt::Write as _;
 
+use crate::source::{LosslessToken, LosslessTokenKind, SourceDocument};
 use crate::source::{TextRange, TextSize};
-use crate::source_document::{LosslessToken, LosslessTokenKind, SourceDocument};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SyntaxInvariantError;
@@ -473,8 +473,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{SyntaxIssueClass, SyntaxKind, SyntaxNode, SyntaxTree};
+    use crate::source::SourceDocument;
     use crate::source::{TextRange, TextSize};
-    use crate::source_document::SourceDocument;
 
     #[test]
     fn syntax_materialization_cancels_at_a_bounded_node_checkpoint() {

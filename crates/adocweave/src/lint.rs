@@ -51,7 +51,7 @@ impl<'a> LintContext<'a> {
         self.document
     }
 
-    fn source_document(&self) -> &'a crate::source_document::SourceDocument {
+    fn source_document(&self) -> &'a crate::source::SourceDocument {
         self.syntax.source_document()
     }
 }

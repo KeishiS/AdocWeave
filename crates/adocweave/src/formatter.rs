@@ -4,8 +4,8 @@ use crate::core::{Analysis, CancellationCheck, NeverCancel};
 #[cfg(test)]
 use crate::core::{AnalysisOptions, ParseError, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
+use crate::source::LineEnding;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::LineEnding;
 use crate::syntax::SyntaxKind;
 use crate::syntax::SyntaxTree;
 
@@ -217,7 +217,7 @@ fn format_syntax(
 }
 
 fn blank_offsets_document_attribute(
-    document: &crate::source_document::SourceDocument,
+    document: &crate::source::SourceDocument,
     blank_index: usize,
     attribute_starts: &std::collections::BTreeSet<TextSize>,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,

@@ -22,7 +22,7 @@ fn finish_document_propagates_lowering_cancellation_without_partial_output() {
     let source: std::sync::Arc<str> = std::sync::Arc::from(source);
     let config = super::ParseConfig::default();
     let source_document =
-        crate::source_document::SourceDocument::from_shared(std::sync::Arc::clone(&source))
+        crate::source::SourceDocument::from_shared(std::sync::Arc::clone(&source))
             .expect("source document");
     let line_count = source_document.lines().len();
     let mut budget = super::ParseBudget::new(config.limits).expect("default limits");
@@ -384,13 +384,13 @@ fn document_attribute_flushes_preceding_orphan_metadata_and_comment() {
 
 #[test]
 fn nested_compound_blocks_share_the_root_source_index() {
-    crate::source_document::SourceDocument::reset_construction_count();
+    crate::source::SourceDocument::reset_construction_count();
     let source = "====\n.Outer\n--\n.Sidebar\n****\nparagraph\n****\n--\n====\n";
 
     let parsed = parse(source).expect("nested compound blocks");
 
     assert_eq!(
-        crate::source_document::SourceDocument::construction_count(),
+        crate::source::SourceDocument::construction_count(),
         1,
         "compound recursion must not rebuild SourceDocument"
     );
@@ -1655,18 +1655,15 @@ fn header_comment_handling_uses_the_effective_psv_column_style() {
 
 #[test]
 fn asciidoc_table_cells_are_parsed_as_nested_blocks() {
-    crate::source_document::SourceDocument::reset_construction_count();
+    crate::source::SourceDocument::reset_construction_count();
     let source = "[cols=a]\n|===\n|A paragraph.\n\n* one\n* two\n|===\n";
     let parsed = parse(source).expect("parse");
     assert_eq!(
-        crate::source_document::SourceDocument::construction_count(),
+        crate::source::SourceDocument::construction_count(),
         1,
         "source-backed PSV cells must not rebuild the line index"
     );
-    assert_eq!(
-        crate::source_document::SourceDocument::indexed_view_count(),
-        1
-    );
+    assert_eq!(crate::source::SourceDocument::indexed_view_count(), 1);
     let AstBlock::Delimited(crate::block_model::DelimitedBlock {
         content: DelimitedContent::Table(table),
         ..
