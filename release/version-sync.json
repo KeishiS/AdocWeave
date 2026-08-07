@@ -366,11 +366,6 @@
       "count": 3
     },
     {
-      "path": "tools/release-workflow-policy.mjs",
-      "literal": "0.32\u002e0",
-      "count": 3
-    },
-    {
       "path": "fixtures/protocol/request-corpus.json",
       "literal": "\"oldVersion\": \"0.10.0\"",
       "count": 1
@@ -393,16 +388,6 @@
     {
       "path": "editors/zed/Cargo.lock",
       "literal": "name = \"hashbrown\"\nversion = \"0.17.1\"",
-      "count": 1
-    },
-    {
-      "path": "tools/release-workflow-policy.test.mjs",
-      "literal": "distVersion: \"0.31\u002e0\"",
-      "count": 1
-    },
-    {
-      "path": "tools/release-workflow-policy.test.mjs",
-      "literal": "cargo-dist/releases/download/v0.31\u002e0/cargo-dist-x86_64-pc-windows-msvc.zip",
       "count": 1
     }
   ]

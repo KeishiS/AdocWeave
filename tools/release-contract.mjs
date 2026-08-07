@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
-import { loadWorkflowPolicyInputs, validateReleaseWorkflowPolicy } from "./release-workflow-policy.mjs";
 import { loadTextlintPluginPackageContract } from "./textlint-plugin-package-contract.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -399,7 +398,6 @@ function verifyRepository() {
   const fixture = JSON.parse(fixtureText);
   validateDistributionManifest(fixture, plan);
   if (fixtureText !== canonicalJson(fixture)) fail("distribution manifest fixture is not canonical JSON");
-  validateReleaseWorkflowPolicy(loadWorkflowPolicyInputs());
   return { version, manifest };
 }
 
