@@ -25,7 +25,6 @@ mod formatter;
 mod generated_bibliography;
 mod html;
 mod inline;
-mod inline_grammar;
 mod inline_model;
 mod json;
 mod limits;

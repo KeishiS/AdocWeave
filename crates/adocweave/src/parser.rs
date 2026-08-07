@@ -17,8 +17,8 @@ use crate::block_sequence::{
 use crate::budget::{BudgetExceeded, ParseBudget, ParseBudgetCharge};
 use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
+use crate::inline::parse_with_budget_impl as parse_inlines;
 use crate::inline::{Inline, InlineParseConfig};
-use crate::inline_grammar::parse as parse_inlines;
 use crate::limits::AnalysisLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::parser_support::{ParseFailure, ParseState};
