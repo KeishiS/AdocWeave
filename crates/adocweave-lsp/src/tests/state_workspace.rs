@@ -561,29 +561,10 @@ fn include_added_after_initial_scan_loads_an_excluded_target() {
         .expect("change");
     assert_eq!(jobs.len(), 1);
     let job = jobs.pop().expect("changed analysis");
-    let error = job
-        .workspace
-        .as_ref()
-        .expect("workspace input")
-        .analyze(&job.request.options, job.cancellation.as_ref())
-        .expect_err("missing excluded include");
-    let target = error
-        .requested_resource()
-        .expect("structured missing resource")
-        .clone();
 
-    let retry = service
-        .resolve_missing_include(&job, &target)
-        .expect("resolve missing include")
-        .expect("replacement analysis");
-    assert_eq!(retry.include_resolution_attempts.len(), 1);
-    assert!(
-        service
-            .resolve_missing_include(&retry, &target)
-            .expect("reject repeated target")
-            .is_none()
-    );
-    adopt(&mut service, retry);
+    // The one analysis acquires the excluded include as the preprocessor asks
+    // for it. No replacement job is scheduled and nothing is analysed twice.
+    adopt(&mut service, job);
 
     let analysis = service
         .documents
@@ -643,15 +624,15 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
         .expect("first change")
         .pop()
         .expect("stale analysis");
-    let target = stale_job
-        .workspace
-        .as_ref()
-        .expect("workspace input")
-        .analyze(&stale_job.request.options, stale_job.cancellation.as_ref())
-        .expect_err("missing include")
-        .requested_resource()
-        .expect("structured missing resource")
-        .clone();
+    // The worker finishes against the state it started from, including reading
+    // the include, but a newer revision arrives before the result comes back.
+    let workspace = service.workspace_copy();
+    let analyzed = crate::backend::analyze_workspace_root(
+        &workspace,
+        &stale_job,
+        stale_job.workspace.as_ref().expect("workspace input"),
+    )
+    .expect("stale analysis completes");
     service
         .begin_change(typed(json!({
             "textDocument": {"uri": document_uri, "version": 3},
@@ -661,9 +642,14 @@ fn stale_analysis_cannot_load_a_new_include_resource() {
 
     assert!(
         service
-            .resolve_missing_include(&stale_job, &target)
-            .expect("ignore stale analysis")
-            .is_none()
+            .adopt_analyzed_workspace(&stale_job, analyzed)
+            .is_empty(),
+        "a stale worker result must not publish anything"
+    );
+    let target = lsp::Url::from_file_path(&target_path).expect("target URI");
+    assert!(
+        service.workspace_copy().get(&target).is_none(),
+        "a stale worker result must not leave the include it read"
     );
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -732,45 +718,14 @@ fn concurrent_missing_includes_converge_on_the_current_workspace_generation() {
     let first_job = service
         .refresh_stale_workspace(&first_job)
         .expect("first job follows the generation changed by opening the second document");
-    let first_target = first_job
-        .workspace
-        .as_ref()
-        .expect("first workspace")
-        .analyze(&first_job.request.options, first_job.cancellation.as_ref())
-        .expect_err("first missing include")
-        .requested_resource()
-        .expect("first target")
-        .clone();
-    let first_retry = service
-        .resolve_missing_include(&first_job, &first_target)
-        .expect("load first include")
-        .expect("first retry");
-
+    // Each analysis acquires its own include. Adopting the first advances the
+    // workspace generation, so the second job has to follow it before it runs.
+    adopt(&mut service, first_job);
     let second_current = service
         .refresh_stale_workspace(&second_job)
         .expect("second job follows the generation changed by the first include");
-    let second_target = second_current
-        .workspace
-        .as_ref()
-        .expect("second current workspace")
-        .analyze(
-            &second_current.request.options,
-            second_current.cancellation.as_ref(),
-        )
-        .expect_err("second missing include")
-        .requested_resource()
-        .expect("second target")
-        .clone();
-    let second_retry = service
-        .resolve_missing_include(&second_current, &second_target)
-        .expect("load second include")
-        .expect("second retry");
-    let first_current = service
-        .refresh_stale_workspace(&first_retry)
-        .expect("first job follows the generation changed by the second include");
 
-    adopt(&mut service, first_current);
-    adopt(&mut service, second_retry);
+    adopt(&mut service, second_current);
     assert!(
         service
             .documents

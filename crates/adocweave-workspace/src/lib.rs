@@ -1044,7 +1044,11 @@ enum WorkspaceResourceEvidence {
 }
 
 /// Result of starting or resuming workspace analysis.
-#[non_exhaustive]
+///
+/// These four outcomes are the whole protocol between a caller and one analysis
+/// run, so the enum is deliberately exhaustive. A caller must decide what to do
+/// about each of them, and a new outcome should break callers rather than
+/// disappear into a catch-all arm that quietly does the wrong thing.
 pub enum WorkspaceAnalysisStep {
     /// Preprocessing, core analysis, and origin projection completed once.
     Complete(Box<WorkspaceAnalysisDraft>),

@@ -148,57 +148,55 @@ pub(super) fn change(
     Ok(true)
 }
 
-pub(super) fn adopt(service: &mut LanguageService, mut job: AnalysisJob) {
-    loop {
-        let analysis = job
-            .request
-            .analyze(job.cancellation.as_ref())
-            .expect("analysis");
-        assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
-        if let Some(problem) = &job.workspace_problem {
-            assert_eq!(
-                service.adopt_workspace_problem(&job, problem.clone()),
-                Adoption::Adopted
-            );
-            return;
-        }
-        let Some(input) = &job.workspace else {
-            return;
-        };
-        let analysis = match input.analyze(&job.request.options, job.cancellation.as_ref()) {
-            Ok(analysis) => analysis,
-            Err(error) => {
-                if let Some(target) = error.requested_resource()
-                    && let Some(retry) = service
-                        .resolve_missing_include(&job, target)
-                        .expect("resolve missing include")
-                {
-                    job = retry;
-                    continue;
-                }
+/// Runs one job the way the event loop and its worker do, then adopts it.
+pub(super) fn adopt(service: &mut LanguageService, job: AnalysisJob) {
+    let analysis = job
+        .request
+        .analyze(job.cancellation.as_ref())
+        .expect("analysis");
+    assert_eq!(service.adopt(&job, analysis), Adoption::Adopted);
+    if let Some(problem) = &job.workspace_problem {
+        assert_eq!(
+            service.adopt_workspace_problem(&job, problem.clone()),
+            Adoption::Adopted
+        );
+        return;
+    }
+    let Some(input) = &job.workspace else {
+        return;
+    };
+    let workspace = service.workspace_copy();
+    match crate::backend::analyze_workspace_root(&workspace, &job, input) {
+        Ok(analyzed) => {
+            let failure = analyzed.failure();
+            service.adopt_analyzed_workspace(&job, analyzed);
+            if let Some(failure) = failure {
                 assert_eq!(
                     service.adopt_workspace_problem(
                         &job,
                         WorkspaceProblem {
-                            source_id: error.source_id.as_ref().map(ToString::to_string),
-                            range: error.range.unwrap_or_else(|| {
+                            source_id: failure.source_id,
+                            range: failure.range.unwrap_or_else(|| {
                                 adocweave::text::TextRange::new(
                                     adocweave::text::TextSize::ZERO,
                                     adocweave::text::TextSize::ZERO,
                                 )
                                 .expect("zero range")
                             }),
-                            code: error.diagnostic_code().to_owned(),
-                            message: error.to_string(),
+                            code: failure.code,
+                            message: failure.message,
                         }
                     ),
                     Adoption::Adopted
                 );
-                return;
             }
-        };
-        assert_eq!(service.adopt_workspace(&job, analysis), Adoption::Adopted);
-        return;
+        }
+        Err(problem) => {
+            assert_eq!(
+                service.adopt_workspace_problem(&job, problem),
+                Adoption::Adopted
+            );
+        }
     }
 }
 
