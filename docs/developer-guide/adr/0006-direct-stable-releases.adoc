@@ -14,10 +14,17 @@ release candidate tagを受理しません。通常のversion更新では機械�
 このPull Requestのsquash commitを候補SHAとして渡します。workflowはreview済みのintent、未統合Pull Requestが
 ないことおよび同じSHAのmain candidateを検証し、そのSHAを公開対象として固定します。
 
-検証後はpublisher用GitHub Appが``vX.Y.Z`` tagを一度だけ作成し、同じworkflow runでstable GitHub Releaseを
-公開します。tagの作成、更新および削除はrepository rulesetでpublisher Appだけに許可します。公開後の修正は
-tagを付け替えず、新しいstableなバージョンとして公開します。``github-release`` Environmentはpublisher Appの
-秘密鍵を保持し、mainから開始した公開jobだけが使用できる権限・監査境界とします。
+検証後は公開jobが``vX.Y.Z`` tagを一度だけ作成し、同じworkflow runでstable GitHub Releaseを公開します。
+公開後の修正はtagを付け替えず、新しいstableなバージョンとして公開します。
+
+書き込み権限はworkflow tokenが持ちます。``github-release`` Environmentが、その権限を使える範囲を限定する
+権限・監査境界です。release用workflowで``contents: write``を持つjobはこの公開jobだけであり、Environmentの
+deployment branch制限によって、許可したbranchから開始したrunだけがこのjobへ到達します。
+
+tagを作成できる主体を公開jobだけに限る仕組みは、まだありません。専用のGitHub Appを唯一のbypass対象とする
+repository rulesetでそれを実現できますが、Appの作成、インストールおよび鍵の管理という運用費用が伴います。
+現時点ではその費用に見合わないと判断し、Environmentによる限定にとどめています。tagの作成経路を機械的に
+強制する必要が生じた時点で再評価します。
 
 == 帰結
 

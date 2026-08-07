@@ -1004,7 +1004,7 @@ export function validateReleaseWorkflowPolicy({
   if (/gh release\s+(create|upload|edit|delete)/.test(release)) {
     fail("read-only workflows must not mutate GitHub Releases");
   }
-  for (const [permission, value] of [["attestations", "write"], ["contents", "read"], ["id-token", "write"]]) {
+  for (const [permission, value] of [["attestations", "write"], ["contents", "write"], ["id-token", "write"]]) {
     requirePermission(publishDoc, permission, value, `publisher is missing ${permission}: ${value}`);
     if (dispatchJobs.publish?.permissions?.[permission] !== value) {
       fail(`publisher caller is missing ${permission}: ${value}`);
@@ -1036,18 +1036,11 @@ export function validateReleaseWorkflowPolicy({
   if (publishJob.steps.indexOf(attestation) > publishJob.steps.indexOf(publication)) {
     fail("public assets must be attested before publication");
   }
-  const publisherToken = step(publishJob, (item) =>
-    item.uses?.startsWith("actions/create-github-app-token@"),
-  "publisher must obtain a scoped GitHub App token");
-  const publisherTokenInputs = Object.fromEntries(
-    Object.entries(publisherToken.with ?? {}).sort(),
-  );
-  if (JSON.stringify(publisherTokenInputs) !== JSON.stringify({
-    "app-id": "${{ vars.RELEASE_PUBLISHER_APP_ID }}",
-    "permission-contents": "write",
-    "private-key": "${{ secrets.RELEASE_PUBLISHER_PRIVATE_KEY }}",
-  })) {
-    fail("publisher App token must request only contents: write with credentials from the github-release environment");
+  // Publication uses the workflow token. The github-release environment is what
+  // confines it: only a run started from an allowed branch reaches this job, and
+  // no other job in the release workflows is granted contents: write.
+  if (publishJob.steps.some((item) => item.uses?.startsWith("actions/create-github-app-token@"))) {
+    fail("publisher must not mint a separate token while publication uses the workflow token");
   }
   const tagCreation = step(publishJob, (item) => item.name === "Immutable stable tag creation",
     "publisher must create the frozen stable tag");
@@ -1062,7 +1055,7 @@ export function validateReleaseWorkflowPolicy({
     "failed publication must clean up its draft");
   const cleanupEnvironment = Object.fromEntries(Object.entries(cleanup.env ?? {}).sort());
   if (JSON.stringify(cleanupEnvironment) !== JSON.stringify({
-    GH_TOKEN: "${{ steps.publisher-token.outputs.token }}",
+    GH_TOKEN: "${{ github.token }}",
     RELEASE_ID: "${{ steps.draft.outputs.release-id }}",
   })) {
     fail("publisher cleanup must receive only its token and own draft ID");
@@ -1077,10 +1070,11 @@ export function validateReleaseWorkflowPolicy({
       /gh release\s+(upload|view|edit)/.test(publishRuns)) {
     fail("private drafts must never use the tag-only release API");
   }
-  const secretReferences = [...publish.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((match) => match[1]);
-  if (JSON.stringify([...new Set(secretReferences)]) !==
-      JSON.stringify(["RELEASE_PUBLISHER_PRIVATE_KEY"])) {
-    fail("publisher must receive only the dedicated GitHub App private key");
+  // Publication uses the workflow token, so it reads no repository secret at
+  // all. Anything appearing here would be a credential the release path did not
+  // need, which is the case this check exists to catch.
+  if (/secrets\./.test(publish)) {
+    fail("publisher must not read repository secrets");
   }
 
   requireTimeout(smokeDoc.jobs?.smoke, 10, "native smoke must have a timeout");
