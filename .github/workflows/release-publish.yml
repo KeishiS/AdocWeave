@@ -15,7 +15,7 @@ on:
 
 permissions:
   attestations: write
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -58,17 +58,10 @@ jobs:
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: artifacts/*
-      - name: Scoped publisher token
-        id: publisher-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-        with:
-          app-id: ${{ vars.RELEASE_PUBLISHER_APP_ID }}
-          private-key: ${{ secrets.RELEASE_PUBLISHER_PRIVATE_KEY }}
-          permission-contents: write
       - name: Immutable stable tag creation
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          GH_TOKEN: ${{ steps.publisher-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           tag_object="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
@@ -83,7 +76,7 @@ jobs:
       - name: Private draft creation and verification
         id: draft
         env:
-          GH_TOKEN: ${{ steps.publisher-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           PLAN: ${{ inputs.plan }}
         run: |
           tag="$(jq -r '.announcement_tag' <<<"$PLAN")"
@@ -119,7 +112,7 @@ jobs:
           fi
       - name: Complete release publication
         env:
-          GH_TOKEN: ${{ steps.publisher-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.draft.outputs.release-id }}
         run: |
           result="$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false)"
@@ -127,7 +120,7 @@ jobs:
       - name: Incomplete draft removal
         if: failure()
         env:
-          GH_TOKEN: ${{ steps.publisher-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.draft.outputs.release-id }}
         run: |
           if [ -z "$RELEASE_ID" ]; then

@@ -101,7 +101,7 @@ jobs:
       tag: ${{ needs.readiness.outputs.tag }}
     permissions:
       attestations: write
-      contents: read
+      contents: write
       id-token: write
 
   textlint-plugin-post-release-smoke:

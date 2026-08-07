@@ -124,21 +124,23 @@ test("latest textlint compatibility probe stays scheduled, read-only, bounded, a
   );
 });
 
-test("build workflows cannot receive secrets and publisher receives only its App key", () => {
+test("release workflows cannot receive repository secrets", () => {
   const inputs = loadWorkflowPolicyInputs();
   assert.throws(
     () => validateReleaseWorkflowPolicy({ ...inputs, release: `${inputs.release}\nsecrets: inherit\n` }),
     /must not receive repository secrets/,
   );
+  // Publication uses the workflow token, so any secret reference here would be
+  // a credential the release path does not need.
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       publish: inputs.publish.replace(
-        "secrets.RELEASE_PUBLISHER_PRIVATE_KEY",
-        "secrets.UNRELATED_PRIVATE_KEY",
+        "          GH_TOKEN: ${{ github.token }}",
+        "          GH_TOKEN: ${{ secrets.UNRELATED_PRIVATE_KEY }}",
       ),
     }),
-    /GitHub App private key|github-release environment/,
+    /must not read repository secrets/,
   );
 });
 
@@ -158,22 +160,18 @@ test("publisher cannot omit its named environment or cleanup", () => {
     }),
     /clean up its draft/,
   );
+  // Publication uses the workflow token. Minting a separate one would put a
+  // credential outside the environment that confines this job.
   assert.throws(
     () => validateReleaseWorkflowPolicy({
       ...inputs,
       publish: inputs.publish.replace(
-        "          permission-contents: write\n",
-        "          permission-contents: write\n          permission-actions: write\n",
+        "      - name: Immutable stable tag creation\n",
+        "      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2\n" +
+          "      - name: Immutable stable tag creation\n",
       ),
     }),
-    /request only contents: write/,
-  );
-  assert.throws(
-    () => validateReleaseWorkflowPolicy({
-      ...inputs,
-      publish: inputs.publish.replace("          permission-contents: write\n", ""),
-    }),
-    /request only contents: write/,
+    /must not mint a separate token/,
   );
   assert.throws(
     () => validateReleaseWorkflowPolicy({
