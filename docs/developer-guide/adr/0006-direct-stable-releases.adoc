@@ -20,12 +20,13 @@ release candidate tagを受理しません。すべてのrelease対象変更を`
 権限・監査境界です。release用workflowで``contents: write``を持つjobはこの公開jobだけであり、Environmentの
 deployment branch制限によって、許可したbranchから開始したrunだけがこのjobへ到達します。
 
-``v*``を対象とするtag rulesetがtagの作成、更新および削除を制限し、組み込みのGitHub Actions appだけを
-bypass対象とします。人が手元からstable tagをpushすることは機械的に拒否されます。このbypassはworkflow全般に
-及びますが、release用workflowで``contents: write``を持つjobは公開jobだけであり、Environmentのdeployment
-branch制限と合わせてtagの作成経路を公開jobへ限定します。専用のpublisher用GitHub Appを唯一のbypass対象と
-すればより厳密になりますが、Appの作成、インストールおよび鍵の管理という運用費用が個人開発では
-見合わないため使用しません。
+tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。個人所有リポジトリでは組み込みの
+GitHub Actions appをtag rulesetのbypass対象へ指定できず(GitHub APIが拒否します)、bypassなしの
+rulesetは公開workflowのtag作成も拒否します。専用のpublisher用GitHub Appを唯一のbypass対象とすれば
+実現できますが、Appの作成、インストールおよび鍵の管理という運用費用が個人開発では見合わないため
+使用しません。tagの作成経路は、``contents: write``を公開jobだけへ付与するworkflow構成と、Environmentの
+deployment branch制限で間接的に限定します。リポジトリをorganizationへ移す場合は、Actions appを
+bypassとするtag rulesetを再評価します。
 
 == 帰結
 
