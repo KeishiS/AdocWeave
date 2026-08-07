@@ -242,19 +242,33 @@ impl<'a> HtmlWriter<'a> {
         self.output.push('\n');
     }
 
+    /// Writes paragraph text, joining the source lines it was wrapped across.
+    ///
+    /// The specification states that a line break inside a paragraph "will be
+    /// (effectively) converted to a single space". This does that, except when
+    /// the characters on both sides belong to a script written without spaces
+    /// between words. There the wrap is a decision about the source file, and
+    /// the space it would produce is one the sentence never asked for.
+    ///
+    /// That exception is a deliberate difference from the specification. It is
+    /// recorded in the user guide's compatibility page.
     pub(super) fn inline_text(&mut self, value: TextValue<'_>) {
         let mut characters = value.0.chars().peekable();
+        let mut previous: Option<char> = None;
         while let Some(character) = characters.next() {
-            if character == '\r' {
-                if characters.peek() == Some(&'\n') {
+            if character == '\r' || character == '\n' {
+                if character == '\r' && characters.peek() == Some(&'\n') {
                     characters.next();
                 }
+                if crate::cjk::joins_without_space(previous, characters.peek().copied()) {
+                    continue;
+                }
                 self.output.push(' ');
-            } else if character == '\n' {
-                self.output.push(' ');
+                previous = Some(' ');
             } else {
                 let mut encoded = [0; 4];
                 escape_into(self.output, character.encode_utf8(&mut encoded));
+                previous = Some(character);
             }
         }
     }
