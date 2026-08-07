@@ -11,12 +11,6 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import {
-  canonicalReleaseIntent,
-  prepareReleaseIntent,
-  validateReleaseIntent,
-} from "./release-intent.mjs";
-
 const ROOT = new URL("../", import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const IGNORED_DIRECTORIES = new Set([
@@ -127,17 +121,13 @@ export function validateRegistry(registry) {
       ) {
         fail(`${label}.packagesは重複のないpackage名である必要があります`);
       }
-    } else if (target?.type === "release-intent") {
-      exactKeys(target, ["type", "path"], label);
     } else {
-      fail(`${label}.typeはliteral、cargo-lockまたはrelease-intentである必要があります`);
+      fail(`${label}.typeはliteralまたはcargo-lockである必要があります`);
     }
     safePath(target.path, label);
     const identity = target.type === "literal"
       ? `${target.path}\0literal\0${target.template}`
-      : target.type === "cargo-lock"
-        ? `${target.path}\0cargo-lock\0${target.packages.join(",")}`
-        : `${target.path}\0release-intent`;
+      : `${target.path}\0cargo-lock\0${target.packages.join(",")}`;
     if (locators.has(identity)) fail(`${label}は重複しています`);
     locators.add(identity);
   }
@@ -231,10 +221,6 @@ function compareVersions(left, right) {
 }
 
 function validateLocator(root, locator, version, label) {
-  if (locator.type === "release-intent") {
-    validateReleaseIntent(JSON.parse(read(root, locator.path)), version);
-    return;
-  }
   if (locator.type === "cargo-lock") {
     cargoLockBlocks(read(root, locator.path), locator, version, label);
     return;
@@ -467,11 +453,6 @@ function updateLocators(root, locators, current, next) {
   const updated = new Map();
   for (const locator of locators) {
     const source = updated.get(locator.path) ?? read(root, locator.path);
-    if (locator.type === "release-intent") {
-      const intent = prepareReleaseIntent(JSON.parse(source), current, next);
-      updated.set(locator.path, canonicalReleaseIntent(intent));
-      continue;
-    }
     if (locator.type === "cargo-lock") {
       const { blocks, selected } = cargoLockBlocks(
         source,

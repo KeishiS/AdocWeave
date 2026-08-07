@@ -30,10 +30,6 @@ function registry() {
     },
     targets: [
       {
-        type: "release-intent",
-        path: "release/intent.json",
-      },
-      {
         type: "literal",
         path: "component.txt",
         template: "component-version={version}",
@@ -89,16 +85,11 @@ function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "adocweave-version-sync."));
   mkdirSync(join(directory, "generated"), { recursive: true });
   mkdirSync(join(directory, "fixtures"), { recursive: true });
-  mkdirSync(join(directory, "release"), { recursive: true });
   writeFileSync(
     join(directory, "release-manifest.json"),
     '{\n  "packageVersion": "1.2.3"\n}\n',
   );
   writeFileSync(join(directory, "component.txt"), "component-version=1.2.3\n");
-  writeFileSync(
-    join(directory, "release/intent.json"),
-    '{\n  "schemaVersion": 1,\n  "version": "1.2.3",\n  "state": "ready",\n  "generation": 7\n}\n',
-  );
   writeFileSync(
     join(directory, "Cargo.lock"),
     '[[package]]\nname = "adocweave"\nversion = "1.2.3"\n\n[[package]]\nname = "dependency"\nversion = "0.10.0"\nsource = "registry+https://example.invalid/index"\n',
@@ -154,7 +145,6 @@ test("更新と検査を一つのallowlistから決定的に実行する", () =>
         "generated/protocol.txt",
         "generated/public.txt",
         "release-manifest.json",
-        "release/intent.json",
       ],
     );
     for (const path of [
@@ -162,7 +152,6 @@ test("更新と検査を一つのallowlistから決定的に実行する", () =>
       "component.txt",
       "generated/protocol.txt",
       "generated/public.txt",
-      "release/intent.json",
       "release-manifest.json",
     ]) {
       assert.match(readFileSync(join(scope.directory, path), "utf8"), /1\.3\.0/);
@@ -174,15 +163,6 @@ test("更新と検査を一つのallowlistから決定的に実行する", () =>
     assert.equal(
       readFileSync(join(scope.directory, "fixtures/old-version.json"), "utf8"),
       oldFixture,
-    );
-    assert.deepEqual(
-      JSON.parse(readFileSync(join(scope.directory, "release/intent.json"), "utf8")),
-      {
-        schemaVersion: 1,
-        version: "1.3.0",
-        state: "preparing",
-        generation: 8,
-      },
     );
     assert.doesNotThrow(() =>
       syncReleaseVersion({
@@ -251,7 +231,6 @@ test("generator失敗時は管理対象と旧version fixtureを復元する", ()
         "component.txt",
         "generated/protocol.txt",
         "generated/public.txt",
-        "release/intent.json",
         "fixtures/old-version.json",
       ].map((path) => [
         path,

@@ -4,11 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: Exact squash commit of the reviewed finalization pull request
-        required: true
-        type: string
-      finalization_pr:
-        description: Pull request number that changed release intent to ready
+        description: Exact main tip commit to publish as the stable release
         required: true
         type: string
 
@@ -38,11 +34,10 @@ jobs:
           fetch-tags: true
           persist-credentials: false
       - id: readiness
-        name: Reviewed final candidate readiness
+        name: Release candidate resolution
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DISPATCH_SHA: ${{ github.sha }}
-          FINALIZATION_PR: ${{ inputs.finalization_pr }}
           GH_TOKEN: ${{ github.token }}
         run: node tools/release-readiness.mjs
 
