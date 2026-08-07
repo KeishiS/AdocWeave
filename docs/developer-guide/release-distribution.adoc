@@ -169,17 +169,20 @@ archiveへ埋め込みません。
 == 権限境界
 
 計画、build、smoke testおよびcandidate集約はread-onlyで実行し、repository secretを参照しません。
-Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用する公開jobだけへ付与します。
-このEnvironmentはmainから開始したjobだけが利用でき、publisher用GitHub Appの秘密鍵を保持する
-権限・監査境界です。``v*`` tagの作成、更新および削除はrepository rulesetで制限し、publisher Appだけを
-bypass対象にします。review済みrelease intent、final candidate、main candidateの再利用および成果物の完全性を
-workflowで検査し、成功後に自動公開します。
-Environmentのdeployment branch制限、publisher Appの権限およびtag rulesetはGitHub上の外部設定であり、
-workflow自身では検査しません。公開担当者はdispatch前にこれらの設定をRelease checklistで確認します。
-外部actionは完全なcommit SHAへ固定します。
+公開jobもrepository secretを参照せず、書き込みにはworkflow tokenを使用します。
+Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用するこの公開jobだけへ付与します。
+release用workflowで``contents: write``を持つjobはここだけであり、Environmentのdeployment branch制限に
+よって、許可したbranchから開始したrunだけがこのjobへ到達します。review済みrelease intent、final candidate、
+main candidateの再利用および成果物の完全性をworkflowで検査し、成功後に自動公開します。
+Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
+dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
+
+``v*`` tagを作成できる主体を公開jobだけに限る仕組みはありません。tagの作成経路はEnvironmentの制限で
+間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。機械的な強制が必要に
+なった場合の選択肢はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 
 公開処理は、finalization Pull Requestのsquash commitに対する検証済みmain candidateを再利用します。成果物を
-再構築せず、metadataを再検証してattestationを作成してから、publisher Appが同じSHAへtagを作成します。
+再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
 == 検証
