@@ -61,10 +61,13 @@ export function readTarMembers(tgzBytes, { maximumTarBytes = 64 * 1024 * 1024 } 
   return members;
 }
 
+// Both alternatives require a known machine-directory name, not just a path
+// shape: the WebAssembly is binary, and three arbitrary bytes such as "o:\"
+// otherwise satisfy a bare drive-letter pattern.
 function assertNoMachinePath(bytes) {
   const text = bytes.toString("latin1");
   const match = text.match(/(?:^|[^A-Za-z0-9_])(\/(?:workspace|home|Users|tmp|private\/tmp|builds?|runner|__w)\/[!-~]{0,120})/) ??
-    text.match(/([A-Za-z]:\\[!-~]{0,120})/);
+    text.match(/([A-Za-z]:\\(?:Users|Windows|a|w|temp|tmp|hostedtoolcache|actions-runner)\\[!-~]{0,120})/i);
   if (match) fail(`WebAssembly contains a machine-specific path: ${match[1]}`);
 }
 
