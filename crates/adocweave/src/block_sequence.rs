@@ -5,7 +5,7 @@ use std::ops::Range;
 use crate::attributes::{AttributeProblem, DocumentAttributeOccurrence};
 use crate::block_model::{AstBlock, DocumentHeader, ExplicitAnchor};
 use crate::parser_support::ParseFailure;
-use crate::source_document::SourceDocument;
+use crate::source::SourceDocument;
 use crate::syntax::SyntaxNode;
 
 pub(super) struct BlockFacts {

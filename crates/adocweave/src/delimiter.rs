@@ -1,8 +1,8 @@
 //! Delimited-block registry and body boundary recognition.
 
 use crate::block_model::{BlockProblem, BlockProblemKind, DelimitedBlockKind};
+use crate::source::SourceDocument;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::SourceDocument;
 
 #[derive(Clone, Copy)]
 pub(super) struct DelimiterSpec {

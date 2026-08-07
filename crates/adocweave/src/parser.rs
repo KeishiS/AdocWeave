@@ -24,7 +24,7 @@ use crate::limits::AnalysisLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::parser_support::{ParseFailure, ParseState};
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::{SourceDocument, SourceDocumentBuildError, SourceLine};
+use crate::source::{SourceDocument, SourceDocumentBuildError, SourceLine};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxTree};
 
 #[derive(Default)]
@@ -2034,9 +2034,9 @@ fn flush_paragraph(
         paragraph.value.push_str(&value);
         if line.full_range().end() < paragraph.content_range.end() {
             paragraph.value.push_str(match line.ending() {
-                crate::source_document::LineEnding::Lf => "\n",
-                crate::source_document::LineEnding::CrLf => "\r\n",
-                crate::source_document::LineEnding::None => "",
+                crate::source::LineEnding::Lf => "\n",
+                crate::source::LineEnding::CrLf => "\r\n",
+                crate::source::LineEnding::None => "",
             });
         }
     }

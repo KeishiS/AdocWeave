@@ -5,8 +5,8 @@
 
 use crate::attributes::{AttributeProblem, DocumentAttributeOccurrence};
 use crate::block_model::{Author, DocumentHeader, MetadataValue, Revision};
+use crate::source::SourceLine;
 use crate::source::{PositionError, TextRange, TextSize};
-use crate::source_document::SourceLine;
 
 pub(super) struct DocumentHeaderState {
     pub(super) attributes_open: bool,

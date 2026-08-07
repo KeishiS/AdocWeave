@@ -42,7 +42,6 @@ mod render;
 mod resolved;
 mod resource;
 mod source;
-mod source_document;
 mod structure;
 mod substitution;
 mod syntax;

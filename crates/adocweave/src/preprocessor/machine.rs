@@ -15,7 +15,7 @@ pub(super) struct PreprocessMachine {
 
 pub(super) struct ExpansionCursor {
     lines: Vec<SelectedLine>,
-    document: crate::source_document::SourceDocument,
+    document: crate::source::SourceDocument,
     frame: IncludeFrame,
     next_line: usize,
     conditions: Vec<bool>,
@@ -32,15 +32,14 @@ impl ExpansionCursor {
             .iter()
             .map(|line| line.text.as_str())
             .collect::<String>();
-        let document =
-            crate::source_document::SourceDocument::new(&selected_source).map_err(|_| {
-                error(
-                    PreprocessErrorKind::InternalInvariant,
-                    source_id.clone(),
-                    zero_range(),
-                    "selected source exceeds the supported position range",
-                )
-            })?;
+        let document = crate::source::SourceDocument::new(&selected_source).map_err(|_| {
+            error(
+                PreprocessErrorKind::InternalInvariant,
+                source_id.clone(),
+                zero_range(),
+                "selected source exceeds the supported position range",
+            )
+        })?;
         if document.lines().len() < lines.len() {
             return Err(error(
                 PreprocessErrorKind::InternalInvariant,
