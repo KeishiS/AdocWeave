@@ -10,6 +10,13 @@ permissions:
   actions: read
   contents: read
 
+# A silent registry stall must fail within minutes instead of holding the job
+# until its timeout. These bounds apply to every npm invocation in this run.
+env:
+  npm_config_fetch_retries: "3"
+  npm_config_fetch_retry_maxtimeout: "30000"
+  npm_config_fetch_timeout: "120000"
+
 concurrency:
   group: ci-release-${{ github.ref }}
   cancel-in-progress: true
@@ -130,6 +137,15 @@ jobs:
           persist-credentials: false
       - if: matrix.build == 'nix'
         uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+      - name: Locked toolchain exposure for dependency caching
+        if: matrix.build == 'nix'
+        run: nix develop .#ci -c bash -c 'command -v cargo' | xargs dirname >> "$GITHUB_PATH"
+      - if: matrix.build == 'nix'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: native-${{ matrix.target }}
+          key: ${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native build linker installation
         if: startsWith(matrix.runner, 'ubuntu-')
         run: |
@@ -168,6 +184,12 @@ jobs:
           if ((& (Join-Path $distDirectory "dist.exe") --version) -ne "cargo-dist $distVersion") {
             throw "cargo-dist version mismatch"
           }
+      - if: matrix.build == 'windows'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: native-${{ matrix.target }}
+          key: ${{ hashFiles('release-manifest.json') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Windows host unit tests
         if: matrix.build == 'windows'
         shell: pwsh
