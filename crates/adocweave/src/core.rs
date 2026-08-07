@@ -8,10 +8,11 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::block_model::AstBlock;
 use crate::diagnostic::{CoreErrorCode, Diagnostic};
 use crate::limits::{AnalysisLimits, SyntaxMode};
 use crate::lint::{self, LintConfig};
-use crate::parser::{self, AstBlock, ParsedDocument};
+use crate::parser::ParsedDocument;
 use crate::source::{PositionError, SourceDocument};
 use crate::syntax::SyntaxTree;
 
@@ -127,7 +128,7 @@ impl Analysis {
         &self.document
     }
 
-    pub(crate) const fn ast(&self) -> &parser::AstDocument {
+    pub(crate) const fn ast(&self) -> &crate::block_model::AstDocument {
         self.document.inner()
     }
 
@@ -195,12 +196,12 @@ impl Analysis {
         self.document.header_attribute_occurrences()
     }
 
-    pub fn references(&self) -> &[crate::inline::Reference] {
+    pub fn references(&self) -> &[crate::inline_model::Reference] {
         self.facts().references()
     }
 
     /// Returns source-ordered authored links without resolving local files or URLs.
-    pub fn links(&self) -> &[crate::inline::Link] {
+    pub fn links(&self) -> &[crate::inline_model::Link] {
         self.facts().links()
     }
 
@@ -225,7 +226,7 @@ impl Analysis {
         self.facts().resources()
     }
 
-    pub fn macros(&self) -> &[crate::inline::StandardMacro] {
+    pub fn macros(&self) -> &[crate::inline_model::StandardMacro] {
         self.facts().macros()
     }
 
@@ -390,9 +391,9 @@ fn analyze_cancellable_with_source_id(
     }
 
     let shared_source: Arc<str> = Arc::from(source);
-    let ParsedDocument { syntax, ast } = parser::parse_shared_cancellable(
+    let ParsedDocument { syntax, ast } = crate::parser::parse_shared_cancellable(
         shared_source,
-        &parser::ParseConfig {
+        &crate::parser::ParseConfig {
             max_inline_depth: limit_to_usize(options.syntax.limits.max_inline_depth),
             max_list_depth: limit_to_usize(options.syntax.limits.max_list_depth),
             max_block_depth: limit_to_usize(options.syntax.limits.max_block_depth),
@@ -446,7 +447,7 @@ fn analyze_cancellable_with_source_id(
 }
 
 fn enforce_strict_syntax(
-    document: &crate::parser::AstDocument,
+    document: &crate::block_model::AstDocument,
     cancellation: &dyn CancellationCheck,
 ) -> Result<(), ParseError> {
     let mut checkpoint = crate::cancellation::CancellationCheckpoint::new(cancellation);
@@ -458,7 +459,7 @@ fn enforce_strict_syntax(
 }
 
 fn has_unsupported_syntax(
-    document: &crate::parser::AstDocument,
+    document: &crate::block_model::AstDocument,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<bool, ()> {
     let result = crate::walker::try_walk_block_slice(document.blocks(), |node| {
@@ -608,7 +609,7 @@ mod tests {
 
     #[test]
     fn list_tree_is_capped_at_the_configured_depth() {
-        fn depth(list: &crate::parser::ListBlock) -> usize {
+        fn depth(list: &crate::block_model::ListBlock) -> usize {
             1 + list
                 .items
                 .iter()
@@ -625,7 +626,7 @@ mod tests {
             &options,
         )
         .expect("recover deep list");
-        let crate::parser::AstBlock::List(list) = &analysis.ast().blocks()[0] else {
+        let crate::block_model::AstBlock::List(list) = &analysis.ast().blocks()[0] else {
             panic!("expected list");
         };
         assert!(depth(list) <= super::limit_to_usize(options.syntax.limits.max_list_depth));
@@ -766,10 +767,10 @@ mod tests {
                 },
             )
             .expect("analysis recovers from an unclosed quoted cell");
-            let crate::parser::AstBlock::Delimited(block) = &analysis.ast().blocks()[0] else {
+            let crate::block_model::AstBlock::Delimited(block) = &analysis.ast().blocks()[0] else {
                 panic!("expected table");
             };
-            let crate::parser::DelimitedContent::Table(table) = &block.content else {
+            let crate::block_model::DelimitedContent::Table(table) = &block.content else {
                 panic!("expected typed table");
             };
             assert_eq!(table.rows[0].section, crate::table::TableSection::Body);
@@ -883,7 +884,7 @@ mod tests {
 
         assert!(matches!(
             reference.authored_destination,
-            crate::inline::ReferenceDestination::Document {
+            crate::inline_model::ReferenceDestination::Document {
                 ref document,
                 ..
             } if document == "{document}.adoc"

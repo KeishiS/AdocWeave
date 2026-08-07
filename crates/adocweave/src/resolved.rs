@@ -5,8 +5,8 @@
 //! partially resolved document.
 
 use crate::attributes::AttributeEnvironment;
+use crate::block_model::AstDocument;
 use crate::limits::AnalysisLimits;
-use crate::parser::AstDocument;
 
 /// Immutable, source-ordered facts collected from a semantic document in one pass.
 ///
@@ -16,9 +16,9 @@ use crate::parser::AstDocument;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DocumentFacts {
     attribute_references: Vec<crate::attributes::AttributeReference>,
-    links: Vec<crate::inline::Link>,
-    references: Vec<crate::inline::Reference>,
-    macros: Vec<crate::inline::StandardMacro>,
+    links: Vec<crate::inline_model::Link>,
+    references: Vec<crate::inline_model::Reference>,
+    macros: Vec<crate::inline_model::StandardMacro>,
     resources: Vec<crate::resource::ResourceReference>,
 }
 
@@ -46,7 +46,7 @@ impl DocumentFacts {
             }
             match node {
                 crate::walker::SemanticNode::Inline(
-                    crate::inline::Inline::AttributeReference {
+                    crate::inline_model::Inline::AttributeReference {
                         range,
                         name_range,
                         name,
@@ -58,7 +58,7 @@ impl DocumentFacts {
                     *name_range,
                     attributes,
                 )),
-                crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(link)) => {
+                crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Link(link)) => {
                     facts.links.push(link.clone());
                     for reference in &link.target_attributes {
                         if checkpoint.is_cancelled() {
@@ -69,7 +69,7 @@ impl DocumentFacts {
                             .push(attribute_use(reference, attributes));
                     }
                 }
-                crate::walker::SemanticNode::Inline(crate::inline::Inline::Reference(
+                crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Reference(
                     reference,
                 )) => {
                     facts.references.push(reference.clone());
@@ -82,7 +82,7 @@ impl DocumentFacts {
                             .push(attribute_use(reference, attributes));
                     }
                 }
-                crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(node)) => {
+                crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Macro(node)) => {
                     facts.macros.push(node.clone());
                     for reference in &node.target_attributes {
                         if checkpoint.is_cancelled() {
@@ -138,15 +138,15 @@ impl DocumentFacts {
         &self.attribute_references
     }
 
-    pub fn links(&self) -> &[crate::inline::Link] {
+    pub fn links(&self) -> &[crate::inline_model::Link] {
         &self.links
     }
 
-    pub fn references(&self) -> &[crate::inline::Reference] {
+    pub fn references(&self) -> &[crate::inline_model::Reference] {
         &self.references
     }
 
-    pub fn macros(&self) -> &[crate::inline::StandardMacro] {
+    pub fn macros(&self) -> &[crate::inline_model::StandardMacro] {
         &self.macros
     }
 
@@ -174,7 +174,7 @@ fn attribute_reference(
 }
 
 fn attribute_use(
-    reference: &crate::inline::AttributeUse,
+    reference: &crate::inline_model::AttributeUse,
     attributes: &AttributeEnvironment,
 ) -> crate::attributes::AttributeReference {
     let start = reference

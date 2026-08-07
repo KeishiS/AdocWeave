@@ -411,7 +411,7 @@ fn nested_compound_blocks_share_the_root_source_index() {
     assert_eq!(open_children[0].range().start().to_usize(), 24);
 }
 use crate::attributes::DocumentAttributeOperation;
-use crate::inline::{Inline, MathLanguage};
+use crate::inline_model::{Inline, MathLanguage};
 
 #[test]
 fn paragraph_parser_handles_empty_input() {
@@ -501,7 +501,7 @@ fn paragraph_inlines_span_lf_crlf_unicode_and_macro_labels() {
     assert!(paragraph.inlines.iter().any(|inline| matches!(
         inline,
         Inline::Styled {
-            style: crate::inline::InlineStyle::Strong,
+            style: crate::inline_model::InlineStyle::Strong,
             children,
             ..
         } if matches!(&children[..], [Inline::Text(text)] if text.value == "strong\n日本語")
@@ -1075,7 +1075,7 @@ fn ordered_list_presentation_is_resolved_during_lowering() {
     assert!(list.presentation.reversed);
     assert_eq!(
         list.presentation.style,
-        crate::parser::OrderedListStyle::UpperRoman
+        crate::block_model::OrderedListStyle::UpperRoman
     );
 }
 
@@ -1373,7 +1373,7 @@ fn separated_table_formats_and_duplication_share_the_table_model() {
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1426,7 +1426,7 @@ alpha\tone
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1481,7 +1481,7 @@ fn explicit_table_header_options_override_automatic_inference() {
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1527,7 +1527,7 @@ a,b
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1567,7 +1567,7 @@ beta,two
         .blocks()
         .iter()
         .find_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1595,7 +1595,7 @@ a,b,c
         .blocks()
         .iter()
         .find_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1633,7 +1633,7 @@ fn header_comment_handling_uses_the_effective_psv_column_style() {
         .blocks()
         .iter()
         .filter_map(|block| match block {
-            AstBlock::Delimited(crate::parser::DelimitedBlock {
+            AstBlock::Delimited(crate::block_model::DelimitedBlock {
                 content: DelimitedContent::Table(table),
                 ..
             }) => Some(table),
@@ -1667,7 +1667,7 @@ fn asciidoc_table_cells_are_parsed_as_nested_blocks() {
         crate::source_document::SourceDocument::indexed_view_count(),
         1
     );
-    let AstBlock::Delimited(crate::parser::DelimitedBlock {
+    let AstBlock::Delimited(crate::block_model::DelimitedBlock {
         content: DelimitedContent::Table(table),
         ..
     }) = &parsed.ast.blocks()[0]
@@ -1686,7 +1686,7 @@ fn asciidoc_table_cells_are_parsed_as_nested_blocks() {
 fn asciidoc_cells_use_the_complete_block_dispatch_and_document_anchor_index() {
     let source = "[cols=a]\n|===\n|[[cell-target]]\n[discrete]\n== Cell heading\n\n literal\n\n'''\n\n<<<\n\n.Cell source\n[source,rust]\n----\nfn main() {}\n----\n\n[stem]\n++++\nx + y\n++++\n\n!===\n!nested\n!===\n|===\n";
     let parsed = parse(source).expect("parse");
-    let AstBlock::Delimited(crate::parser::DelimitedBlock {
+    let AstBlock::Delimited(crate::block_model::DelimitedBlock {
         content: DelimitedContent::Table(table),
         ..
     }) = &parsed.ast.blocks()[0]
@@ -1730,7 +1730,7 @@ fn asciidoc_cells_use_the_complete_block_dispatch_and_document_anchor_index() {
                     == Some("Cell source")
     ));
     assert!(matches!(blocks[5], AstBlock::Math(_)));
-    let AstBlock::Delimited(crate::parser::DelimitedBlock {
+    let AstBlock::Delimited(crate::block_model::DelimitedBlock {
         content: DelimitedContent::Table(nested),
         ..
     }) = &blocks[6]
@@ -1809,7 +1809,7 @@ fn asciidoc_cell_context_policy_covers_every_block_variant() {
     for (cell_source, expected) in cases {
         let source = format!("[cols=a]\n|===\n|{cell_source}|===\n");
         let parsed = parse(&source).expect("parse cell case");
-        let AstBlock::Delimited(crate::parser::DelimitedBlock {
+        let AstBlock::Delimited(crate::block_model::DelimitedBlock {
             content: DelimitedContent::Table(table),
             ..
         }) = &parsed.ast.blocks()[0]

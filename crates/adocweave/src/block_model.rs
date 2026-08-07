@@ -1,7 +1,7 @@
 //! Backend-independent block semantic model.
 
 use crate::attributes::DocumentAttributeOccurrence;
-use crate::inline::{Inline, InlineProblem, MathLanguage};
+use crate::inline_model::{Inline, InlineProblem, MathLanguage};
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

@@ -441,10 +441,14 @@ fn link_phase_stops_immediately_when_a_node_fills_the_sink() {
 fn semantic_lint_phases_stop_walking_when_the_sink_fills() {
     fn node_kind(node: crate::walker::SemanticNode<'_>) -> &'static str {
         match node {
-            crate::walker::SemanticNode::Block(crate::parser::AstBlock::List(_)) => "block-list",
+            crate::walker::SemanticNode::Block(crate::block_model::AstBlock::List(_)) => {
+                "block-list"
+            }
             crate::walker::SemanticNode::Block(_) => "block",
             crate::walker::SemanticNode::Table(_) => "table",
-            crate::walker::SemanticNode::Inline(crate::inline::Inline::Link(_)) => "inline-link",
+            crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Link(_)) => {
+                "inline-link"
+            }
             crate::walker::SemanticNode::Inline(_) => "inline",
             crate::walker::SemanticNode::List(_) => "list",
             crate::walker::SemanticNode::ListItem(_) => "list-item",
@@ -461,7 +465,7 @@ fn semantic_lint_phases_stop_walking_when_the_sink_fills() {
         }
     }
 
-    fn full_walk_len(document: &crate::parser::AstDocument) -> usize {
+    fn full_walk_len(document: &crate::block_model::AstDocument) -> usize {
         let mut count = 0;
         let result = crate::walker::try_walk_ast(document, |_| {
             count += 1;

@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::attributes::DocumentAttributeOccurrence;
-use crate::inline::Inline;
-use crate::parser::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
+use crate::block_model::{AstBlock, AstDocument, DocumentHeader, DocumentType, ExplicitAnchor};
+use crate::inline_model::Inline;
 use crate::substitution::AttributeExpansionLimits;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,26 +122,27 @@ fn normalize_heading_kind(
     }
     if discrete {
         let level = match heading.kind {
-            crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => 1,
-            crate::parser::HeadingKind::Section { level }
-            | crate::parser::HeadingKind::Discrete { level } => level,
+            crate::block_model::HeadingKind::DocumentTitle
+            | crate::block_model::HeadingKind::Part => 1,
+            crate::block_model::HeadingKind::Section { level }
+            | crate::block_model::HeadingKind::Discrete { level } => level,
         };
-        heading.kind = crate::parser::HeadingKind::Discrete { level };
-        heading
-            .problems
-            .retain(|problem| *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle);
+        heading.kind = crate::block_model::HeadingKind::Discrete { level };
+        heading.problems.retain(|problem| {
+            *problem != crate::block_model::HeadingProblem::MisplacedDocumentTitle
+        });
         heading.well_formed = heading.problems.is_empty();
         heading.hierarchy_valid = heading.well_formed;
     } else if doctype == DocumentType::Book
-        && heading.kind == crate::parser::HeadingKind::DocumentTitle
+        && heading.kind == crate::block_model::HeadingKind::DocumentTitle
         && heading
             .problems
-            .contains(&crate::parser::HeadingProblem::MisplacedDocumentTitle)
+            .contains(&crate::block_model::HeadingProblem::MisplacedDocumentTitle)
     {
-        heading.kind = crate::parser::HeadingKind::Part;
-        heading
-            .problems
-            .retain(|problem| *problem != crate::parser::HeadingProblem::MisplacedDocumentTitle);
+        heading.kind = crate::block_model::HeadingKind::Part;
+        heading.problems.retain(|problem| {
+            *problem != crate::block_model::HeadingProblem::MisplacedDocumentTitle
+        });
         heading.well_formed = heading.problems.is_empty();
         heading.hierarchy_valid = heading.well_formed;
     }
@@ -176,7 +177,7 @@ fn resolve_delimited_presentations(
 }
 
 fn resolve_delimited_presentation(
-    block: &mut crate::parser::DelimitedBlock,
+    block: &mut crate::block_model::DelimitedBlock,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<(), ()> {
     let mut positional = Vec::new();
@@ -190,53 +191,57 @@ fn resolve_delimited_presentation(
     }
     let style = positional.first().map(|attribute| attribute.value.as_str());
     block.presentation = match (block.kind, style) {
-        (crate::parser::DelimitedBlockKind::Example, Some(style))
-        | (crate::parser::DelimitedBlockKind::Open, Some(style))
-            if crate::parser::AdmonitionKind::parse(style).is_some() =>
+        (crate::block_model::DelimitedBlockKind::Example, Some(style))
+        | (crate::block_model::DelimitedBlockKind::Open, Some(style))
+            if crate::block_model::AdmonitionKind::parse(style).is_some() =>
         {
             let attribute = positional[0];
-            Some(crate::parser::DelimitedPresentation::Admonition(
-                crate::parser::AdmonitionPresentation {
-                    kind: crate::parser::AdmonitionKind::parse(&attribute.value)
+            Some(crate::block_model::DelimitedPresentation::Admonition(
+                crate::block_model::AdmonitionPresentation {
+                    kind: crate::block_model::AdmonitionKind::parse(&attribute.value)
                         .expect("guarded admonition style"),
                     label_range: attribute.range,
                 },
             ))
         }
-        (crate::parser::DelimitedBlockKind::Quote, Some("quote")) => Some(
-            crate::parser::DelimitedPresentation::Quote(crate::parser::QuotePresentation {
-                kind: crate::parser::QuoteKind::Quote,
-                attribution: positional
-                    .get(1)
-                    .map(|attribute| crate::parser::MetadataValue {
-                        value: attribute.value.clone(),
-                        range: attribute.range,
+        (crate::block_model::DelimitedBlockKind::Quote, Some("quote")) => {
+            Some(crate::block_model::DelimitedPresentation::Quote(
+                crate::block_model::QuotePresentation {
+                    kind: crate::block_model::QuoteKind::Quote,
+                    attribution: positional.get(1).map(|attribute| {
+                        crate::block_model::MetadataValue {
+                            value: attribute.value.clone(),
+                            range: attribute.range,
+                        }
                     }),
-                citation: positional
-                    .get(2)
-                    .map(|attribute| crate::parser::MetadataValue {
-                        value: attribute.value.clone(),
-                        range: attribute.range,
+                    citation: positional.get(2).map(|attribute| {
+                        crate::block_model::MetadataValue {
+                            value: attribute.value.clone(),
+                            range: attribute.range,
+                        }
                     }),
-            }),
-        ),
-        (crate::parser::DelimitedBlockKind::Quote, Some("verse")) => Some(
-            crate::parser::DelimitedPresentation::Quote(crate::parser::QuotePresentation {
-                kind: crate::parser::QuoteKind::Verse,
-                attribution: positional
-                    .get(1)
-                    .map(|attribute| crate::parser::MetadataValue {
-                        value: attribute.value.clone(),
-                        range: attribute.range,
+                },
+            ))
+        }
+        (crate::block_model::DelimitedBlockKind::Quote, Some("verse")) => {
+            Some(crate::block_model::DelimitedPresentation::Quote(
+                crate::block_model::QuotePresentation {
+                    kind: crate::block_model::QuoteKind::Verse,
+                    attribution: positional.get(1).map(|attribute| {
+                        crate::block_model::MetadataValue {
+                            value: attribute.value.clone(),
+                            range: attribute.range,
+                        }
                     }),
-                citation: positional
-                    .get(2)
-                    .map(|attribute| crate::parser::MetadataValue {
-                        value: attribute.value.clone(),
-                        range: attribute.range,
+                    citation: positional.get(2).map(|attribute| {
+                        crate::block_model::MetadataValue {
+                            value: attribute.value.clone(),
+                            range: attribute.range,
+                        }
                     }),
-            }),
-        ),
+                },
+            ))
+        }
         _ => None,
     };
     Ok(())
@@ -272,9 +277,9 @@ fn normalize_verbatim_block(
                 &mut source.problems,
                 checkpoint,
             )?;
-            AstBlock::Verbatim(crate::parser::VerbatimBlock {
+            AstBlock::Verbatim(crate::block_model::VerbatimBlock {
                 metadata: source.metadata,
-                kind: crate::parser::VerbatimKind::Source(info),
+                kind: crate::block_model::VerbatimKind::Source(info),
                 range: source.range,
                 delimiter_range: source.delimiter_range,
                 content_range: source.content_range,
@@ -285,14 +290,14 @@ fn normalize_verbatim_block(
         }
         AstBlock::Delimited(mut block) => {
             match &mut block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
+                crate::block_model::DelimitedContent::Compound(children) => {
                     *children = normalize_verbatim_blocks(
                         std::mem::take(children),
                         attributes,
                         checkpoint,
                     )?;
                 }
-                crate::parser::DelimitedContent::Table(table) => {
+                crate::block_model::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
                         if checkpoint.is_cancelled() {
                             return Err(LoweringFailure::Cancelled);
@@ -313,10 +318,10 @@ fn normalize_verbatim_block(
                         }
                     }
                 }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
+                crate::block_model::DelimitedContent::Verbatim(_)
+                | crate::block_model::DelimitedContent::Passthrough(_) => {}
             }
-            let implicit_listing = block.kind == crate::parser::DelimitedBlockKind::Listing
+            let implicit_listing = block.kind == crate::block_model::DelimitedBlockKind::Listing
                 && !block
                     .metadata
                     .attributes
@@ -328,21 +333,23 @@ fn normalize_verbatim_block(
                     .and_then(|resolved| resolved.value.ok().flatten())
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
+                && let crate::block_model::DelimitedContent::Verbatim(value) = block.content
             {
                 let attribute_range = block
                     .metadata
                     .range
                     .unwrap_or(block.opening_delimiter_range);
-                return Ok(AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                return Ok(AstBlock::Verbatim(crate::block_model::VerbatimBlock {
                     metadata: block.metadata,
-                    kind: crate::parser::VerbatimKind::Source(crate::parser::SourceInfo {
-                        attribute_range,
-                        language_range: None,
-                        language: Some(language.to_owned()),
-                        line_numbers: false,
-                        start_line: None,
-                    }),
+                    kind: crate::block_model::VerbatimKind::Source(
+                        crate::block_model::SourceInfo {
+                            attribute_range,
+                            language_range: None,
+                            language: Some(language.to_owned()),
+                            line_numbers: false,
+                            start_line: None,
+                        },
+                    ),
                     range: block.range,
                     delimiter_range: block.opening_delimiter_range,
                     content_range: block.content_range,
@@ -352,18 +359,18 @@ fn normalize_verbatim_block(
                 }));
             }
             let kind = match block.kind {
-                crate::parser::DelimitedBlockKind::Listing => {
-                    Some(crate::parser::VerbatimKind::Listing)
+                crate::block_model::DelimitedBlockKind::Listing => {
+                    Some(crate::block_model::VerbatimKind::Listing)
                 }
-                crate::parser::DelimitedBlockKind::Literal => {
-                    Some(crate::parser::VerbatimKind::Literal)
+                crate::block_model::DelimitedBlockKind::Literal => {
+                    Some(crate::block_model::VerbatimKind::Literal)
                 }
                 _ => None,
             };
             if let Some(kind) = kind
-                && let crate::parser::DelimitedContent::Verbatim(value) = block.content
+                && let crate::block_model::DelimitedContent::Verbatim(value) = block.content
             {
-                return Ok(AstBlock::Verbatim(crate::parser::VerbatimBlock {
+                return Ok(AstBlock::Verbatim(crate::block_model::VerbatimBlock {
                     metadata: block.metadata,
                     kind,
                     range: block.range,
@@ -402,10 +409,10 @@ fn source_info(
     attribute_range: crate::source::TextRange,
     language_range: Option<crate::source::TextRange>,
     language: Option<String>,
-    metadata: &crate::parser::BlockMetadata,
-    problems: &mut Vec<crate::parser::BlockProblem>,
+    metadata: &crate::block_model::BlockMetadata,
+    problems: &mut Vec<crate::block_model::BlockProblem>,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
-) -> Result<crate::parser::SourceInfo, LoweringFailure> {
+) -> Result<crate::block_model::SourceInfo, LoweringFailure> {
     let mut positional = Vec::new();
     for attribute in &metadata.attributes {
         if checkpoint.is_cancelled() {
@@ -420,8 +427,8 @@ fn source_info(
         if value == "linenums" {
             line_numbers = true;
         } else {
-            problems.push(crate::parser::BlockProblem {
-                kind: crate::parser::BlockProblemKind::InvalidSourceOption,
+            problems.push(crate::block_model::BlockProblem {
+                kind: crate::block_model::BlockProblemKind::InvalidSourceOption,
                 range,
             });
         }
@@ -467,8 +474,8 @@ fn source_info(
     {
         match attribute.value.parse::<u32>() {
             Ok(value) if value > 0 && line_numbers => start_line = Some(value),
-            _ => problems.push(crate::parser::BlockProblem {
-                kind: crate::parser::BlockProblemKind::InvalidSourceStart,
+            _ => problems.push(crate::block_model::BlockProblem {
+                kind: crate::block_model::BlockProblemKind::InvalidSourceStart,
                 range: attribute.range,
             }),
         }
@@ -477,7 +484,7 @@ fn source_info(
         start_line = Some(1);
     }
 
-    Ok(crate::parser::SourceInfo {
+    Ok(crate::block_model::SourceInfo {
         attribute_range,
         language_range,
         language,
@@ -487,7 +494,7 @@ fn source_info(
 }
 
 fn normalize_list(
-    list: &mut crate::parser::ListBlock,
+    list: &mut crate::block_model::ListBlock,
     attributes: &crate::attributes::AttributeEnvironment,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<(), LoweringFailure> {
@@ -509,14 +516,14 @@ fn normalize_list(
 }
 
 fn resolve_list_presentation(
-    list: &mut crate::parser::ListBlock,
+    list: &mut crate::block_model::ListBlock,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<(), LoweringFailure> {
-    if list.kind != crate::parser::ListKind::Ordered {
+    if list.kind != crate::block_model::ListKind::Ordered {
         return Ok(());
     }
 
-    let mut presentation = crate::parser::OrderedListPresentation::default();
+    let mut presentation = crate::block_model::OrderedListPresentation::default();
     let mut problems = Vec::new();
     for attribute in &list.metadata.attributes {
         if checkpoint.is_cancelled() {
@@ -531,8 +538,8 @@ fn resolve_list_presentation(
                     .ok()
                     .filter(|value| *value > 0);
                 if start.is_none() {
-                    problems.push(crate::parser::ListPresentationProblem {
-                        kind: crate::parser::ListPresentationProblemKind::InvalidStart,
+                    problems.push(crate::block_model::ListPresentationProblem {
+                        kind: crate::block_model::ListPresentationProblemKind::InvalidStart,
                         range: attribute.range,
                     });
                 }
@@ -542,8 +549,8 @@ fn resolve_list_presentation(
                 if let Some(style) = ordered_list_style(&attribute.value) {
                     presentation.style = style;
                 } else {
-                    problems.push(crate::parser::ListPresentationProblem {
-                        kind: crate::parser::ListPresentationProblemKind::UnknownOrderedStyle,
+                    problems.push(crate::block_model::ListPresentationProblem {
+                        kind: crate::block_model::ListPresentationProblemKind::UnknownOrderedStyle,
                         range: attribute.range,
                     });
                 }
@@ -584,16 +591,16 @@ fn resolve_list_presentation(
             return Err(LoweringFailure::Cancelled);
         }
         if item.invalid_explicit_number {
-            problems.push(crate::parser::ListPresentationProblem {
-                kind: crate::parser::ListPresentationProblemKind::InvalidExplicitNumber,
+            problems.push(crate::block_model::ListPresentationProblem {
+                kind: crate::block_model::ListPresentationProblemKind::InvalidExplicitNumber,
                 range: item.marker_range,
             });
         }
         if let Some(number) = item.explicit_number
             && number != expected
         {
-            problems.push(crate::parser::ListPresentationProblem {
-                kind: crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber,
+            problems.push(crate::block_model::ListPresentationProblem {
+                kind: crate::block_model::ListPresentationProblemKind::InconsistentExplicitNumber,
                 range: item.marker_range,
             });
         }
@@ -608,8 +615,8 @@ fn resolve_list_presentation(
     Ok(())
 }
 
-fn ordered_list_style(value: &str) -> Option<crate::parser::OrderedListStyle> {
-    use crate::parser::OrderedListStyle;
+fn ordered_list_style(value: &str) -> Option<crate::block_model::OrderedListStyle> {
+    use crate::block_model::OrderedListStyle;
 
     match value.trim() {
         "arabic" => Some(OrderedListStyle::Arabic),
@@ -826,7 +833,7 @@ mod responsibility_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{HeadingKind, HeadingProblem, OrderedListStyle};
+    use crate::block_model::{HeadingKind, HeadingProblem, OrderedListStyle};
 
     fn checkpoint() -> crate::cancellation::CancellationCheckpoint<'static> {
         crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel)

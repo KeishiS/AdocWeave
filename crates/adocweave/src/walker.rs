@@ -3,11 +3,11 @@
 use std::ops::ControlFlow;
 
 use crate::attributes::DocumentAttributeOccurrence;
-use crate::inline::Inline;
-use crate::parser::{
+use crate::block_model::{
     AstBlock, AstDocument, BlockMetadata, BlockTitle, ElementAttribute, ExplicitAnchor, ListBlock,
     ListItem, MetadataValue,
 };
+use crate::inline_model::Inline;
 
 #[derive(Clone, Copy, Debug)]
 pub enum SemanticNode<'document> {
@@ -171,10 +171,10 @@ pub(crate) fn walk_inline_sequences_mut_cancellable(
                 AstBlock::Paragraph(paragraph) => visitor(&mut paragraph.inlines, checkpoint)?,
                 AstBlock::List(list) => walk_list(list, visitor, checkpoint)?,
                 AstBlock::Delimited(block) => match &mut block.content {
-                    crate::parser::DelimitedContent::Compound(children) => {
+                    crate::block_model::DelimitedContent::Compound(children) => {
                         walk_blocks(children, visitor, checkpoint)?;
                     }
-                    crate::parser::DelimitedContent::Table(table) => {
+                    crate::block_model::DelimitedContent::Table(table) => {
                         for row in &mut table.rows {
                             if checkpoint.is_cancelled() {
                                 return Err(());
@@ -195,8 +195,8 @@ pub(crate) fn walk_inline_sequences_mut_cancellable(
                             }
                         }
                     }
-                    crate::parser::DelimitedContent::Verbatim(_)
-                    | crate::parser::DelimitedContent::Passthrough(_) => {}
+                    crate::block_model::DelimitedContent::Verbatim(_)
+                    | crate::block_model::DelimitedContent::Passthrough(_) => {}
                 },
                 AstBlock::LiteralParagraph(_)
                 | AstBlock::Break(_)
@@ -271,10 +271,10 @@ fn walk_semantic_mut_cancellable(
             AstBlock::Paragraph(paragraph) => visitor.visit_inline_sequence(&mut paragraph.inlines),
             AstBlock::List(list) => walk_list_mut(list, visitor, checkpoint)?,
             AstBlock::Delimited(block) => match &mut block.content {
-                crate::parser::DelimitedContent::Compound(children) => {
+                crate::block_model::DelimitedContent::Compound(children) => {
                     walk_semantic_mut_cancellable(children, visitor, checkpoint)?;
                 }
-                crate::parser::DelimitedContent::Table(table) => {
+                crate::block_model::DelimitedContent::Table(table) => {
                     for row in &mut table.rows {
                         if checkpoint.is_cancelled() {
                             return Err(());
@@ -295,8 +295,8 @@ fn walk_semantic_mut_cancellable(
                         }
                     }
                 }
-                crate::parser::DelimitedContent::Verbatim(_)
-                | crate::parser::DelimitedContent::Passthrough(_) => {}
+                crate::block_model::DelimitedContent::Verbatim(_)
+                | crate::block_model::DelimitedContent::Passthrough(_) => {}
             },
             AstBlock::LiteralParagraph(_)
             | AstBlock::Break(_)
@@ -348,14 +348,14 @@ pub(crate) fn try_visit_children<'document, Break>(
                 }
                 AstBlock::List(list) => visitor(SemanticNode::List(list))?,
                 AstBlock::Delimited(block) => match &block.content {
-                    crate::parser::DelimitedContent::Compound(children) => {
+                    crate::block_model::DelimitedContent::Compound(children) => {
                         visit_block_children(children, visitor)?;
                     }
-                    crate::parser::DelimitedContent::Table(table) => {
+                    crate::block_model::DelimitedContent::Table(table) => {
                         visitor(SemanticNode::Table(table))?;
                     }
-                    crate::parser::DelimitedContent::Verbatim(_)
-                    | crate::parser::DelimitedContent::Passthrough(_) => {}
+                    crate::block_model::DelimitedContent::Verbatim(_)
+                    | crate::block_model::DelimitedContent::Passthrough(_) => {}
                 },
                 AstBlock::LiteralParagraph(_)
                 | AstBlock::Break(_)
@@ -469,7 +469,7 @@ mod tests {
         SemanticNode, SemanticVisitorMut, try_walk_ast, try_walk_block_slice, walk, walk_ast,
         walk_block_slice, walk_semantic_mut_cancellable,
     };
-    use crate::{inline::Inline, parser::AstBlock};
+    use crate::{block_model::AstBlock, inline_model::Inline};
 
     type NodeIdentity = (&'static str, usize);
 
@@ -754,7 +754,7 @@ mod tests {
             controlled.push(node_identity(node));
             if matches!(
                 node,
-                SemanticNode::Inline(crate::inline::Inline::Text(text))
+                SemanticNode::Inline(crate::inline_model::Inline::Text(text))
                     if text.value.contains("AsciiDoc")
             ) {
                 ControlFlow::Break("asciidoc-cell")
@@ -860,8 +860,8 @@ mod tests {
         walk(analysis.document(), |node| {
             if let SemanticNode::Inline(inline) = node {
                 match inline {
-                    crate::inline::Inline::Reference(_) => walked_references += 1,
-                    crate::inline::Inline::Macro(_) => walked_macros += 1,
+                    crate::inline_model::Inline::Reference(_) => walked_references += 1,
+                    crate::inline_model::Inline::Macro(_) => walked_macros += 1,
                     _ => {}
                 }
             }
@@ -907,7 +907,7 @@ mod tests {
                 self.0.push(("block", block.range()));
             }
 
-            fn visit_list(&mut self, list: &mut crate::parser::ListBlock) {
+            fn visit_list(&mut self, list: &mut crate::block_model::ListBlock) {
                 self.0.push(("list", list.range));
             }
 

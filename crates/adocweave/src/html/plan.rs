@@ -1,7 +1,7 @@
 //! Safe render planning for links, references, and resolved resources.
 
 use crate::document::DocumentIdentifiers;
-use crate::inline::{Link, Reference};
+use crate::inline_model::{Link, Reference};
 use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputUsage, ResolutionMatch};
 use crate::resource::{MediaFamily, ResolvedResource, ResourceOutcome};
@@ -253,7 +253,7 @@ pub(super) fn plan_reference<'document, 'inputs>(
 
 #[cfg(test)]
 mod tests {
-    use crate::inline::Inline;
+    use crate::inline_model::Inline;
     use crate::parser::parse;
     use crate::render::RenderInputs;
     use crate::resource::ResolvedResource;

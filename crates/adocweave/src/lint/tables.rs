@@ -7,7 +7,7 @@ pub(super) fn lint_tables(context: &LintContext<'_>, sink: &mut LintDiagnosticSi
 }
 
 pub(super) fn lint_tables_with_observer<'document>(
-    document: &'document crate::parser::AstDocument,
+    document: &'document crate::block_model::AstDocument,
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {

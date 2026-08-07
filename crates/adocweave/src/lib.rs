@@ -82,11 +82,11 @@ pub mod semantic {
         generate_heading_ids, heading_id_base, reference_targets, render_symbols_json,
         source_language_candidates,
     };
-    pub use crate::inline::{
+    pub use crate::inline::{inline_at, is_plain_inline_text};
+    pub use crate::inline_model::{
         AttributeUse, Inline, InlineFormula, InlineLiteralKind, InlineProblem, InlineProblemKind,
         InlineStyle, InlineText, Link, MacroAttribute, MacroForm, MathLanguage, PassthroughKind,
-        Reference, ReferenceDestination, StandardMacro, StandardMacroKind, inline_at,
-        is_plain_inline_text,
+        Reference, ReferenceDestination, StandardMacro, StandardMacroKind,
     };
     pub use crate::presentation::{
         BibliographySection, BlockId, DocumentIndex, DocumentLayout, DocumentPresentation,

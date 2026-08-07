@@ -32,13 +32,13 @@ use crate::syntax::SyntaxTree;
 /// observes the same analysis snapshot.
 pub(crate) struct LintContext<'a> {
     syntax: &'a SyntaxTree,
-    document: &'a crate::parser::AstDocument,
+    document: &'a crate::block_model::AstDocument,
 }
 
 impl<'a> LintContext<'a> {
     pub(crate) const fn new(
         syntax: &'a SyntaxTree,
-        document: &'a crate::parser::AstDocument,
+        document: &'a crate::block_model::AstDocument,
     ) -> Self {
         Self { syntax, document }
     }
@@ -47,7 +47,7 @@ impl<'a> LintContext<'a> {
         self.syntax
     }
 
-    const fn document(&self) -> &'a crate::parser::AstDocument {
+    const fn document(&self) -> &'a crate::block_model::AstDocument {
         self.document
     }
 

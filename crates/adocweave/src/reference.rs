@@ -226,7 +226,7 @@ pub trait ReferenceResolver: Send + Sync {
 
 pub fn query_from_reference(
     source_id: Option<SourceId>,
-    reference: &crate::inline::Reference,
+    reference: &crate::inline_model::Reference,
 ) -> Option<ReferenceQuery> {
     let target = reference.target.clone()?;
     Some(ReferenceQuery {

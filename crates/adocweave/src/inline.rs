@@ -3,7 +3,7 @@
 mod lowering;
 
 use crate::budget::{BudgetExceeded, ParseBudget};
-pub use crate::inline_model::*;
+use crate::inline_model::*;
 use crate::limits::AnalysisLimits;
 use crate::source::{TextRange, TextSize};
 

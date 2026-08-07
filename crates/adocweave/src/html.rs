@@ -12,10 +12,10 @@ mod safe;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::block_model::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticId, Severity};
 use crate::document::HeadingId;
-use crate::inline::Inline;
-use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind, Paragraph, Unsupported};
+use crate::inline_model::Inline;
 use crate::render::{RenderInputProblemKind, RenderInputUsage, RenderInputs};
 use crate::url::{ActiveUrlPolicy, UrlProvenance};
 use body::{BlockWriter, RenderScope, classes, passive, source_language_class};
@@ -191,15 +191,15 @@ impl SourceLanguagePolicy {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MathLanguagePolicy {
     /// An empty set disables every math language.
-    pub allowed: BTreeSet<crate::inline::MathLanguage>,
+    pub allowed: BTreeSet<crate::inline_model::MathLanguage>,
 }
 
 impl Default for MathLanguagePolicy {
     fn default() -> Self {
         Self {
             allowed: [
-                crate::inline::MathLanguage::Latex,
-                crate::inline::MathLanguage::Typst,
+                crate::inline_model::MathLanguage::Latex,
+                crate::inline_model::MathLanguage::Typst,
             ]
             .into_iter()
             .collect(),
@@ -449,7 +449,7 @@ fn serialize_body_traversal(
     }
 }
 
-fn render_header_metadata(output: &mut String, header: &crate::parser::DocumentHeader) {
+fn render_header_metadata(output: &mut String, header: &crate::block_model::DocumentHeader) {
     for author in &header.authors {
         BlockWriter::start(output, "p", &[classes(&["author"])]);
         BlockWriter::text(output, &author.name);
@@ -548,7 +548,7 @@ fn render_block(
             BlockWriter::line_break(output);
         }
         AstBlock::Verbatim(block) => match &block.kind {
-            crate::parser::VerbatimKind::Source(source) => {
+            crate::block_model::VerbatimKind::Source(source) => {
                 let has_presentation = block.metadata.title.is_some() || source.line_numbers;
                 if has_presentation {
                     let mut attributes = optional_id(explicit_id);
@@ -605,7 +605,8 @@ fn render_block(
                     BlockWriter::line_break(output);
                 }
             }
-            crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
+            crate::block_model::VerbatimKind::Listing
+            | crate::block_model::VerbatimKind::Literal => {
                 render_preformatted(output, explicit_id, &block.value);
             }
         },
@@ -645,7 +646,7 @@ fn render_preformatted(output: &mut String, explicit_id: Option<&str>, value: &s
 
 fn render_delimited(
     output: &mut String,
-    block: &crate::parser::DelimitedBlock,
+    block: &crate::block_model::DelimitedBlock,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
@@ -653,32 +654,32 @@ fn render_delimited(
 ) {
     if let Some(presentation) = &block.presentation {
         match presentation {
-            crate::parser::DelimitedPresentation::Admonition(admonition) => {
+            crate::block_model::DelimitedPresentation::Admonition(admonition) => {
                 render_admonition_start(output, admonition, explicit_id, &block.metadata, context);
                 render_delimited_children(output, block, policy, context, scope);
                 BlockWriter::end(output, "div");
                 BlockWriter::line_break(output);
                 return;
             }
-            crate::parser::DelimitedPresentation::Quote(quote) => {
+            crate::block_model::DelimitedPresentation::Quote(quote) => {
                 let quote_class = match quote.kind {
-                    crate::parser::QuoteKind::Quote => "quote",
-                    crate::parser::QuoteKind::Verse => "verse",
+                    crate::block_model::QuoteKind::Quote => "quote",
+                    crate::block_model::QuoteKind::Verse => "verse",
                 };
                 let mut attributes = optional_id(explicit_id);
                 attributes.push(classes(&[quote_class]));
                 BlockWriter::start(output, "div", &attributes);
                 BlockWriter::line_break(output);
-                if quote.kind == crate::parser::QuoteKind::Quote {
+                if quote.kind == crate::block_model::QuoteKind::Quote {
                     BlockWriter::start(output, "blockquote", &[]);
                     BlockWriter::line_break(output);
                 }
-                if quote.kind == crate::parser::QuoteKind::Verse {
+                if quote.kind == crate::block_model::QuoteKind::Verse {
                     render_verse_children(output, block, policy, context, scope);
                 } else {
                     render_delimited_children(output, block, policy, context, scope);
                 }
-                if quote.kind == crate::parser::QuoteKind::Quote {
+                if quote.kind == crate::block_model::QuoteKind::Quote {
                     BlockWriter::end(output, "blockquote");
                     BlockWriter::line_break(output);
                 }
@@ -704,15 +705,15 @@ fn render_delimited(
         }
     }
     match &block.content {
-        crate::parser::DelimitedContent::Verbatim(value) => {
-            if !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment) {
+        crate::block_model::DelimitedContent::Verbatim(value) => {
+            if !matches!(block.kind, crate::block_model::DelimitedBlockKind::Comment) {
                 render_preformatted(output, explicit_id, value);
             }
         }
-        crate::parser::DelimitedContent::Passthrough(value) => {
+        crate::block_model::DelimitedContent::Passthrough(value) => {
             render_preformatted(output, explicit_id, value);
         }
-        crate::parser::DelimitedContent::Table(table) => {
+        crate::block_model::DelimitedContent::Table(table) => {
             render_table(
                 output,
                 table,
@@ -723,7 +724,7 @@ fn render_delimited(
                 scope,
             );
         }
-        crate::parser::DelimitedContent::Compound(_) => {
+        crate::block_model::DelimitedContent::Compound(_) => {
             render_delimited_children(output, block, policy, context, scope);
         }
     }
@@ -731,12 +732,12 @@ fn render_delimited(
 
 fn render_delimited_children(
     output: &mut String,
-    block: &crate::parser::DelimitedBlock,
+    block: &crate::block_model::DelimitedBlock,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    if let crate::parser::DelimitedContent::Compound(children) = &block.content {
+    if let crate::block_model::DelimitedContent::Compound(children) = &block.content {
         for child in children {
             render_block(output, child, policy, context, scope);
         }
@@ -745,12 +746,12 @@ fn render_delimited_children(
 
 fn render_verse_children(
     output: &mut String,
-    block: &crate::parser::DelimitedBlock,
+    block: &crate::block_model::DelimitedBlock,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
-    let crate::parser::DelimitedContent::Compound(children) = &block.content else {
+    let crate::block_model::DelimitedContent::Compound(children) = &block.content else {
         return;
     };
     if children
@@ -779,9 +780,9 @@ fn render_verse_children(
 
 fn render_admonition_start(
     output: &mut String,
-    admonition: &crate::parser::AdmonitionPresentation,
+    admonition: &crate::block_model::AdmonitionPresentation,
     explicit_id: Option<&str>,
-    metadata: &crate::parser::BlockMetadata,
+    metadata: &crate::block_model::BlockMetadata,
     context: &mut InlineRenderContext<'_, '_>,
 ) {
     let kind_class = match admonition.kind.label() {
@@ -808,7 +809,7 @@ fn render_admonition_start(
 fn render_table(
     output: &mut String,
     table: &crate::table::Table,
-    metadata: &crate::parser::BlockMetadata,
+    metadata: &crate::block_model::BlockMetadata,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
@@ -964,9 +965,9 @@ fn render_table_cell(
     }
 }
 
-fn render_break(output: &mut String, kind: crate::parser::BreakKind, id: Option<&str>) {
+fn render_break(output: &mut String, kind: crate::block_model::BreakKind, id: Option<&str>) {
     let mut attributes = optional_id(id);
-    if kind == crate::parser::BreakKind::Page {
+    if kind == crate::block_model::BreakKind::Page {
         attributes.push(classes(&["page-break"]));
     }
     BlockWriter::void(output, "hr", &attributes);
@@ -975,26 +976,26 @@ fn render_break(output: &mut String, kind: crate::parser::BreakKind, id: Option<
 
 fn render_list(
     output: &mut String,
-    list: &crate::parser::ListBlock,
+    list: &crate::block_model::ListBlock,
     explicit_id: Option<&str>,
     policy: &RenderPolicy,
     context: &mut InlineRenderContext<'_, '_>,
     scope: RenderScope,
 ) {
     let tag = match list.kind {
-        crate::parser::ListKind::Unordered => "ul",
-        crate::parser::ListKind::Ordered => "ol",
-        crate::parser::ListKind::Description => "dl",
-        crate::parser::ListKind::Callout => "ol",
+        crate::block_model::ListKind::Unordered => "ul",
+        crate::block_model::ListKind::Ordered => "ol",
+        crate::block_model::ListKind::Description => "dl",
+        crate::block_model::ListKind::Callout => "ol",
     };
     let mut attributes = optional_id(explicit_id);
-    if list.kind == crate::parser::ListKind::Callout {
+    if list.kind == crate::block_model::ListKind::Callout {
         attributes.push(classes(&["callout-list"]));
     }
     BlockWriter::start(output, tag, &attributes);
     BlockWriter::line_break(output);
     for item in &list.items {
-        if list.kind == crate::parser::ListKind::Description {
+        if list.kind == crate::block_model::ListKind::Description {
             for term in &item.terms {
                 BlockWriter::start(output, "dt", &[]);
                 render_inlines(output, &term.inlines, context);
@@ -1009,7 +1010,7 @@ fn render_list(
             BlockWriter::start(output, "span", &[classes(&["checklist-marker"])]);
             BlockWriter::text(
                 output,
-                if state == crate::parser::ChecklistState::Checked {
+                if state == crate::block_model::ChecklistState::Checked {
                     "☑"
                 } else {
                     "☐"
@@ -1026,7 +1027,7 @@ fn render_list(
         }
         render_inlines(output, &item.inlines, context);
         if scope.bibliography_section
-            && list.kind == crate::parser::ListKind::Unordered
+            && list.kind == crate::block_model::ListKind::Unordered
             && let Some(entry) = bibliography_entry_for_item(&item.inlines, context.catalogs)
         {
             render_bibliography_backrefs(output, entry);
@@ -1043,7 +1044,7 @@ fn render_list(
         }
         BlockWriter::end(
             output,
-            if list.kind == crate::parser::ListKind::Description {
+            if list.kind == crate::block_model::ListKind::Description {
                 "dd"
             } else {
                 "li"
@@ -1063,7 +1064,7 @@ fn bibliography_entry_for_item<'a>(
         let Inline::Macro(node) = inline else {
             return None;
         };
-        (node.kind == crate::inline::StandardMacroKind::BibliographyAnchor)
+        (node.kind == crate::inline_model::StandardMacroKind::BibliographyAnchor)
             .then(|| {
                 catalogs
                     .bibliography()
@@ -1215,15 +1216,15 @@ fn render_inlines(
     body::serialize_inlines(output, &plan);
 }
 
-const fn math_class(language: crate::inline::MathLanguage) -> &'static str {
+const fn math_class(language: crate::inline_model::MathLanguage) -> &'static str {
     match language {
-        crate::inline::MathLanguage::Latex => "math-latex",
-        crate::inline::MathLanguage::Typst => "math-typst",
+        crate::inline_model::MathLanguage::Latex => "math-latex",
+        crate::inline_model::MathLanguage::Typst => "math-typst",
     }
 }
 
 fn math_attributes(
-    language: crate::inline::MathLanguage,
+    language: crate::inline_model::MathLanguage,
     display: &str,
 ) -> Vec<body::PlannedAttribute> {
     vec![

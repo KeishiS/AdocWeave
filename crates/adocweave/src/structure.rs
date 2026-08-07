@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::parser::{AstBlock, AstDocument, DocumentType, Heading, HeadingKind};
+use crate::block_model::{AstBlock, AstDocument, DocumentType, Heading, HeadingKind};
 use crate::source::TextRange;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

@@ -4,7 +4,7 @@
 //! library, so this module only records what the source states: which keys were
 //! cited, where each one sits, and what the author attached to the citation.
 
-use crate::inline::{MacroAttribute, StandardMacro, StandardMacroKind};
+use crate::inline_model::{MacroAttribute, StandardMacro, StandardMacroKind};
 use crate::source::TextRange;
 
 /// One `cite:` macro with every key it names.
