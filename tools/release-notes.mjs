@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.33.0";
+export const PREVIOUS_RELEASE_VERSION = "0.34.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,9 +52,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#492：filesystem resourceの不在を正常な取得結果として扱い、Language Serverの初期走査を複数sessionで共有するjob上限とdraftへ移行しました。",
-  "#455：Language Serverのinclude解析を、不足resourceを取得した位置から再開するようにしました。includeの個数によらず前処理は一度で済み、取得したresourceは解析が採用されるまでエディターが見ている状態へ入りません。",
-  "#495：tableの``cols``属性にある空のcolumn specを既定列として保持し、明示した列数どおりに解析するよう修正しました。",
+  "#515：段落内の改行がHTMLで空白になる動作を、改行の前後がどちらも語間に空白を置かない文字である場合にかぎり、空白を出力せず行をつなぐよう変更しました。原文のどこで折り返したかが本文の空きになりません。",
+  "#516：inline macroは直前に空白がなければ認識されません。この空白の直前が語間に空白を置かない文字である場合、空白を出力しないようにしました。日本語や中国語の文中でmacroを書いても本文に空きが残りません。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -99,13 +98,9 @@ const contractNotes = [
   `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。Worker protocol versionは${protocol.workerProtocolVersion}で、どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  "Rust host APIへ``FilesystemReadOutcome``と``read_utf8_outcome``、``read_target_utf8_outcome``および``reread_utf8_outcome``を追加しました。sessionとdraftの両方で``Found``と``NotFound``を区別できます。",
-  "従来の読込APIは維持し、対象fileの不在を引き続き``ResourceError::Missing``として返します。",
-  "Language Serverの初期走査では、列挙後に消えたfileを走査全体の失敗にせず、その候補だけを省略します。",
-  "Rust host APIへ``FilesystemJobCoordinator``を追加しました。一つのjobに参加する複数sessionで、resource取得、取得byte、directory列挙、entryおよび候補変更の上限を共有します。I/O前の予約により並行処理でも残量を重複利用せず、draftを破棄しても使用量を戻しません。",
-  "``LocalFilesystemDraft``は作成時にcoordinatorを必須とし、file読込とdirectory走査を同じjobへ計上します。取消や上限超過の後にI/Oが完了しても、最初の終了理由を維持したまま実際の使用量を確定します。",
-  "policyを定義するfileを読むRust consumer向けに、jobへ計上しながらroot内を含むsymlinkを拒否する``LocalFilesystemDraft::read_utf8_no_symlinks_outcome``を追加しました。",
-  "Language Serverの初期ワークスペース走査は、ディレクトリ列挙、project設定の読込および全project scopeの本文読込を一つのfilesystem jobへ計上します。各scopeの変更はdraftへ隔離し、候補Workspaceの構築後にだけ採用します。",
+  "HTML出力を変更しました。語間に空白を置かない文字の直後では、記法が要求した空白を出力しません。対象は段落内の改行と、inline macroの直前の空白です。日本語、中国語、韓国語の文書で出力が変わります。",
+  "macroの直後の空白と、書式記号の前後の空白は従来どおり出力します。判断に使うのは空白の直前にある地の文の文字だけで、macroの中身やmacroがHTML要素になるかどうかは見ません。",
+  "公開Rust APIは変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -113,8 +108,7 @@ const contractNotes = [
 
 const migrationNotes = [
   `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
-  "filesystemの不在を正常な結果として扱うRust consumerは、従来の読込APIから対応する``*_outcome``メソッドへ移行し、``FilesystemReadOutcome::NotFound``を処理してください。従来どおり不在をerrorにするconsumerは変更不要です。",
-  "``LocalFilesystemSession::draft``を使うRust consumerは、処理単位で``FilesystemJobCoordinator``を作成し、``session.draft(&job)``として渡してください。同じ処理の再試行と複数sessionでは同じjobを共有し、処理が完了した後の別eventでは新しいjobを作成します。",
+  "日本語、中国語、韓国語の文書をHTMLへ変換している場合、出力の空白が変わります。生成物を比較して保存している場合は期待値を更新してください。変換結果を直接比較していない利用では対応は不要です。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];

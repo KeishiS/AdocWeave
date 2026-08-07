@@ -227,7 +227,8 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   // reports, so repeating its contents here would only make every accepted
   // breaking change edit an unrelated test. What is worth asserting is that
   // each entry identifies one difference and explains how to move past it.
-  assert.ok(actual.changes.length > 0);
+  // A release without a breaking change records none, so an empty list is a
+  // valid state rather than a missing record.
   for (const change of actual.changes) {
     assert.ok(change.crate.startsWith("adocweave-"), change.crate);
     for (const field of ["lint", "item", "summary", "description", "migration"]) {
