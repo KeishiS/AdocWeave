@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "packageVersion": "0.36.0",
+  "packageVersion": "0.37.0",
   "distVersion": "0.32.0",
   "repository": "https://github.com/KeishiS/adocweave",
   "targets": [
@@ -103,28 +103,28 @@
       "executable": "adocweave-lsp.exe"
     },
     {
-      "name": "adocweave-browser-0.36.0.tar.xz",
+      "name": "adocweave-browser-0.37.0.tar.xz",
       "kind": "browser",
       "target": null,
       "archive": "tar.xz",
       "executable": null
     },
     {
-      "name": "adocweave-zed-0.36.0.tar.xz",
+      "name": "adocweave-zed-0.37.0.tar.xz",
       "kind": "zed",
       "target": null,
       "archive": "tar.xz",
       "executable": null
     },
     {
-      "name": "adocweave-textlint-plugin-asciidoc-0.36.0.tgz",
+      "name": "adocweave-textlint-plugin-asciidoc-0.37.0.tgz",
       "kind": "textlint-plugin",
       "target": null,
       "archive": "tgz",
       "executable": null
     },
     {
-      "name": "adocweave-vscode-0.36.0.vsix",
+      "name": "adocweave-vscode-0.37.0.vsix",
       "kind": "vscode",
       "target": null,
       "archive": "vsix",
