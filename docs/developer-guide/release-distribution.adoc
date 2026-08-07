@@ -176,9 +176,9 @@ release用workflowで``contents: write``を持つjobはここだけであり、E
 Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
 dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
 
-``v*``を対象とするtag rulesetがtagの作成、更新および削除を制限し、組み込みのGitHub Actions appだけを
-bypass対象とします。人が手元からstable tagをpushすることは拒否されます。この判断の背景は
-xref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
+``v*`` tagを作成できる主体を公開jobだけに限る機械的な仕組みはありません。tagの作成経路はEnvironmentの
+制限で間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。
+tag rulesetを使わない理由はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 
 公開処理は、dispatchで指定したmain先端commitに対する検証済みmain candidateを再利用します。成果物を
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。

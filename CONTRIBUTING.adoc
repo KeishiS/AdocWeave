@@ -209,6 +209,7 @@ cargo make verify-with-global-candidate
 browserを使用するため、バージョンは一致しません。``ADOCWEAVE_BROWSER``で使用するbrowserを
 指定できます。
 
+[#tag]
 == Tag
 
 安定版には``vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
@@ -260,10 +261,11 @@ xref:docs/developer-guide/release-distribution.adoc[GitHub Releases配布仕様]
 実行前に対象、影響および理由を確認し、記録してください。
 
 リポジトリの初期設定では``github-release`` Environmentを名前付きの権限・監査境界として作成し、
-deployment branchを``main``だけに制限します。``v*``を対象とするtag rulesetはtagの作成、更新および削除を
-制限し、組み込みのGitHub Actions appだけをbypass対象にします。これにより、公開workflowはtagを作成でき、
-人の手元からの直接pushは拒否されます。専用のpublisher用GitHub Appは、鍵の管理費用に見合わないため
-使用しません。
+deployment branchを``main``だけに制限します。tag rulesetは使用しません。個人所有リポジトリでは
+組み込みのGitHub Actions appをrulesetのbypass対象へ指定できず、bypassなしのrulesetは公開workflowの
+tag作成も拒否するためです。tagを作成しない・付け替えないという規律は、<<tag,Tagの節>>の運用と
+公開workflowの既存tag検査で守ります。この判断の背景は
+xref:docs/developer-guide/adr/0006-direct-stable-releases.adoc[ADR 0006]を参照してください。
 
 [#release-checklist]
 == Release checklist
@@ -279,9 +281,8 @@ deployment branchを``main``だけに制限します。``v*``を対象とするt
       ``release-manifest.json``と一致しています。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
-* [ ] ``github-release`` Environmentが``main``だけを許可しています。
-* [ ] ``v*`` tag rulesetがtagの作成、更新および削除を制限し、GitHub Actions appだけをbypass対象にしています。
-      workflowはこの外部設定を検査しないため、dispatch前にGitHubの設定画面で確認します。
+* [ ] ``github-release`` Environmentが``main``だけを許可しています。workflowはこの外部設定を
+      検査しないため、dispatch前にGitHubの設定画面で確認します。
 * [ ] main向けのopen Pull Requestがなく、対象コミットが現在の``upstream/main``の先端であり、同じコミットの
       main candidateが成功しています。
 * [ ] xref:docs/developer-guide/release-distribution.adoc[配布仕様]に定義したtarget、archive、metadataおよびasset集合が
