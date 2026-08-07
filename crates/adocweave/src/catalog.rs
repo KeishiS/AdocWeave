@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::inline::{StandardMacro, StandardMacroKind};
+use crate::inline_model::{StandardMacro, StandardMacroKind};
 use crate::limits::AnalysisLimits;
 use crate::reference::ReferenceKey;
 use crate::source::TextRange;

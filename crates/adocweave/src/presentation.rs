@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::parser::AstDocument;
+use crate::block_model::AstDocument;
 use crate::source::TextRange;
 
 /// Stable identity of a semantic block within one [`crate::Analysis`].
@@ -199,7 +199,7 @@ pub(crate) fn build_index(
         }
         if let crate::walker::SemanticNode::Block(block) = node {
             let id = BlockId(u32::try_from(block_ranges.len()).expect("block count fits u32"));
-            block_ids_by_address.insert(block as *const crate::parser::AstBlock, id);
+            block_ids_by_address.insert(block as *const crate::block_model::AstBlock, id);
             block_ranges.push(block.range());
         }
         std::ops::ControlFlow::Continue(())
@@ -214,7 +214,7 @@ pub(crate) fn build_index(
         }
         top_level_blocks.push(
             block_ids_by_address
-                .get(&(block as *const crate::parser::AstBlock))
+                .get(&(block as *const crate::block_model::AstBlock))
                 .copied()
                 .expect("the shared topology visits every top-level block"),
         );
@@ -351,7 +351,7 @@ pub(crate) fn build_presentation(
         if checkpoint.is_cancelled() {
             return Err(());
         }
-        let crate::parser::AstBlock::Heading(heading) = block else {
+        let crate::block_model::AstBlock::Heading(heading) = block else {
             continue;
         };
         if block
@@ -435,14 +435,15 @@ pub(crate) fn build_layout(
     presentation: &DocumentPresentation,
     checkpoint: &mut crate::cancellation::CancellationCheckpoint<'_>,
 ) -> Result<DocumentLayout, ()> {
-    fn structural_heading_level(block: &crate::parser::AstBlock) -> Option<u8> {
-        let crate::parser::AstBlock::Heading(heading) = block else {
+    fn structural_heading_level(block: &crate::block_model::AstBlock) -> Option<u8> {
+        let crate::block_model::AstBlock::Heading(heading) = block else {
             return None;
         };
         match heading.kind {
-            crate::parser::HeadingKind::DocumentTitle | crate::parser::HeadingKind::Part => Some(0),
-            crate::parser::HeadingKind::Section { level } => Some(level),
-            crate::parser::HeadingKind::Discrete { .. } => None,
+            crate::block_model::HeadingKind::DocumentTitle
+            | crate::block_model::HeadingKind::Part => Some(0),
+            crate::block_model::HeadingKind::Section { level } => Some(level),
+            crate::block_model::HeadingKind::Discrete { .. } => None,
         }
     }
 
@@ -475,7 +476,7 @@ pub(crate) fn build_layout(
             continue;
         }
 
-        let bibliography_level = matches!(block, crate::parser::AstBlock::Heading(heading)
+        let bibliography_level = matches!(block, crate::block_model::AstBlock::Heading(heading)
             if presentation.bibliography_section_at(heading.range).is_some())
         .then_some(heading_level)
         .flatten();
@@ -504,8 +505,8 @@ pub(crate) fn build_layout(
                 index
                     .top_level_ordinal(*id)
                     .and_then(|ordinal| document.blocks().get(ordinal)),
-                Some(crate::parser::AstBlock::Heading(heading))
-                    if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle)
+                Some(crate::block_model::AstBlock::Heading(heading))
+                    if matches!(heading.kind, crate::block_model::HeadingKind::DocumentTitle)
             ) {
                 insertion = Some(node_index + 1);
                 break;

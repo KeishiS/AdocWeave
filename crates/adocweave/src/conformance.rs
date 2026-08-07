@@ -3,11 +3,11 @@
 use std::fmt::Write as _;
 
 use crate::Analysis;
+use crate::block_model::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
 use crate::diagnostic::render_json as render_diagnostics_json;
 use crate::document::{document_symbols, render_symbols_json};
 use crate::html::{RenderPolicy, render_with_inputs};
-use crate::inline::Inline;
-use crate::parser::{AstBlock, AstDocument, BlockMetadata, ListBlock, ListItem};
+use crate::inline_model::Inline;
 use crate::projection::project;
 use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
@@ -249,10 +249,10 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
     let mut node = match block {
         AstBlock::Heading(node) => CanonicalNode {
             kind: match node.kind {
-                crate::parser::HeadingKind::DocumentTitle => "document-title",
-                crate::parser::HeadingKind::Part => "part",
-                crate::parser::HeadingKind::Section { .. } => "section",
-                crate::parser::HeadingKind::Discrete { .. } => "discrete-heading",
+                crate::block_model::HeadingKind::DocumentTitle => "document-title",
+                crate::block_model::HeadingKind::Part => "part",
+                crate::block_model::HeadingKind::Section { .. } => "section",
+                crate::block_model::HeadingKind::Discrete { .. } => "discrete-heading",
             },
             range: range(node.range),
             value: Some(node.text.clone()),
@@ -277,8 +277,8 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::LiteralParagraph(node) => leaf("literal-paragraph", node.range, &node.value),
         AstBlock::Break(node) => CanonicalNode {
             kind: match node.kind {
-                crate::parser::BreakKind::Thematic => "thematic-break",
-                crate::parser::BreakKind::Page => "page-break",
+                crate::block_model::BreakKind::Thematic => "thematic-break",
+                crate::block_model::BreakKind::Page => "page-break",
             },
             range: range(node.range),
             value: None,
@@ -296,20 +296,19 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         },
         AstBlock::Verbatim(node) => CanonicalNode {
             kind: match node.kind {
-                crate::parser::VerbatimKind::Listing => "listing-block",
-                crate::parser::VerbatimKind::Literal => "literal-block",
-                crate::parser::VerbatimKind::Source(_) => "source-block",
+                crate::block_model::VerbatimKind::Listing => "listing-block",
+                crate::block_model::VerbatimKind::Literal => "literal-block",
+                crate::block_model::VerbatimKind::Source(_) => "source-block",
             },
             range: range(node.range),
             value: Some(match &node.kind {
-                crate::parser::VerbatimKind::Source(source) => format!(
+                crate::block_model::VerbatimKind::Source(source) => format!(
                     "{}:{}",
                     source.language.as_deref().unwrap_or(""),
                     node.value
                 ),
-                crate::parser::VerbatimKind::Listing | crate::parser::VerbatimKind::Literal => {
-                    node.value.clone()
-                }
+                crate::block_model::VerbatimKind::Listing
+                | crate::block_model::VerbatimKind::Literal => node.value.clone(),
             }),
             children: Vec::new(),
         },
@@ -317,15 +316,15 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
         AstBlock::Math(node) => leaf("math-block", node.range, &node.value),
         AstBlock::Delimited(node) => {
             let (value, mut children) = match &node.content {
-                crate::parser::DelimitedContent::Compound(children) => (
+                crate::block_model::DelimitedContent::Compound(children) => (
                     Some(node.delimiter.clone()),
                     children.iter().map(block_node).collect(),
                 ),
-                crate::parser::DelimitedContent::Verbatim(value)
-                | crate::parser::DelimitedContent::Passthrough(value) => {
+                crate::block_model::DelimitedContent::Verbatim(value)
+                | crate::block_model::DelimitedContent::Passthrough(value) => {
                     (Some(value.clone()), Vec::new())
                 }
-                crate::parser::DelimitedContent::Table(table) => (
+                crate::block_model::DelimitedContent::Table(table) => (
                     Some(format!("{:?}", table.format).to_ascii_lowercase()),
                     std::iter::once(CanonicalNode {
                         kind: "table-presentation",
@@ -369,21 +368,23 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
                     0,
                     CanonicalNode {
                         kind: match presentation {
-                            crate::parser::DelimitedPresentation::Admonition(_) => {
+                            crate::block_model::DelimitedPresentation::Admonition(_) => {
                                 "admonition-presentation"
                             }
-                            crate::parser::DelimitedPresentation::Quote(_) => "quote-presentation",
+                            crate::block_model::DelimitedPresentation::Quote(_) => {
+                                "quote-presentation"
+                            }
                         },
                         range: range(node.range),
                         value: Some(match presentation {
-                            crate::parser::DelimitedPresentation::Admonition(value) => {
+                            crate::block_model::DelimitedPresentation::Admonition(value) => {
                                 value.kind.label().to_owned()
                             }
-                            crate::parser::DelimitedPresentation::Quote(value) => format!(
+                            crate::block_model::DelimitedPresentation::Quote(value) => format!(
                                 "{}:{}:{}",
                                 match value.kind {
-                                    crate::parser::QuoteKind::Quote => "quote",
-                                    crate::parser::QuoteKind::Verse => "verse",
+                                    crate::block_model::QuoteKind::Quote => "quote",
+                                    crate::block_model::QuoteKind::Verse => "verse",
                                 },
                                 value.attribution.as_ref().map_or("", |value| &value.value),
                                 value.citation.as_ref().map_or("", |value| &value.value),
@@ -395,15 +396,15 @@ fn block_node(block: &AstBlock) -> CanonicalNode {
             }
             CanonicalNode {
                 kind: match node.kind {
-                    crate::parser::DelimitedBlockKind::Comment => "comment-block",
-                    crate::parser::DelimitedBlockKind::Example => "example-block",
-                    crate::parser::DelimitedBlockKind::Listing => "listing-block",
-                    crate::parser::DelimitedBlockKind::Literal => "literal-block",
-                    crate::parser::DelimitedBlockKind::Open => "open-block",
-                    crate::parser::DelimitedBlockKind::Sidebar => "sidebar-block",
-                    crate::parser::DelimitedBlockKind::Pass => "pass-block",
-                    crate::parser::DelimitedBlockKind::Quote => "quote-block",
-                    crate::parser::DelimitedBlockKind::Table => "table-block",
+                    crate::block_model::DelimitedBlockKind::Comment => "comment-block",
+                    crate::block_model::DelimitedBlockKind::Example => "example-block",
+                    crate::block_model::DelimitedBlockKind::Listing => "listing-block",
+                    crate::block_model::DelimitedBlockKind::Literal => "literal-block",
+                    crate::block_model::DelimitedBlockKind::Open => "open-block",
+                    crate::block_model::DelimitedBlockKind::Sidebar => "sidebar-block",
+                    crate::block_model::DelimitedBlockKind::Pass => "pass-block",
+                    crate::block_model::DelimitedBlockKind::Quote => "quote-block",
+                    crate::block_model::DelimitedBlockKind::Table => "table-block",
                 },
                 range: range(node.range),
                 value,
@@ -487,10 +488,10 @@ fn metadata_nodes(metadata: &BlockMetadata) -> Vec<CanonicalNode> {
 fn list_node(list: &ListBlock) -> CanonicalNode {
     CanonicalNode {
         kind: match list.kind {
-            crate::parser::ListKind::Unordered => "unordered-list",
-            crate::parser::ListKind::Ordered => "ordered-list",
-            crate::parser::ListKind::Description => "description-list",
-            crate::parser::ListKind::Callout => "callout-list",
+            crate::block_model::ListKind::Unordered => "unordered-list",
+            crate::block_model::ListKind::Ordered => "ordered-list",
+            crate::block_model::ListKind::Description => "description-list",
+            crate::block_model::ListKind::Callout => "callout-list",
         },
         range: range(list.range),
         value: None,
@@ -516,8 +517,10 @@ fn list_item_node(item: &ListItem) -> CanonicalNode {
         kind: "list-item",
         range: range(item.range),
         value: Some(match (item.checklist, item.callout_id) {
-            (Some(crate::parser::ChecklistState::Checked), _) => format!("checked:{}", item.text),
-            (Some(crate::parser::ChecklistState::Unchecked), _) => {
+            (Some(crate::block_model::ChecklistState::Checked), _) => {
+                format!("checked:{}", item.text)
+            }
+            (Some(crate::block_model::ChecklistState::Unchecked), _) => {
                 format!("unchecked:{}", item.text)
             }
             (_, Some(id)) => format!("callout-{id}:{}", item.text),
@@ -546,13 +549,13 @@ fn inline_node(inline: &Inline) -> CanonicalNode {
             ..
         } => CanonicalNode {
             kind: match style {
-                crate::inline::InlineStyle::Strong => "strong",
-                crate::inline::InlineStyle::Emphasis => "emphasis",
-                crate::inline::InlineStyle::Highlight => "highlight",
-                crate::inline::InlineStyle::Subscript => "subscript",
-                crate::inline::InlineStyle::Superscript => "superscript",
-                crate::inline::InlineStyle::CurvedDoubleQuote => "curved-double-quote",
-                crate::inline::InlineStyle::CurvedSingleQuote => "curved-single-quote",
+                crate::inline_model::InlineStyle::Strong => "strong",
+                crate::inline_model::InlineStyle::Emphasis => "emphasis",
+                crate::inline_model::InlineStyle::Highlight => "highlight",
+                crate::inline_model::InlineStyle::Subscript => "subscript",
+                crate::inline_model::InlineStyle::Superscript => "superscript",
+                crate::inline_model::InlineStyle::CurvedDoubleQuote => "curved-double-quote",
+                crate::inline_model::InlineStyle::CurvedSingleQuote => "curved-single-quote",
             },
             range: range(*node_range),
             value: None,

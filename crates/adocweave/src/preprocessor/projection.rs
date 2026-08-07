@@ -5,7 +5,7 @@ use crate::cancellation::CancellationCheckpoint;
 use crate::core::{CancellationCheck, NeverCancel};
 use crate::diagnostic::{Diagnostic, RelatedInformation, TextEdit};
 use crate::document::DocumentSymbol;
-use crate::inline::Reference;
+use crate::inline_model::Reference;
 use crate::resource::ResourceReference;
 use crate::source::TextRange;
 

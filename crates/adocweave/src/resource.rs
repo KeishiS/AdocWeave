@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::core::SourceId;
-use crate::inline::{MacroAttribute, MacroForm, StandardMacro, StandardMacroKind};
+use crate::inline_model::{MacroAttribute, MacroForm, StandardMacro, StandardMacroKind};
 use crate::source::TextRange;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::block_model::AstDocument;
 use crate::diagnostic::Diagnostic;
 use crate::generated_bibliography::{GeneratedBibliography, GeneratedBibliographyEntry};
-use crate::inline::Inline;
-use crate::parser::AstDocument;
+use crate::inline_model::Inline;
 
 use super::body::{self, BlockWriter, classes, passive};
 use super::{bibliography_reference_id, render_input_diagnostic, safe};
@@ -100,7 +100,7 @@ pub(super) fn prepare<'input>(
         let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node else {
             return;
         };
-        if node.kind != crate::inline::StandardMacroKind::Citation {
+        if node.kind != crate::inline_model::StandardMacroKind::Citation {
             return;
         }
         for key in node.attributes.iter().filter(|key| key.name.is_none()) {

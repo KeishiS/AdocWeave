@@ -3,10 +3,10 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use crate::block_model::AstBlock;
 use crate::core::{Analysis, SourceId};
 use crate::document::{ReferenceTarget, ReferenceTargetKind};
-use crate::inline::{Inline, Link};
-use crate::parser::AstBlock;
+use crate::inline_model::{Inline, Link};
 use crate::reference::{ReferenceKey, ResolutionOutcome};
 use crate::render::{RenderInputs, ResolutionMatch};
 use crate::source::TextRange;
@@ -64,7 +64,7 @@ pub struct OrderedListProjection {
     pub source_range: TextRange,
     pub start: Option<u32>,
     pub reversed: bool,
-    pub style: crate::parser::OrderedListStyle,
+    pub style: crate::block_model::OrderedListStyle,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,13 +103,13 @@ pub enum FormulaKind {
 impl OrderedListProjection {
     const fn style_name(self) -> &'static str {
         match self.style {
-            crate::parser::OrderedListStyle::Arabic => "arabic",
-            crate::parser::OrderedListStyle::Decimal => "decimal",
-            crate::parser::OrderedListStyle::LowerAlpha => "loweralpha",
-            crate::parser::OrderedListStyle::UpperAlpha => "upperalpha",
-            crate::parser::OrderedListStyle::LowerRoman => "lowerroman",
-            crate::parser::OrderedListStyle::UpperRoman => "upperroman",
-            crate::parser::OrderedListStyle::LowerGreek => "lowergreek",
+            crate::block_model::OrderedListStyle::Arabic => "arabic",
+            crate::block_model::OrderedListStyle::Decimal => "decimal",
+            crate::block_model::OrderedListStyle::LowerAlpha => "loweralpha",
+            crate::block_model::OrderedListStyle::UpperAlpha => "upperalpha",
+            crate::block_model::OrderedListStyle::LowerRoman => "lowerroman",
+            crate::block_model::OrderedListStyle::UpperRoman => "upperroman",
+            crate::block_model::OrderedListStyle::LowerGreek => "lowergreek",
         }
     }
 }
@@ -127,7 +127,7 @@ impl FormulaKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormulaProjection {
     pub kind: FormulaKind,
-    pub language: crate::inline::MathLanguage,
+    pub language: crate::inline_model::MathLanguage,
     pub source_range: TextRange,
     pub content_range: TextRange,
     pub source: String,
@@ -197,7 +197,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         .iter()
         .find_map(|block| match block {
             AstBlock::Heading(heading)
-                if matches!(heading.kind, crate::parser::HeadingKind::DocumentTitle) =>
+                if matches!(heading.kind, crate::block_model::HeadingKind::DocumentTitle) =>
             {
                 Some(ProjectedText {
                     source_range: heading.text_range,
@@ -254,9 +254,9 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
             });
         }
         crate::walker::SemanticNode::Block(AstBlock::Verbatim(block))
-            if matches!(block.kind, crate::parser::VerbatimKind::Source(_)) =>
+            if matches!(block.kind, crate::block_model::VerbatimKind::Source(_)) =>
         {
-            let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+            let crate::block_model::VerbatimKind::Source(source) = &block.kind else {
                 unreachable!("match guard ensures source verbatim block")
             };
             source_blocks.push(SourceBlockProjection {
@@ -292,7 +292,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
             });
         }
         crate::walker::SemanticNode::Block(AstBlock::List(list))
-            if list.kind == crate::parser::ListKind::Ordered =>
+            if list.kind == crate::block_model::ListKind::Ordered =>
         {
             ordered_lists.push(OrderedListProjection {
                 source_range: list.range,
@@ -320,7 +320,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
         crate::walker::SemanticNode::Block(AstBlock::Delimited(value)) => {
             if let Some(presentation) = &value.presentation {
                 match presentation {
-                    crate::parser::DelimitedPresentation::Admonition(_) => block_presentations
+                    crate::block_model::DelimitedPresentation::Admonition(_) => block_presentations
                         .push(BlockPresentationProjection {
                             kind: BlockPresentationKind::Admonition,
                             source_range: value.range,
@@ -333,11 +333,15 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                             attribution: None,
                             citation: None,
                         }),
-                    crate::parser::DelimitedPresentation::Quote(quote) => {
-                        block_presentations.push(BlockPresentationProjection {
+                    crate::block_model::DelimitedPresentation::Quote(quote) => block_presentations
+                        .push(BlockPresentationProjection {
                             kind: match quote.kind {
-                                crate::parser::QuoteKind::Quote => BlockPresentationKind::Quote,
-                                crate::parser::QuoteKind::Verse => BlockPresentationKind::Verse,
+                                crate::block_model::QuoteKind::Quote => {
+                                    BlockPresentationKind::Quote
+                                }
+                                crate::block_model::QuoteKind::Verse => {
+                                    BlockPresentationKind::Verse
+                                }
                             },
                             source_range: value.range,
                             content_range: value.content_range,
@@ -348,8 +352,7 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
                                 .map(|item| resolved_inline_text(&item.inlines)),
                             attribution: quote.attribution.as_ref().map(|item| item.value.clone()),
                             citation: quote.citation.as_ref().map(|item| item.value.clone()),
-                        })
-                    }
+                        }),
                 }
             }
         }
@@ -440,8 +443,8 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
             source.value.clone(),
         ),
         crate::walker::SemanticNode::Block(AstBlock::Delimited(block)) => {
-            if let crate::parser::DelimitedContent::Verbatim(value) = &block.content
-                && !matches!(block.kind, crate::parser::DelimitedBlockKind::Comment)
+            if let crate::block_model::DelimitedContent::Verbatim(value) = &block.content
+                && !matches!(block.kind, crate::block_model::DelimitedBlockKind::Comment)
             {
                 push_search(
                     output,
@@ -541,7 +544,7 @@ fn inline_text_with_attributes(inlines: &[Inline], include_attribute_values: boo
             }
             Inline::Formula(_) => {}
             Inline::Macro(node) => {
-                use crate::inline::StandardMacroKind as Kind;
+                use crate::inline_model::StandardMacroKind as Kind;
                 match node.kind {
                     // A citation carries no readable text of its own: the display
                     // string comes from the host that resolves the key.
@@ -852,17 +855,17 @@ pub(crate) fn canonical_source_language(language: &str) -> String {
         .collect()
 }
 
-const fn math_language_feature(language: crate::inline::MathLanguage) -> (u8, &'static str) {
+const fn math_language_feature(language: crate::inline_model::MathLanguage) -> (u8, &'static str) {
     match language {
-        crate::inline::MathLanguage::Latex => (0, "latexmath"),
-        crate::inline::MathLanguage::Typst => (1, "typst"),
+        crate::inline_model::MathLanguage::Latex => (0, "latexmath"),
+        crate::inline_model::MathLanguage::Typst => (1, "typst"),
     }
 }
 
-const fn math_language(language: crate::inline::MathLanguage) -> &'static str {
+const fn math_language(language: crate::inline_model::MathLanguage) -> &'static str {
     match language {
-        crate::inline::MathLanguage::Latex => "latex",
-        crate::inline::MathLanguage::Typst => "typst",
+        crate::inline_model::MathLanguage::Latex => "latex",
+        crate::inline_model::MathLanguage::Typst => "typst",
     }
 }
 
@@ -1151,7 +1154,7 @@ fn json_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::inline::MathLanguage;
+    use crate::inline_model::MathLanguage;
     use crate::preprocessor::{
         PreprocessOptions, ResourceDocument, ResourceSnapshot, preprocess_and_analyze,
     };
@@ -1388,7 +1391,7 @@ a^2
         assert_eq!(projected.formulas[0].display(), FormulaKind::Inline);
         assert_eq!(
             projected.formulas[0].language,
-            crate::inline::MathLanguage::Latex
+            crate::inline_model::MathLanguage::Latex
         );
         assert_eq!(
             projected.formulas[0].language.as_asciidoc_name(),
@@ -1404,7 +1407,7 @@ a^2
         assert_eq!(projected.formulas[1].display(), FormulaKind::Block);
         assert_eq!(
             projected.formulas[1].language,
-            crate::inline::MathLanguage::Latex
+            crate::inline_model::MathLanguage::Latex
         );
         assert_eq!(projected.formulas[1].source, "a^2\n");
         assert_eq!(
@@ -1515,7 +1518,7 @@ let x = 1;
                 source_range: analysis.ast().blocks()[0].range(),
                 start: Some(4),
                 reversed: true,
-                style: crate::parser::OrderedListStyle::LowerAlpha,
+                style: crate::block_model::OrderedListStyle::LowerAlpha,
             }
         );
         assert!(

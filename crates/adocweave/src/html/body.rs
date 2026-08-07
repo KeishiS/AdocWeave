@@ -1,7 +1,7 @@
 //! Typed inline render planning and deterministic body serialization.
 
-use crate::inline::{Inline, InlineLiteralKind, InlineStyle, Link, Reference};
-use crate::parser::{AstBlock, AstDocument, Heading, HeadingKind};
+use crate::block_model::{AstBlock, AstDocument, Heading, HeadingKind};
+use crate::inline_model::{Inline, InlineLiteralKind, InlineStyle, Link, Reference};
 use crate::resource::MediaFamily;
 use crate::url::UrlProvenance;
 
@@ -412,11 +412,11 @@ fn plan_label_or_text(
 }
 
 fn plan_standard_macro(
-    node: &crate::inline::StandardMacro,
+    node: &crate::inline_model::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
     output: &mut Vec<InlineNode>,
 ) {
-    use crate::inline::StandardMacroKind as Kind;
+    use crate::inline_model::StandardMacroKind as Kind;
     let first = node
         .attributes
         .first()
@@ -608,11 +608,11 @@ fn plan_standard_macro(
 }
 
 fn plan_image_macro(
-    node: &crate::inline::StandardMacro,
+    node: &crate::inline_model::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
     output: &mut Vec<InlineNode>,
 ) {
-    let alt = if node.kind == crate::inline::StandardMacroKind::Icon {
+    let alt = if node.kind == crate::inline_model::StandardMacroKind::Icon {
         macro_attribute(node, "alt", usize::MAX)
             .or_else(|| macro_attribute(node, "title", usize::MAX))
             .unwrap_or(&node.target)
@@ -641,7 +641,7 @@ fn plan_image_macro(
         return;
     };
     let mut attributes = vec![active_url("src", src.into_owned()), passive("alt", alt)];
-    let positional_dimensions = node.kind == crate::inline::StandardMacroKind::Image;
+    let positional_dimensions = node.kind == crate::inline_model::StandardMacroKind::Image;
     append_dimension(
         &mut attributes,
         node,
@@ -661,7 +661,7 @@ fn plan_image_macro(
 }
 
 fn plan_media_macro(
-    node: &crate::inline::StandardMacro,
+    node: &crate::inline_model::StandardMacro,
     context: &mut InlineRenderContext<'_, '_>,
     output: &mut Vec<InlineNode>,
 ) {
@@ -676,7 +676,7 @@ fn plan_media_macro(
         ));
         return;
     }
-    let (name, family) = if node.kind == crate::inline::StandardMacroKind::Audio {
+    let (name, family) = if node.kind == crate::inline_model::StandardMacroKind::Audio {
         ("audio", MediaFamily::Audio)
     } else {
         ("video", MediaFamily::Video)
@@ -694,7 +694,7 @@ fn plan_media_macro(
         return;
     };
     let mut attributes = vec![active_url("src", src.into_owned()), boolean("controls")];
-    if node.kind == crate::inline::StandardMacroKind::Video {
+    if node.kind == crate::inline_model::StandardMacroKind::Video {
         append_dimension(&mut attributes, node, "width", Some(1));
         append_dimension(&mut attributes, node, "height", Some(2));
         if let Some(poster) =
@@ -728,16 +728,16 @@ fn plan_media_macro(
 }
 
 fn macro_attribute_node<'a>(
-    node: &'a crate::inline::StandardMacro,
+    node: &'a crate::inline_model::StandardMacro,
     name: &str,
-) -> Option<&'a crate::inline::MacroAttribute> {
+) -> Option<&'a crate::inline_model::MacroAttribute> {
     node.attributes
         .iter()
         .find(|attribute| attribute.name.as_deref() == Some(name))
 }
 
 fn macro_attribute<'a>(
-    node: &'a crate::inline::StandardMacro,
+    node: &'a crate::inline_model::StandardMacro,
     name: &str,
     position: usize,
 ) -> Option<&'a str> {
@@ -754,7 +754,7 @@ fn macro_attribute<'a>(
 
 fn append_dimension(
     attributes: &mut Vec<PlannedAttribute>,
-    node: &crate::inline::StandardMacro,
+    node: &crate::inline_model::StandardMacro,
     name: &'static str,
     position: Option<usize>,
 ) {
@@ -779,13 +779,13 @@ fn append_dimension(
 }
 
 fn math_attributes(
-    language: crate::inline::MathLanguage,
+    language: crate::inline_model::MathLanguage,
     display: &'static str,
 ) -> Vec<PlannedAttribute> {
     vec![
         classes(&[match language {
-            crate::inline::MathLanguage::Latex => "math-latex",
-            crate::inline::MathLanguage::Typst => "math-typst",
+            crate::inline_model::MathLanguage::Latex => "math-latex",
+            crate::inline_model::MathLanguage::Typst => "math-typst",
         }]),
         passive("data-math-language", language.as_asciidoc_name()),
         passive("data-math-display", display),

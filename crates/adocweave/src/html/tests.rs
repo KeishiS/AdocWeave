@@ -6,9 +6,9 @@ use super::{
     SourceLanguagePolicy, StylesheetPolicy, StylesheetSource, UnknownSourceLanguage,
     UnresolvedReferencePresentation,
 };
+use crate::block_model::AstBlock;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::inline::Inline;
-use crate::parser::AstBlock;
+use crate::inline_model::Inline;
 use crate::parser::parse;
 use crate::reference::ReferenceKey;
 use crate::render::RenderInputs;
@@ -16,12 +16,12 @@ use crate::resolution::{GeneratedBibliography, GeneratedBibliographyEntry};
 use crate::resource::{MediaType, ResolvedResource};
 use crate::url::{UrlDecision, UrlProvenance};
 
-fn render(document: &crate::parser::AstDocument, policy: &RenderPolicy) -> super::HtmlOutput {
+fn render(document: &crate::block_model::AstDocument, policy: &RenderPolicy) -> super::HtmlOutput {
     super::render_with_inputs_ast(document, policy, &RenderInputs::default())
 }
 
 fn render_with_inputs(
-    document: &crate::parser::AstDocument,
+    document: &crate::block_model::AstDocument,
     policy: &RenderPolicy,
     inputs: &RenderInputs,
 ) -> super::HtmlOutput {
@@ -34,7 +34,7 @@ fn analyze(source: &str) -> crate::core::Analysis {
         .expect("analysis")
 }
 
-fn echo_resource_inputs(document: &crate::parser::AstDocument) -> RenderInputs {
+fn echo_resource_inputs(document: &crate::block_model::AstDocument) -> RenderInputs {
     let mut resources = Vec::new();
     crate::walker::walk_ast(document, |node| {
         if let crate::walker::SemanticNode::Inline(Inline::Macro(node)) = node {

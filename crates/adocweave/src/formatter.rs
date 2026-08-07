@@ -266,8 +266,9 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 #[cfg(test)]
 mod tests {
     use super::{FormatConfig, FormatError, NewlineStyle, format, format_analysis_cancellable};
+    use crate::block_model::AstBlock;
     use crate::core::{AnalysisOptions, CancellationCheck, Engine};
-    use crate::parser::{AstBlock, parse};
+    use crate::parser::parse;
     use crate::syntax::SyntaxKind;
 
     fn semantic_text(source: &str) -> Vec<Vec<String>> {
@@ -440,7 +441,7 @@ mod tests {
                 .blocks()
                 .iter()
                 .flat_map(block_inlines)
-                .filter(|inline| matches!(inline, crate::inline::Inline::Reference(_)))
+                .filter(|inline| matches!(inline, crate::inline_model::Inline::Reference(_)))
                 .count(),
             1
         );
@@ -491,8 +492,8 @@ mod tests {
                 .blocks()
                 .iter()
                 .filter_map(|block| match block {
-                    AstBlock::Delimited(crate::parser::DelimitedBlock {
-                        content: crate::parser::DelimitedContent::Table(table),
+                    AstBlock::Delimited(crate::block_model::DelimitedBlock {
+                        content: crate::block_model::DelimitedContent::Table(table),
                         ..
                     }) => Some(table.rows[0].section),
                     _ => None,
@@ -533,7 +534,7 @@ mod tests {
         assert!(formatted.formatted.ends_with("Paragraph\n"));
     }
 
-    fn block_inlines(block: &AstBlock) -> Vec<&crate::inline::Inline> {
+    fn block_inlines(block: &AstBlock) -> Vec<&crate::inline_model::Inline> {
         match block {
             AstBlock::Heading(heading) => heading.inlines.iter().collect(),
             AstBlock::Paragraph(paragraph) => paragraph.inlines.iter().collect(),

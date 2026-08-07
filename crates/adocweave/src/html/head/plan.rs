@@ -1,5 +1,5 @@
+use crate::block_model::AstDocument;
 use crate::diagnostic::{Diagnostic, DiagnosticId};
-use crate::parser::AstDocument;
 use crate::structure::SectionKind;
 use crate::url::UrlProvenance;
 

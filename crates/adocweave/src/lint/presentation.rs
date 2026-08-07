@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use crate::parser::AstBlock;
+use crate::block_model::AstBlock;
 
 use super::{
     INVALID_ATTRIBUTE, INVALID_LIST_PRESENTATION, LintContext, LintDiagnosticBody,
@@ -12,7 +12,7 @@ pub(super) fn lint_list_presentation(context: &LintContext<'_>, sink: &mut LintD
 }
 
 pub(super) fn lint_list_presentation_with_observer<'document>(
-    document: &'document crate::parser::AstDocument,
+    document: &'document crate::block_model::AstDocument,
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
 ) {
@@ -29,16 +29,16 @@ pub(super) fn lint_list_presentation_with_observer<'document>(
                 break;
             }
             let message = match problem.kind {
-                crate::parser::ListPresentationProblemKind::InvalidStart => {
+                crate::block_model::ListPresentationProblemKind::InvalidStart => {
                     "ordered list start must be a positive integer"
                 }
-                crate::parser::ListPresentationProblemKind::InvalidExplicitNumber => {
+                crate::block_model::ListPresentationProblemKind::InvalidExplicitNumber => {
                     "explicit ordered-list number must be a positive 32-bit integer"
                 }
-                crate::parser::ListPresentationProblemKind::InconsistentExplicitNumber => {
+                crate::block_model::ListPresentationProblemKind::InconsistentExplicitNumber => {
                     "explicit ordered-list numbers must be sequential"
                 }
-                crate::parser::ListPresentationProblemKind::UnknownOrderedStyle => {
+                crate::block_model::ListPresentationProblemKind::UnknownOrderedStyle => {
                     "unsupported ordered list style"
                 }
             };
