@@ -67,25 +67,6 @@ impl ResourceBudget {
         Ok(())
     }
 
-    pub(super) fn restore_replacement(&mut self, current: u64, previous: u64) {
-        self.bytes = self
-            .bytes
-            .checked_sub(current)
-            .and_then(|bytes| bytes.checked_add(previous))
-            .expect("replacement charge is part of the budget");
-    }
-
-    pub(super) fn restore_charge(&mut self, bytes: u64) {
-        self.files = self
-            .files
-            .checked_add(1)
-            .expect("restored file count fits the original budget");
-        self.bytes = self
-            .bytes
-            .checked_add(bytes)
-            .expect("restored bytes fit the original budget");
-    }
-
     pub(super) fn release(&mut self, bytes: u64) {
         self.files = self
             .files

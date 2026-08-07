@@ -53,6 +53,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 
 const highlights = [
   "#492：filesystem resourceの不在を正常な取得結果として扱い、Language Serverの初期走査を複数sessionで共有するjob上限とdraftへ移行しました。",
+  "#455：Language Serverのinclude解析を、不足resourceを取得した位置から再開するようにしました。includeの個数によらず前処理は一度で済み、取得したresourceは解析が採用されるまでエディターが見ている状態へ入りません。",
   "#495：tableの``cols``属性にある空のcolumn specを既定列として保持し、明示した列数どおりに解析するよう修正しました。",
 ];
 

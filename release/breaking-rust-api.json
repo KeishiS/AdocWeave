@@ -9,6 +9,46 @@
       "lint": "enum_variant_added",
       "migration": "ResourceErrorを網羅的にmatchするRust consumerはResourceError::Jobを処理してください。",
       "summary": "enum variant added on exhaustive enum"
+    },
+    {
+      "crate": "adocweave-host",
+      "description": "巻き戻し用のtokenを扱うReadRollback一式を削除したため、その失敗を表すResourceError::InvalidRollbackも不要になりました。",
+      "item": "variant ResourceError::InvalidRollback, previously",
+      "lint": "enum_variant_missing",
+      "migration": "ResourceError::InvalidRollbackを参照しているコードは削除してください。draftは破棄するだけで巻き戻るため、このerrorに対応する状況が起きません。",
+      "summary": "pub enum variant removed or renamed"
+    },
+    {
+      "crate": "adocweave-host",
+      "description": "liveのsessionを先に書き換えてから巻き戻す読み込みAPIを削除しました。",
+      "item": "LocalFilesystemSession::reread_utf8_with_rollback, previously",
+      "lint": "inherent_method_missing",
+      "migration": "LocalFilesystemSession::draftでdraftを開き、LocalFilesystemDraft::reread_utf8で読んでからprepare_commitとcommitで反映してください。反映しない場合はdraftをdropします。",
+      "summary": "pub method removed or renamed"
+    },
+    {
+      "crate": "adocweave-host",
+      "description": "巻き戻しAPIを削除したため、対になるrollback_readも削除しました。",
+      "item": "LocalFilesystemSession::rollback_reread, previously",
+      "lint": "inherent_method_missing",
+      "migration": "draftをcommitせずdropしてください。liveのstateは読み込みの時点では変わらないため、巻き戻す操作が不要です。",
+      "summary": "pub method removed or renamed"
+    },
+    {
+      "crate": "adocweave-host",
+      "description": "path指定でresourceを解放する移行用APIを削除しました。世代の検査がないため、古い通知が現在のresourceを解放できてしまいます。",
+      "item": "LocalFilesystemSession::release, previously",
+      "lint": "inherent_method_missing",
+      "migration": "読み込み時に得たFilesystemResourceBindingを保持し、LocalFilesystemDraft::release_bindingで解放してください。bindingは世代を持つため、古いbindingでの解放はStaleとして拒否されます。",
+      "summary": "pub method removed or renamed"
+    },
+    {
+      "crate": "adocweave-host",
+      "description": "巻き戻し用の状態を表す型を削除しました。",
+      "item": "struct adocweave_host::FilesystemReadRollback, previously",
+      "lint": "struct_missing",
+      "migration": "この型を保持していたコードは不要です。draftが同じ役割を、失敗しない破棄として担います。",
+      "summary": "pub struct removed or renamed"
     }
   ]
 }

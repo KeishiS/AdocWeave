@@ -17,11 +17,10 @@ pub use filesystem_job::{
 };
 pub use filesystem_limits::FilesystemReadLimits;
 pub use local_resource::{
-    DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadOutcome, FilesystemReadRollback,
-    FilesystemReleaseOutcome, FilesystemResourceBinding, LoadedFilesystemSource,
-    LocalFilesystemAccess, LocalFilesystemDraft, LocalFilesystemPolicy, LocalFilesystemSession,
-    LocalFilesystemSessionId, LogicalSourceId, PreparedFilesystemCommit, ResourceBudget,
-    ResourceError,
+    DerivedFilesystemRoots, FilesystemDraftError, FilesystemReadOutcome, FilesystemReleaseOutcome,
+    FilesystemResourceBinding, LoadedFilesystemSource, LocalFilesystemAccess, LocalFilesystemDraft,
+    LocalFilesystemPolicy, LocalFilesystemSession, LocalFilesystemSessionId, LogicalSourceId,
+    PreparedFilesystemCommit, ResourceBudget, ResourceError,
 };
 pub use local_target::{
     FilesystemRaceResistance, LoadedLocalBytes, LoadedLocalTarget, LocalTargetError,
