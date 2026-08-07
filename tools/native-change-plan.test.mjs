@@ -148,7 +148,6 @@ test("成果物へ影響しない既知の文書とfixtureだけを明示的に�
     "fixtures/basic/input.adoc",
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     "tools/release-workflow-policy.mjs",
-    "tools/release-workflow-policy.test.mjs",
     "tools/release-intent.mjs",
     "tools/release-intent.test.mjs",
     "tools/release-readiness.mjs",
