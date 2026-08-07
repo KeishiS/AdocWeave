@@ -54,6 +54,21 @@ test("WebAssemblyの機械固有pathを拒否する", async () => {
     ? { ...entry, data: Buffer.concat([minimalWasm(), Buffer.from("/workspace/secret/source.rs")]) }
     : entry);
   await withArchive(mutant, (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /machine-specific path/));
+
+  const windows = entries().map((entry) => entry.name.endsWith(".wasm")
+    ? { ...entry, data: Buffer.concat([minimalWasm(), Buffer.from("C:\\Users\\builder\\source.rs")]) }
+    : entry);
+  await withArchive(windows, (archive) => assert.rejects(verifyTextlintPluginPackage(archive), /machine-specific path/));
+});
+
+test("path形の偶然のbyte列は機械固有pathとして拒否しない", async () => {
+  // 実際にCIで起きた誤検出の回帰test。custom section内の任意の3 byteが
+  // drive文字のpatternへ一致してはいけません。
+  const noiseSection = Buffer.from([0x00, 0x08, 0x01, 0x6e, 0x6f, 0x3a, 0x5c, 0x2f, 0x81, 0x00]);
+  const noise = entries().map((entry) => entry.name.endsWith(".wasm")
+    ? { ...entry, data: Buffer.concat([minimalWasm(), noiseSection]) }
+    : entry);
+  await withArchive(noise, (archive) => verifyTextlintPluginPackage(archive));
 });
 
 test("公開manifestの未知fieldを拒否する", async () => {

@@ -38,52 +38,21 @@ impl<'a> CancellationCheckpoint<'a> {
     }
 }
 
+/// Sorts stably after one cancellation checkpoint.
+///
+/// The sort itself is not interruptible: the standard stable sort over an
+/// in-memory vector finishes fast enough that a host cannot observe a finer
+/// cancellation granularity, and an interruptible reimplementation would have
+/// to allocate per recursion step.
 pub(crate) fn sort_by_cancellable<T>(
-    values: &mut Vec<T>,
+    values: &mut [T],
     compare: &mut impl FnMut(&T, &T) -> Ordering,
     checkpoint: &mut CancellationCheckpoint<'_>,
 ) -> Result<(), ()> {
     if checkpoint.is_cancelled() {
         return Err(());
     }
-    if values.len() < 2 {
-        return Ok(());
-    }
-    let middle = values.len() / 2;
-    let mut right = values.split_off(middle);
-    let mut left = std::mem::take(values);
-    sort_by_cancellable(&mut left, compare, checkpoint)?;
-    sort_by_cancellable(&mut right, compare, checkpoint)?;
-
-    values.reserve(left.len() + right.len());
-    let mut left = left.into_iter().peekable();
-    let mut right = right.into_iter().peekable();
-    while left.peek().is_some() && right.peek().is_some() {
-        if checkpoint.is_cancelled() {
-            return Err(());
-        }
-        if compare(
-            left.peek().expect("left is non-empty"),
-            right.peek().expect("right is non-empty"),
-        ) != Ordering::Greater
-        {
-            values.push(left.next().expect("left is non-empty"));
-        } else {
-            values.push(right.next().expect("right is non-empty"));
-        }
-    }
-    for value in left {
-        if checkpoint.is_cancelled() {
-            return Err(());
-        }
-        values.push(value);
-    }
-    for value in right {
-        if checkpoint.is_cancelled() {
-            return Err(());
-        }
-        values.push(value);
-    }
+    values.sort_by(|left, right| compare(left, right));
     Ok(())
 }
 
@@ -145,24 +114,23 @@ mod tests {
     }
 
     #[test]
-    fn cancellable_sort_checks_at_a_bounded_work_interval() {
-        struct CancelAfterFirstCheckpoint(AtomicUsize);
+    fn cancellable_sort_observes_cancellation_before_sorting() {
+        struct AlwaysCancel;
 
-        impl CancellationCheck for CancelAfterFirstCheckpoint {
+        impl CancellationCheck for AlwaysCancel {
             fn is_cancelled(&self) -> bool {
-                self.0.fetch_add(1, Ordering::Relaxed) >= 1
+                true
             }
         }
 
-        let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
-        let mut values = (0..CHECKPOINT_INTERVAL * 2).rev().collect::<Vec<_>>();
+        let mut values = vec![3_usize, 1, 2];
         let result = sort_by_cancellable(
             &mut values,
             &mut Ord::cmp,
-            &mut CancellationCheckpoint::new(&cancellation),
+            &mut CancellationCheckpoint::new(&AlwaysCancel),
         );
 
         assert_eq!(result, Err(()));
-        assert_eq!(cancellation.0.load(Ordering::Relaxed), 2);
+        assert_eq!(values, vec![3, 1, 2], "取消時は入力を変更しません");
     }
 }
