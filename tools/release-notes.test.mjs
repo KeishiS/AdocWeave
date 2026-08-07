@@ -46,7 +46,8 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /どちらもv0\.34\.0から変更していません/);
+  assert.match(notes, /v0\.34\.0から1つ進めました/);
+  assert.match(notes, /Worker protocol versionは2で変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
   assert.match(notes, /Rust APIの破壊的変更：ありません/);
   assert.match(notes, /公開Rust APIは変更していません/);
@@ -58,7 +59,10 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /``schemaVersion``はrequestの項目ではありません/);
   assert.match(notes, /requestには追加しないでください/);
   assert.doesNotMatch(notes, /``schemaVersion``を10へ更新/);
-  assert.match(notes, /``PROTOCOL_SCHEMA_VERSION = 10``/);
+  assert.match(
+    notes,
+    new RegExp(`\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\``),
+  );
   assert.match(notes, /保存済みの結果やcache/);
   assert.match(notes, new RegExp(textlintContract.compatibility.nodeEngine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(notes, new RegExp(textlintContract.compatibility.textlintVersion.replaceAll(".", "\\.")));

@@ -94,7 +94,8 @@ fn expanded_request(corpus: &Value) -> Value {
             "entries": [{
                 "citationKey": "smith2024",
                 "text": "Smith (2024)",
-                "label": "Smith 2024"
+                "label": "Smith 2024",
+                "number": 1
             }]
         }
     });

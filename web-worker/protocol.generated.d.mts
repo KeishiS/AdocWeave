@@ -153,6 +153,7 @@ export interface GeneratedBibliographyEntry {
   citationKey: string;
   text: string;
   label?: string | null;
+  number?: number | null;
 }
 
 export interface AnalysisLimits {
@@ -618,7 +619,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 10;
+export declare const PROTOCOL_SCHEMA_VERSION: 11;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.35.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

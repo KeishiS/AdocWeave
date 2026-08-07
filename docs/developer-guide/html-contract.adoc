@@ -72,6 +72,11 @@ literal textとしてescapeし、inline書式や属性参照を再解析しま�
 順序付きlistの``start``、``reversed``および番号形式は型付きpresentationへ保持しますが、公開属性allowlistに
 含まれない``start``、``reversed``、``type``および``style``へ変換しません。HTMLでは通常の``ol``として出力します。
 
+利用側アプリが渡す参考文献一覧も同じ制限に従います。項目に番号を渡した場合は``ol``、渡さない場合は``ul``で
+出力し、番号の値はHTMLへ書き込みません。表示する番号は``ol``が振るものだけです。そのため利用側が渡す番号は、
+出力対象として残った項目の並び順で1から始まる連番でなければならず、満たさない場合は一覧を出力しません。
+詳しくはxref:server-execution.adoc#render-inputs[変換入力]を参照してください。
+
 == URLとリソース
 
 URLは由来を示すcontextとともに``RenderPolicy.active_urls``の``ActiveUrlPolicy``で検査します。

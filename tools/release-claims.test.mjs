@@ -62,6 +62,6 @@ test("WASM requestのversion fieldとprotocol schemaの識別子を区別する"
   const requestFields = protocol.request.fields.map((field) => field.json);
   assert.ok(requestFields.includes("packageVersion"));
   assert.equal(requestFields.includes("schemaVersion"), false);
-  assert.equal(protocol.schemaVersion, 10);
+  assert.equal(protocol.schemaVersion, 11);
   assert.equal(protocol.request.unknownFields, "reject");
 });

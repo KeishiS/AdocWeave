@@ -35,6 +35,7 @@ pub struct GeneratedBibliographyEntry {
     citation_key: String,
     text: String,
     label: Option<String>,
+    number: Option<u32>,
 }
 
 impl GeneratedBibliographyEntry {
@@ -44,6 +45,7 @@ impl GeneratedBibliographyEntry {
             citation_key: citation_key.into(),
             text: text.into(),
             label: None,
+            number: None,
         }
     }
 
@@ -51,6 +53,21 @@ impl GeneratedBibliographyEntry {
     #[must_use]
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Sets the position this entry takes in a numbered bibliography.
+    ///
+    /// Numbering is a property of the whole bibliography, not of one entry:
+    /// either every entry carries a number or none does. The numbers that
+    /// remain after invalid, duplicate and shadowed entries are dropped must
+    /// read `1, 2, …, n` in the order the entries appear. A bibliography that
+    /// breaks either rule is reported and not rendered at all, because a list
+    /// whose numbers disagree with the citations in the body would send the
+    /// reader to the wrong entry.
+    #[must_use]
+    pub const fn with_number(mut self, number: u32) -> Self {
+        self.number = Some(number);
         self
     }
 
@@ -65,5 +82,10 @@ impl GeneratedBibliographyEntry {
 
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    /// Position this entry takes in a numbered bibliography, if it has one.
+    pub const fn number(&self) -> Option<u32> {
+        self.number
     }
 }

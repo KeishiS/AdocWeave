@@ -15,6 +15,7 @@ pub(super) struct PreparedGeneratedBibliography<'input> {
     title: &'input str,
     entries: Vec<PreparedGeneratedBibliographyEntry<'input>>,
     entry_by_key: BTreeMap<&'input str, usize>,
+    numbered: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -123,11 +124,68 @@ pub(super) fn prepare<'input>(
         }
     }
 
-    (!entries.is_empty()).then_some(PreparedGeneratedBibliography {
+    if entries.is_empty() {
+        return None;
+    }
+    let numbered = match numbering(&entries) {
+        Ok(numbered) => numbered,
+        Err(reason) => {
+            let mut diagnostic = render_input_diagnostic(
+                "invalid-generated-bibliography-numbering",
+                "generated bibliography",
+                &format!(
+                    "generated bibliography is not rendered because {reason}; the numbers left \
+                     after invalid, duplicate and shadowed entries are dropped must read 1, 2, …, \
+                     n in order, or no entry may carry a number"
+                ),
+                diagnostic_range,
+            );
+            diagnostic.severity = crate::diagnostic::Severity::Error;
+            diagnostics.push(diagnostic);
+            return None;
+        }
+    };
+
+    Some(PreparedGeneratedBibliography {
         title: bibliography.title(),
         entries,
         entry_by_key,
+        numbered,
     })
+}
+
+/// Decides whether the surviving entries form a numbered bibliography.
+///
+/// Every entry carries a number or none does, and the numbers that survive must
+/// count up from one without a gap. Anything else means the list would disagree
+/// with the numbers the document already shows for its citations, so it is
+/// reported instead of rendered.
+fn numbering(entries: &[PreparedGeneratedBibliographyEntry<'_>]) -> Result<bool, String> {
+    let numbered = entries
+        .iter()
+        .filter(|entry| entry.input.number().is_some());
+    let count = numbered.count();
+    if count == 0 {
+        return Ok(false);
+    }
+    if count < entries.len() {
+        return Err(format!(
+            "only {count} of its {} entries carry a number",
+            entries.len()
+        ));
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        let expected = u32::try_from(index + 1)
+            .map_err(|_| "it has more entries than a bibliography number can count".to_owned())?;
+        let actual = entry.input.number().expect("every entry carries a number");
+        if actual != expected {
+            return Err(format!(
+                "entry `{}` is numbered {actual} where {expected} was expected",
+                entry.input.citation_key()
+            ));
+        }
+    }
+    Ok(true)
 }
 
 pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBibliography<'_>) {
@@ -137,7 +195,8 @@ pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBiblio
     BlockWriter::inline_text(output, bibliography.title);
     BlockWriter::end(output, "h2");
     BlockWriter::line_break(output);
-    BlockWriter::start(output, "ul", &[]);
+    let list = if bibliography.numbered { "ol" } else { "ul" };
+    BlockWriter::start(output, list, &[]);
     BlockWriter::line_break(output);
     for entry in &bibliography.entries {
         BlockWriter::start(output, "li", &[]);
@@ -171,7 +230,7 @@ pub(super) fn render(output: &mut String, bibliography: &PreparedGeneratedBiblio
         BlockWriter::end(output, "li");
         BlockWriter::line_break(output);
     }
-    BlockWriter::end(output, "ul");
+    BlockWriter::end(output, list);
     BlockWriter::line_break(output);
     BlockWriter::end(output, "div");
     BlockWriter::line_break(output);

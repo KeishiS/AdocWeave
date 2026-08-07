@@ -95,7 +95,7 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。Worker protocol versionは${protocol.workerProtocolVersion}で、どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。参考文献の項目へ番号を渡す\`\`number\`\`を追加したため、v${PREVIOUS_RELEASE_VERSION}から1つ進めました。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "HTML出力を変更しました。語間に空白を置かない文字の直後では、記法が要求した空白を出力しません。対象は段落内の改行と、inline macroの直前の空白です。日本語、中国語、韓国語の文書で出力が変わります。",

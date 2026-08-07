@@ -294,6 +294,23 @@
       "contractImpact": "core-api,html,conformance,wasm-api"
     },
     {
+      "name": "generated-bibliography-numbered",
+      "source": "See cite:[one] and cite:[two].\n",
+      "expectedHtmlFile": "generated-bibliography-numbered.html",
+      "renderInputs": {
+        "generatedBibliography": {
+          "title": "References",
+          "entries": [
+            { "citationKey": "one", "text": "First entry.", "number": 1 },
+            { "citationKey": "two", "text": "Second entry.", "number": 2 }
+          ]
+        }
+      },
+      "compatibility": "approved-adocweave-output",
+      "rationale": "番号を渡した参考文献一覧はolとして出力し、番号の値そのものはHTMLへ書き込まない",
+      "contractImpact": "core-api,html,conformance,wasm-api"
+    },
+    {
       "name": "media-backend-presentation",
       "sourceFile": "media-backend-presentation.adoc",
       "expectedHtmlFile": "media-backend-presentation.html",
