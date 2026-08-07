@@ -19,10 +19,6 @@ args = ["fmt", "--manifest-path", "editors/zed/Cargo.toml"]
 description = "Format workspace and Zed extension Rust source files"
 dependencies = ["fmt-workspace", "fmt-zed"]
 
-[tasks.format]
-description = "Alias for fmt"
-alias = "fmt"
-
 [tasks.fmt-check-workspace]
 description = "Check workspace Rust formatting without changing files"
 command = "cargo"
@@ -42,10 +38,6 @@ args = [
 [tasks.fmt-check]
 description = "Check all Rust formatting without changing files"
 dependencies = ["fmt-check-workspace", "fmt-check-zed"]
-
-[tasks.format-check]
-description = "Alias for fmt-check"
-alias = "fmt-check"
 
 [tasks.check]
 description = "Type-check all workspace targets and features"
@@ -105,13 +97,11 @@ dependencies = [
 ]
 
 [tasks.protocol-generated-check]
-dependencies = ["protocol-rust-codegen-test"]
-command = "node"
-args = ["tools/generate-protocol.mjs", "--check"]
-
-[tasks.protocol-rust-codegen-test]
-command = "node"
-args = ["--test", "tools/protocol-rust-codegen.test.mjs"]
+script_runner = "@shell"
+script = '''
+node --test tools/protocol-rust-codegen.test.mjs
+node tools/generate-protocol.mjs --check
+'''
 
 [tasks.protocol-corpus-check]
 command = "cargo"
@@ -127,13 +117,11 @@ args = ["--test", "web-worker/protocol-wasm.test.mjs"]
 description = "Verify release train versions, targets, tags, and distribution manifest schema"
 dependencies = [
   "release-version-check",
-  "release-metadata-test",
-  "release-notes-test",
   "release-workflow-policy",
-  "semver-gate-test",
 ]
 script_runner = "@shell"
 script = '''
+node --test tools/release-metadata.test.mjs tools/release-notes.test.mjs
 args=""
 metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-release-metadata.XXXXXX.json")"
 zed_metadata="$(mktemp "${TMPDIR:-/tmp}/adocweave-zed-release-metadata.XXXXXX.json")"
@@ -152,67 +140,37 @@ node tools/generate-third-party-notices.mjs "$notice"
 
 [tasks.release-version-check]
 description = "Verify the explicit release version allowlist and generated outputs"
-dependencies = ["release-version-sync-test"]
-command = "node"
-args = ["tools/sync-release-version.mjs", "--check"]
-
-[tasks.release-version-sync-test]
-description = "Test deterministic release version updates and fail-closed behavior"
-command = "node"
-args = ["--test", "tools/sync-release-version.test.mjs"]
-
-[tasks.release-metadata-test]
-description = "Test canonical release manifest, SPDX SBOM, and checksum generation"
-command = "node"
-args = ["--test", "tools/release-metadata.test.mjs"]
+script_runner = "@shell"
+script = '''
+node --test tools/sync-release-version.test.mjs
+node tools/sync-release-version.mjs --check
+'''
 
 [tasks.semver-check]
 description = "Compare the candidate public Rust API and Release Notes claims against the previous stable tag"
-dependencies = ["semver-gate-test", "release-claims-test"]
 script_runner = "@shell"
 script = '''
+node --test tools/semver-gate.test.mjs tools/release-claims.test.mjs
 node tools/semver-gate.mjs
 node tools/release-claims.mjs
 '''
 
-[tasks.release-claims-test]
-description = "Test how Release Notes claims are compared with the baseline contracts"
-command = "node"
-args = ["--test", "tools/release-claims.test.mjs"]
-
-[tasks.semver-gate-test]
-description = "Test release step derivation, baseline selection, and fail-closed behavior"
-command = "node"
-args = ["--test", "tools/semver-gate.test.mjs"]
-
 [tasks.dependency-governance]
 description = "Audit every dependency boundary, license, source, advisory, and exception"
-dependencies = ["dependency-governance-test"]
 script_runner = "@shell"
 script = '''
+node --test \
+  tools/verify-dependency-boundaries.test.mjs \
+  tools/verify-textlint-dependencies.test.mjs \
+  tools/verify-textlint-plugin-dependencies.test.mjs \
+  tools/verify-vscode-dependencies.test.mjs
 tools/dependency-governance.sh
 '''
-
-[tasks.dependency-governance-test]
-description = "Test dependency boundary and exception policy"
-command = "node"
-args = [
-  "--test",
-  "tools/verify-dependency-boundaries.test.mjs",
-  "tools/verify-textlint-dependencies.test.mjs",
-  "tools/verify-textlint-plugin-dependencies.test.mjs",
-  "tools/verify-vscode-dependencies.test.mjs",
-]
 
 [tasks.third-party-notices]
 description = "Generate the release third-party notices from locked Cargo metadata"
 command = "node"
 args = ["tools/generate-third-party-notices.mjs", "target/THIRD_PARTY_NOTICES.adoc"]
-
-[tasks.release-notes-test]
-description = "Verify mandatory GitHub Release note sections"
-command = "node"
-args = ["--test", "tools/release-notes.test.mjs"]
 
 [tasks.release-workflow-policy]
 description = "Verify action pins, write-permission scope, and secret access in workflows"
@@ -432,24 +390,17 @@ description = "Build the deterministic npm-compatible textlint plugin archive"
 command = "bash"
 args = ["tools/package-textlint-plugin-release.sh"]
 
-[tasks.textlint-plugin-package-contract-unit]
-description = "Test the package contract, generated stage, and independent archive verifier"
-command = "node"
-args = [
-  "--test",
-  "packages/textlint-plugin-asciidoc/package-contract.test.mjs",
-  "packages/textlint-plugin-asciidoc/package-stage.test.mjs",
-  "packages/textlint-plugin-asciidoc/package-archive.test.mjs",
-]
-
 [tasks.textlint-plugin-package-contract]
 description = "Verify the staged textlint plugin archive against its independent public contract"
 dependencies = [
-  "textlint-plugin-package-contract-unit",
   "package-textlint-plugin-release",
 ]
 script_runner = "@shell"
 script = '''
+node --test \
+  packages/textlint-plugin-asciidoc/package-contract.test.mjs \
+  packages/textlint-plugin-asciidoc/package-stage.test.mjs \
+  packages/textlint-plugin-asciidoc/package-archive.test.mjs
 version="$(node --input-type=module -e "import manifest from './release-manifest.json' with { type: 'json' }; process.stdout.write(manifest.packageVersion)")"
 node tools/verify-textlint-plugin-package.mjs \
   "target/distrib/adocweave-textlint-plugin-asciidoc-$version.tgz"
@@ -1092,10 +1043,6 @@ dependencies = [
   "nix-package-check",
 ]
 
-[tasks.ci]
-description = "Alias for the canonical local pull request gate"
-alias = "verify"
-
 [tasks.verify-with-global-candidate]
 description = "Run the pull request gate together with the global candidate acceptance CI performs"
 dependencies = [
@@ -1106,7 +1053,7 @@ dependencies = [
 [tasks.release-check]
 description = "Run the publish gate and report release WASM artifact sizes"
 dependencies = [
-  "ci",
+  "verify",
   "semver-check",
   "test-profile-release",
   "wasm-size",
@@ -1115,6 +1062,3 @@ dependencies = [
   "dist-plan",
 ]
 
-[tasks.release-gate]
-description = "Canonical alias for the complete publish gate"
-alias = "release-check"

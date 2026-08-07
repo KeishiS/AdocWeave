@@ -251,8 +251,8 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/dependency-governance.sh",
   "tools/generate-third-party-notices.mjs",
   "tools/verify-dependency-boundaries.mjs",
-  // `dependency-governance` runs `dependency-governance-test` first, so these
-  // decide what the audit accepts just as the scripts they test do.
+  // `dependency-governance` runs these tests before the audit, so they decide
+  // what the audit accepts just as the scripts they test do.
   "tools/verify-dependency-boundaries.test.mjs",
   "tools/verify-duplicate-dependencies.mjs",
   "tools/verify-vscode-dependencies.mjs",
