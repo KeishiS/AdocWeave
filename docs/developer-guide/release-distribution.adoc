@@ -193,10 +193,10 @@ xref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 cargo make platform-contract
 cargo make release-contract
 cargo make dist-plan
-cargo make release-gate
+cargo make release-check
 ----
 
-``release-gate``は公開前の完全な検査です。source、配布物および導入経路の検査に加えて、直前のstable tagとの
+``release-check``は公開前の完全な検査です。source、配布物および導入経路の検査に加えて、直前のstable tagとの
 公開Rust API差分とRelease Notesに記載した公開仕様を``semver-check``で照合します。GitHub Actionsのsource qualityも、
 変更pathに応じて実際の差分検査または対象外であることの記録を完了した``semver`` jobだけを成功として集約します。
 
