@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.35.0";
+export const PREVIOUS_RELEASE_VERSION = "0.36.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#508：利用側アプリが生成した参考文献一覧を、番号付きで描画できるようにしました。項目へ番号を渡すと``ol``として出力するため、本文の``[1]``から一覧の該当項目をたどれます。",
+  "#524・#525：リリース基盤の簡素化とコアmoduleの保守性改善を進めました。利用者から見える機能とHTML出力は変わりません。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -94,14 +94,9 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。参考文献の項目へ番号を渡す\`\`number\`\`を追加したため、v${PREVIOUS_RELEASE_VERSION}から1つ進めました。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。v${PREVIOUS_RELEASE_VERSION}から変更していません。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
-  "Rust APIへ``GeneratedBibliographyEntry::with_number``と``number``を追加しました。番号を渡した参考文献一覧は``ol``、渡さない一覧は従来どおり``ul``として出力します。",
-  "WASM protocolの``renderInputs.generatedBibliography.entries``へ任意の``number``を追加しました。既定値はnullで、渡さない場合の動作は変わりません。",
-  "番号は一覧全体の性質として扱います。すべての項目が番号を持つか、どの項目も持たないかのどちらかで、除外を適用した後に残る番号は項目の並び順で1、2、…、nと読める必要があります。",
-  "この条件を満たさない場合は``invalid-generated-bibliography-numbering``をerror severityで報告し、参考文献一覧を出力しません。番号を捨てて``ul``へ戻す動作は用意していません。",
-  "番号の値そのものはHTMLへ書き込みません。``li``の``value``属性は使わないため、HTML出力の属性allowlistは変更していません。",
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",
   `${UNCHANGED_CONTRACTS.join("、")}は変更していません。`,
   "GitHub Release以外のregistryへpackageまたは拡張を公開しません。",
@@ -109,7 +104,6 @@ const contractNotes = [
 
 const migrationNotes = [
   `Browser向けWASMのJSON requestを直接構築している場合は、${RELEASE_NOTES_VERSION}のpackageとAPIへ更新し、requestの\`\`packageVersion\`\`も\`\`${RELEASE_NOTES_VERSION}\`\`にそろえてください。\`\`schemaVersion\`\`はrequestの項目ではありません。requestには追加しないでください。保存済みの結果やcacheは、packageが公開する\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\`を使って区別してください。`,
-  "番号styleの引用を使っている利用側アプリは、本文の引用表示を組み立てるときに決めた番号を、``with_number``（WASMでは``number``）で参考文献の項目へも渡してください。渡さない場合の出力は従来どおりです。",
   `CLI、LSP、browser、Zed、VS Codeおよびtextlint向け配布物のversionを${RELEASE_NOTES_VERSION}へそろえてください。バージョンの異なる配布物を混ぜて使えないため、更新する場合はすべてを入れ替えます。`,
   ...breakingMigrationNotes(breakingRustApi.changes),
 ];
