@@ -1,6 +1,6 @@
 //! Metadata, input, column, and presentation resolution for tables.
 
-use crate::parser::{BlockMetadata, ElementAttribute};
+use crate::block_model::{BlockMetadata, ElementAttribute};
 use crate::source::TextRange;
 
 use super::model::{

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::parser::{
+use crate::block_model::{
     AstBlock, AstDocument, ElementAttribute, Heading, HeadingKind, MetadataValue, SourceInfo,
 };
 use crate::source::TextRange;
@@ -179,13 +179,14 @@ pub(crate) fn build_identifiers(
         if checkpoint.is_cancelled() {
             return std::ops::ControlFlow::Break(());
         }
-        let crate::walker::SemanticNode::Inline(crate::inline::Inline::Macro(anchor)) = node else {
+        let crate::walker::SemanticNode::Inline(crate::inline_model::Inline::Macro(anchor)) = node
+        else {
             return std::ops::ControlFlow::Continue(());
         };
         if matches!(
             anchor.kind,
-            crate::inline::StandardMacroKind::Anchor
-                | crate::inline::StandardMacroKind::BibliographyAnchor
+            crate::inline_model::StandardMacroKind::Anchor
+                | crate::inline_model::StandardMacroKind::BibliographyAnchor
         ) && !anchor.target.is_empty()
         {
             inline_anchors.push(anchor);
@@ -380,12 +381,14 @@ fn block_label(block: &AstBlock) -> String {
             |name| format!("{name} source block"),
         ),
         AstBlock::Verbatim(value) => match &value.kind {
-            crate::parser::VerbatimKind::Source(source) => source.language.as_ref().map_or_else(
-                || "source block".to_owned(),
-                |name| format!("{name} source block"),
-            ),
-            crate::parser::VerbatimKind::Listing => "listing block".to_owned(),
-            crate::parser::VerbatimKind::Literal => "literal block".to_owned(),
+            crate::block_model::VerbatimKind::Source(source) => {
+                source.language.as_ref().map_or_else(
+                    || "source block".to_owned(),
+                    |name| format!("{name} source block"),
+                )
+            }
+            crate::block_model::VerbatimKind::Listing => "listing block".to_owned(),
+            crate::block_model::VerbatimKind::Literal => "literal block".to_owned(),
         },
         AstBlock::List(value) => value
             .items
@@ -461,7 +464,7 @@ pub enum DocumentElement<'document> {
     HeadingText(&'document Heading),
     SourceLanguage(SourceInfo),
     SourceAttribute(SourceInfo),
-    MetadataTitle(&'document crate::parser::BlockTitle),
+    MetadataTitle(&'document crate::block_model::BlockTitle),
     MetadataId(&'document MetadataValue),
     MetadataRole(&'document MetadataValue),
     MetadataOption(&'document MetadataValue),
@@ -507,17 +510,17 @@ pub(crate) fn document_element_at_ast(
                 }))
             }
             AstBlock::Verbatim(block)
-                if matches!(&block.kind, crate::parser::VerbatimKind::Source(source) if source.language_range.is_some_and(|range| contains(range, offset, true))) =>
+                if matches!(&block.kind, crate::block_model::VerbatimKind::Source(source) if source.language_range.is_some_and(|range| contains(range, offset, true))) =>
             {
-                let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+                let crate::block_model::VerbatimKind::Source(source) = &block.kind else {
                     unreachable!("match guard ensures source block")
                 };
                 Some(DocumentElement::SourceLanguage(source.clone()))
             }
             AstBlock::Verbatim(block)
-                if matches!(&block.kind, crate::parser::VerbatimKind::Source(source) if contains(source.attribute_range, offset, false)) =>
+                if matches!(&block.kind, crate::block_model::VerbatimKind::Source(source) if contains(source.attribute_range, offset, false)) =>
             {
-                let crate::parser::VerbatimKind::Source(source) = &block.kind else {
+                let crate::block_model::VerbatimKind::Source(source) = &block.kind else {
                     unreachable!("match guard ensures source block")
                 };
                 Some(DocumentElement::SourceAttribute(source.clone()))
@@ -679,7 +682,7 @@ fn section_symbol_checked(
 }
 
 fn list_symbols_checked(
-    list: &crate::parser::ListBlock,
+    list: &crate::block_model::ListBlock,
     is_cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Vec<DocumentSymbol>, ()> {
     let mut symbols = Vec::with_capacity(list.items.len());

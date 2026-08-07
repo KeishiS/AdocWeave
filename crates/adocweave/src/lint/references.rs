@@ -21,7 +21,7 @@ pub(super) fn lint_links_and_references(
 }
 
 pub(super) fn lint_links_and_references_with_observer<'document>(
-    document: &'document crate::parser::AstDocument,
+    document: &'document crate::block_model::AstDocument,
     authored_url_policy: &AuthoredUrlPolicy,
     sink: &mut LintDiagnosticSink<'_>,
     mut observe: impl FnMut(crate::walker::SemanticNode<'document>),
@@ -34,7 +34,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
         targets.insert(target.id.clone());
     }
     fn inspect(
-        inline: &crate::inline::Inline,
+        inline: &crate::inline_model::Inline,
         targets: &BTreeSet<String>,
         authored_url_policy: &AuthoredUrlPolicy,
         sink: &mut LintDiagnosticSink<'_>,
@@ -42,7 +42,7 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
         if sink.should_stop() {
             return ControlFlow::Break(());
         }
-        use crate::inline::Inline;
+        use crate::inline_model::Inline;
         use crate::reference::ReferenceKey;
         match inline {
             Inline::Link(link) => {
@@ -71,10 +71,10 @@ pub(super) fn lint_links_and_references_with_observer<'document>(
             Inline::Macro(node)
                 if matches!(
                     node.kind,
-                    crate::inline::StandardMacroKind::Image
-                        | crate::inline::StandardMacroKind::Icon
-                        | crate::inline::StandardMacroKind::Audio
-                        | crate::inline::StandardMacroKind::Video
+                    crate::inline_model::StandardMacroKind::Image
+                        | crate::inline_model::StandardMacroKind::Icon
+                        | crate::inline_model::StandardMacroKind::Audio
+                        | crate::inline_model::StandardMacroKind::Video
                 ) && !authored_url_policy.allows(&node.target) =>
             {
                 sink.emit(INVALID_URL_SCHEME, node.target_range, || {

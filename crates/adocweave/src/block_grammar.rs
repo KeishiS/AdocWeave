@@ -1,7 +1,7 @@
 //! Block-level lexical recognition, isolated from construction and lowering.
 
 use crate::block_model::{BlockMetadata, ElementAttribute, ExplicitAnchor, MetadataValue};
-use crate::inline::MathLanguage;
+use crate::inline_model::MathLanguage;
 use crate::source::{TextRange, TextSize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

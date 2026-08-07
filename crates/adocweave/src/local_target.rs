@@ -1,6 +1,6 @@
 //! Typed, I/O-free discovery of authored local-file candidates.
 
-use crate::inline::{Link, Reference, ReferenceDestination};
+use crate::inline_model::{Link, Reference, ReferenceDestination};
 use crate::reference::ReferenceKey;
 use crate::resource::{ResourcePurpose, ResourceReference};
 use crate::source::TextRange;

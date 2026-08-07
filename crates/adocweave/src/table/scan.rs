@@ -723,14 +723,14 @@ mod tests {
     #[test]
     fn table_input_spec_resolves_delimiter_format_and_separator_precedence() {
         let range = range("[format=tsv,separator=;]");
-        let metadata = crate::parser::BlockMetadata {
+        let metadata = crate::block_model::BlockMetadata {
             attributes: vec![
-                crate::parser::ElementAttribute {
+                crate::block_model::ElementAttribute {
                     name: Some("format".to_owned()),
                     value: "tsv".to_owned(),
                     range,
                 },
-                crate::parser::ElementAttribute {
+                crate::block_model::ElementAttribute {
                     name: Some("separator".to_owned()),
                     value: ";".to_owned(),
                     range,
@@ -752,7 +752,7 @@ mod tests {
         for (delimiter, metadata, expected, problem_count) in [
             (
                 ",===",
-                crate::parser::BlockMetadata::default(),
+                crate::block_model::BlockMetadata::default(),
                 TableInputSpec {
                     format: TableFormat::Csv,
                     separator: ',',
@@ -761,7 +761,7 @@ mod tests {
             ),
             (
                 ":===",
-                crate::parser::BlockMetadata::default(),
+                crate::block_model::BlockMetadata::default(),
                 TableInputSpec {
                     format: TableFormat::Dsv,
                     separator: ':',
@@ -770,7 +770,7 @@ mod tests {
             ),
             (
                 "!===",
-                crate::parser::BlockMetadata::default(),
+                crate::block_model::BlockMetadata::default(),
                 TableInputSpec {
                     format: TableFormat::Psv,
                     separator: '!',

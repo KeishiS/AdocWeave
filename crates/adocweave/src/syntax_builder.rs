@@ -1,10 +1,10 @@
 //! Builds lossless syntax nodes from recognized semantic facts.
 
-use crate::inline::Inline;
-use crate::parser::{
+use crate::block_model::{
     BlockProblemKind, DelimitedBlock, DelimitedBlockKind, Heading, ListBlock, ListItem, MathBlock,
     MathProblemKind, Paragraph, SourceBlock,
 };
+use crate::inline_model::Inline;
 use crate::source::TextRange;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 

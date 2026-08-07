@@ -1,4 +1,4 @@
-use crate::inline::Inline;
+use crate::inline_model::Inline;
 use crate::source::TextRange;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,7 +103,7 @@ impl Default for TablePresentation {
 pub enum TableCellContent {
     Inlines(Vec<Inline>),
     Verbatim(String),
-    AsciiDoc(Vec<crate::parser::AstBlock>),
+    AsciiDoc(Vec<crate::block_model::AstBlock>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

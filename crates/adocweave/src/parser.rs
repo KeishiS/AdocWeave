@@ -9,7 +9,7 @@ use crate::block_grammar::{
     parse_math_attribute, parse_source_attribute, recognize_line, unsupported_reason,
     valid_anchor_id,
 };
-pub use crate::block_model::*;
+use crate::block_model::*;
 use crate::block_sequence::{
     BlockConsumption, BlockContext, BlockCursor, BlockFacts, BlockInput, BlockLocation,
     BlockRecognition, BlockSequenceOutput, ParseDepth, RootBlockSequenceOutput,
@@ -17,8 +17,9 @@ use crate::block_sequence::{
 use crate::budget::{BudgetExceeded, ParseBudget, ParseBudgetCharge};
 use crate::delimiter::{DelimitedContentModel, DelimiterSpec};
 use crate::document_header::DocumentHeaderState;
-use crate::inline::{Inline, InlineParseConfig};
+use crate::inline::InlineParseConfig;
 use crate::inline_grammar::parse as parse_inlines;
+use crate::inline_model::Inline;
 use crate::limits::AnalysisLimits;
 use crate::list_parser::{FlatListItem, ParsedListMarker};
 use crate::parser_support::{ParseFailure, ParseState};
@@ -2121,7 +2122,7 @@ fn split_hard_breaks(inlines: Vec<Inline>) -> Vec<Inline> {
     output
 }
 
-fn split_hard_break_text(text: crate::inline::InlineText, output: &mut Vec<Inline>) {
+fn split_hard_break_text(text: crate::inline_model::InlineText, output: &mut Vec<Inline>) {
     let bytes = text.value.as_bytes();
     let mut cursor = 0;
     for (newline, _) in text.value.match_indices('\n') {
@@ -2135,7 +2136,7 @@ fn split_hard_break_text(text: crate::inline::InlineText, output: &mut Vec<Inlin
         }
         let marker_start = marker_end - 2;
         if cursor < marker_start {
-            output.push(Inline::Text(crate::inline::InlineText {
+            output.push(Inline::Text(crate::inline_model::InlineText {
                 range: relative_range(text.range, cursor, marker_start),
                 value: text.value[cursor..marker_start].to_owned(),
             }));
@@ -2147,7 +2148,7 @@ fn split_hard_break_text(text: crate::inline::InlineText, output: &mut Vec<Inlin
         cursor = newline_end;
     }
     if cursor < text.value.len() {
-        output.push(Inline::Text(crate::inline::InlineText {
+        output.push(Inline::Text(crate::inline_model::InlineText {
             range: relative_range(text.range, cursor, text.value.len()),
             value: text.value[cursor..].to_owned(),
         }));

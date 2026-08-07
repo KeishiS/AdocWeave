@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
+use crate::block_model::{AstBlock, HeadingKind};
 use crate::diagnostic::RelatedInformation;
 use crate::document::heading_id_base;
-use crate::parser::{AstBlock, HeadingKind};
 use crate::source::TextRange;
 
 use super::{

@@ -1,11 +1,11 @@
 //! Projects parser facts into syntax diagnostics.
 
 use crate::attributes::{AttributeProblem, AttributeProblemKind};
-use crate::inline::{InlineProblem, InlineProblemKind};
-use crate::parser::{
+use crate::block_model::{
     AstBlock, BlockProblem, BlockProblemKind, DelimitedBlockKind, HeadingProblem, ListBlock,
     ListProblemKind, MathProblemKind,
 };
+use crate::inline_model::{InlineProblem, InlineProblemKind};
 use crate::source::TextRange;
 use crate::syntax::{SyntaxFix, SyntaxIssue, SyntaxIssueClass};
 
@@ -201,9 +201,9 @@ fn block_issues(
         }
         AstBlock::Verbatim(block) => {
             let name = match block.kind {
-                crate::parser::VerbatimKind::Literal => "literal",
-                crate::parser::VerbatimKind::Listing => "listing",
-                crate::parser::VerbatimKind::Source(_) => "source",
+                crate::block_model::VerbatimKind::Literal => "literal",
+                crate::block_model::VerbatimKind::Listing => "listing",
+                crate::block_model::VerbatimKind::Source(_) => "source",
             };
             block_problem_issues(&mut block.problems, name, output, checkpoint)?;
         }
@@ -345,8 +345,8 @@ fn list_issues(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inline::InlineProblemKind as Inline;
-    use crate::parser::BlockProblemKind as Block;
+    use crate::block_model::BlockProblemKind as Block;
+    use crate::inline_model::InlineProblemKind as Inline;
 
     fn checkpoint() -> crate::cancellation::CancellationCheckpoint<'static> {
         crate::cancellation::CancellationCheckpoint::new(&crate::core::NeverCancel)
@@ -538,7 +538,7 @@ mod tests {
     /// replacement would be guessing.
     #[test]
     fn only_a_non_canonical_list_separator_proposes_a_replacement() {
-        use crate::parser::ListProblemKind as List;
+        use crate::block_model::ListProblemKind as List;
 
         let issues = |kind| {
             let mut list = ListBlock {
