@@ -63,7 +63,9 @@ export function readTarMembers(tgzBytes, { maximumTarBytes = 64 * 1024 * 1024 } 
 
 function assertNoMachinePath(bytes) {
   const text = bytes.toString("latin1");
-  if (/(?:^|[^A-Za-z0-9_])\/(?:workspace|home|Users|tmp|private\/tmp|builds?|runner|__w)\//.test(text) || /[A-Za-z]:\\/.test(text)) fail("WebAssembly contains a machine-specific path");
+  const match = text.match(/(?:^|[^A-Za-z0-9_])(\/(?:workspace|home|Users|tmp|private\/tmp|builds?|runner|__w)\/[!-~]{0,120})/) ??
+    text.match(/([A-Za-z]:\\[!-~]{0,120})/);
+  if (match) fail(`WebAssembly contains a machine-specific path: ${match[1]}`);
 }
 
 export async function verifyTextlintPluginPackage(archivePath, { maximumPackedBytes, maximumUnpackedBytes } = {}) {
