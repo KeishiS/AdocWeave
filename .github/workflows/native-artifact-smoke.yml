@@ -10,6 +10,13 @@ on:
 permissions:
   contents: read
 
+# A silent registry stall must fail within minutes instead of holding the job
+# until its timeout. These bounds apply to every npm invocation in this run.
+env:
+  npm_config_fetch_retries: "3"
+  npm_config_fetch_retry_maxtimeout: "30000"
+  npm_config_fetch_timeout: "120000"
+
 jobs:
   smoke:
     strategy:

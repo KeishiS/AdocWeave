@@ -43,6 +43,13 @@ on:
 permissions:
   contents: read
 
+# A silent registry stall must fail within minutes instead of holding the job
+# until its timeout. These bounds apply to every npm invocation in the gates.
+env:
+  npm_config_fetch_retries: "3"
+  npm_config_fetch_retry_maxtimeout: "30000"
+  npm_config_fetch_timeout: "120000"
+
 jobs:
   dependencies:
     runs-on: ubuntu-24.04
@@ -119,6 +126,8 @@ jobs:
           workspaces: |
             .
             editors/zed
+          cache-directories: |
+            target/npm-cache
           save-if: ${{ inputs.save_build_cache }}
       - name: Adapter source gate execution
         if: ${{ inputs.run_adapters }}
