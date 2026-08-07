@@ -97,7 +97,10 @@ export function validateReadinessEvidence({
 }
 
 function apiUrl(repository, path, query) {
-  const url = new URL(`https://api.github.com/repos/${repository}/${path}`);
+  // The repository itself is addressed with an empty path. Joining a separator
+  // anyway leaves a trailing slash, which GitHub answers with 404.
+  const suffix = path ? `/${path}` : "";
+  const url = new URL(`https://api.github.com/repos/${repository}${suffix}`);
   for (const [name, value] of Object.entries(query ?? {})) url.searchParams.set(name, value);
   return url;
 }
