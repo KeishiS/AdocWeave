@@ -171,8 +171,8 @@ archiveへ埋め込みません。
 公開jobもrepository secretを参照せず、書き込みにはworkflow tokenを使用します。
 Releaseへの書き込みとOIDCは、``github-release`` Environmentを使用するこの公開jobだけへ付与します。
 release用workflowで``contents: write``を持つjobはここだけであり、Environmentのdeployment branch制限に
-よって、許可したbranchから開始したrunだけがこのjobへ到達します。review済みrelease intent、final candidate、
-main candidateの再利用および成果物の完全性をworkflowで検査し、成功後に自動公開します。
+よって、許可したbranchから開始したrunだけがこのjobへ到達します。候補SHAの固定、main candidateの再利用
+および成果物の完全性をworkflowで検査し、成功後に自動公開します。
 Environmentのdeployment branch制限はGitHub上の外部設定であり、workflow自身では検査しません。公開担当者は
 dispatch前にこの設定をRelease checklistで確認します。外部actionは完全なcommit SHAへ固定します。
 
@@ -180,7 +180,7 @@ dispatch前にこの設定をRelease checklistで確認します。外部action�
 間接的に限定されるだけで、repositoryへ書き込める利用者は手元からもtagを作成できます。機械的な強制が必要に
 なった場合の選択肢はxref:adr/0006-direct-stable-releases.adoc[ADR 0006]に記載しています。
 
-公開処理は、finalization Pull Requestのsquash commitに対する検証済みmain candidateを再利用します。成果物を
+公開処理は、dispatchで指定したmain先端commitに対する検証済みmain candidateを再利用します。成果物を
 再構築せず、metadataを再検証してattestationを作成してから、同じSHAへtagを作成します。
 その後private draftへ成果物を追加し、成果物集合が揃った後にstable releaseとして公開します。
 
@@ -303,13 +303,12 @@ Pull Requestの``quality / verify``はsource qualityに加え、変更に応じ�
 candidate検証およびinstallation E2Eが完了してから成功します。
 
 release manifestのバージョンに対応するtagが存在する通常の``main`` pushではsource quality gateを実行し、
-release candidateを構築しません。version同期は``release/intent.json``を新しいversionの``preparing``へ戻し、
-generationを増やします。未公開versionのmain pushでは、配布計画にある全targetとglobal成果物を構築し、metadataと
-installation E2Eを含む完全なcandidateを保存します。candidateが失敗した後の修正コミットでも同じ検査を再実行します。
+release candidateを構築しません。未公開versionのmain pushでは、配布計画にある全targetとglobal成果物を構築し、
+metadataとinstallation E2Eを含む完全なcandidateを保存します。candidateが失敗した後の修正コミットでも
+同じ検査を再実行します。
 
-すべてのrelease対象変更を統合した後、finalization Pull Requestはintentのstateだけを``ready``へ変更します。
-公開workflowはこのPull Requestのsquash commit、dispatch開始時点のmain先端、main向けopen Pull Requestが0件であること、
-同じSHAの成功済みcandidate、tagとReleaseが存在しないことを検査します。検査後はこのSHAを公開identityとして固定し、
+公開workflowは、dispatchで指定した候補SHAが開始時点のmain先端と一致すること、同じSHAの成功済みcandidate、
+tagとReleaseが存在しないことを検査します。検査後はこのSHAを公開identityとして固定し、
 後からmainへcommitが追加されても対象を差し替えません。通常CIのrunは新しいcommitで取り消せますが、
 開始した公開workflowは取り消しません。
 
@@ -317,12 +316,12 @@ installation E2Eを含む完全なcandidateを保存します。candidateが失�
 
 ``main`` candidateはworkflow artifactとして14日間保持します。tagはこの期間内に作成してください。
 期間を過ぎるとartifactが失われ、tagの公開処理は再利用するcandidateを見つけられずに失敗します。
-その場合は新しいpatch versionを準備し、release対象の変更とfinalization Pull Requestを最初から作り直します。
+その場合は新しいpatch versionを準備し、release対象の変更を最初から作り直します。
 
 ``main`` pushのrunは``cancel-in-progress``の対象です。バージョン同期のコミットが``main``へ入った直後に
-別のコミットが入ると、前者のcandidateは取り消されます。finalization Pull Requestを作成する前にrelease対象の
-変更をすべて統合し、main向けのopen Pull Requestを0件にしてください。公開workflowは同時に1件だけ実行し、
-開始時に固定したcandidateを後続runで置き換えません。
+別のコミットが入ると、前者のcandidateは取り消されます。公開workflowをdispatchする前にrelease対象の
+変更をすべて統合し、対象commitのcandidateが成功していることを確認してください。公開workflowは同時に
+1件だけ実行し、開始時に固定したcandidateを後続runで置き換えません。
 
 tag作成前の検査またはattestationに失敗した場合は、tagとReleaseを作成しません。tag作成後にGitHub APIによる
 draft作成、asset uploadまたは公開が失敗した場合は、このrunが作成してIDを記録できたprivate draftだけを削除し、

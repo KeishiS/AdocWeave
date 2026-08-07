@@ -8,10 +8,6 @@
   },
   "targets": [
     {
-      "type": "release-intent",
-      "path": "release/intent.json"
-    },
-    {
       "type": "literal",
       "path": "Cargo.toml",
       "template": "version = \"{version}\"",

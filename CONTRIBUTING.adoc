@@ -212,8 +212,8 @@ browserを使用するため、バージョンは一致しません。``ADOCWEAV
 == Tag
 
 安定版には``vX.Y.Z``形式のtagを使用します。人がtagを直接作成またはpushしてはいけません。
-review済みのfinalization Pull Requestと同じコミットに対するmain candidateを公開workflowが確認した後、
-publisher用GitHub Appがtagを作成します。tagの更新と削除も行いません。
+指定したコミットに対するmain candidateの成功を公開workflowが確認した後、同じworkflowがtagを作成します。
+tagの更新と削除も行いません。
 
 == Release
 
@@ -235,11 +235,8 @@ node tools/sync-release-version.mjs --version X.Y.Z
 node tools/sync-release-version.mjs --check
 ----
 . ``cargo make release-check``を実行し、pull requestの必須checkが成功したことを確認して``main``へ統合します。
-. release対象のPull Requestをすべて統合し、main向けのopen Pull Requestがないことを確認します。
-. ``release/intent.json``の``state``だけを``preparing``から``ready``へ変更するfinalization Pull Requestを作成し、
-  必須checkの成功後にsquash mergeでmainへ統合します。versionとgenerationは変更しません。
-  公開workflowが単一親の候補commitを要求するため、merge commitまたはrebase mergeは使用しません。
-. finalization Pull Requestのsquash commitに対するmain candidateが成功してから、次のように公開workflowを実行します。
+. release対象のPull Requestをすべて統合し、公開対象が``main``の先端であることを確認します。
+. その先端に対するmain candidateが成功してから、次のように公開workflowを実行します。
 +
 [source,console]
 ----
@@ -247,10 +244,9 @@ git fetch upstream main
 candidate_sha="$(git rev-parse upstream/main)"
 gh workflow run release-dispatch.yml \
   --ref main \
-  -f candidate_sha="$candidate_sha" \
-  -f finalization_pr=PULL_REQUEST_NUMBER
+  -f candidate_sha="$candidate_sha"
 ----
-. workflowがfinalization Pull Request、候補SHA、open Pull Request、candidate、既存tagとReleaseを検査し、
+. workflowが候補SHAとdispatch時点のmain先端の一致、同じSHAのcandidate成功、既存tagとReleaseの不在を検査し、
   同じrunでtagとGitHub Releaseを作成します。
 . GitHub Releaseがstableとして公開され、予定されたassetだけを含むことを確認します。
 . checksumとattestationを検証し、xref:#release-checklist[Release checklist]に従って受け入れ結果を記録します。
@@ -282,8 +278,6 @@ deployment branchを``main``だけに制限します。``RELEASE_PUBLISHER_APP_I
       ``release-manifest.json``と一致しています。
 * [ ] ``cargo make release-check``が成功しています。このtaskはClippy、文書、Zed、WASM、native／実WASM
       conformance、短時間fuzz、Web Worker、release fixture、WASM sizeおよび配布planを検査します。
-* [ ] ``release/intent.json``が対象versionの``ready``であり、finalization Pull Requestはこのfileだけを変更する
-      1 commitのsquash mergeとして統合されています。
 * [ ] ``github-release`` Environmentが``main``だけを許可し、publisher AppのIDと秘密鍵が設定されています。
 * [ ] ``v*`` tag rulesetがtagの作成、更新および削除を制限し、publisher Appだけをbypass対象にしています。
       workflowはこの外部設定を検査しないため、dispatch前にGitHubの設定画面で確認します。
