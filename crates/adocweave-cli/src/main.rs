@@ -301,60 +301,25 @@ fn validate_resource_plan(
     Ok(())
 }
 
-#[derive(Debug, Default)]
-struct ProjectRetainedBudget {
-    resources: std::collections::BTreeMap<String, u64>,
-    bytes: u64,
-}
-
-impl ProjectRetainedBudget {
-    fn replace_all(
-        &mut self,
-        resources: impl IntoIterator<Item = (String, u64)>,
-        max_files: usize,
-        max_total_bytes: u64,
-        max_resource_bytes: u64,
-    ) -> Result<(), CliError> {
-        let replacements = resources
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        if replacements
-            .values()
-            .any(|bytes| *bytes > max_resource_bytes)
-        {
-            return Err(Self::limit_error());
-        }
-        let new_files = replacements
-            .keys()
-            .filter(|id| !self.resources.contains_key(*id))
-            .count();
-        let files = self
-            .resources
-            .len()
-            .checked_add(new_files)
-            .ok_or_else(Self::limit_error)?;
-        let replaced_bytes = replacements.keys().try_fold(0_u64, |total, id| {
-            total.checked_add(self.resources.get(id).copied().unwrap_or(0))
-        });
-        let replacement_bytes = replacements
-            .values()
-            .try_fold(0_u64, |total, bytes| total.checked_add(*bytes));
-        let bytes = replaced_bytes
-            .and_then(|replaced| self.bytes.checked_sub(replaced))
-            .zip(replacement_bytes)
-            .and_then(|(retained, replacement)| retained.checked_add(replacement))
-            .ok_or_else(Self::limit_error)?;
-        if files > max_files || bytes > max_total_bytes {
-            return Err(Self::limit_error());
-        }
-        self.resources.extend(replacements);
-        self.bytes = bytes;
-        Ok(())
+/// Charges one project scope's retained budget for a replaced resource set.
+fn charge_retained(
+    budget: &mut adocweave_workspace::RetainedResourceBudget,
+    entries: impl IntoIterator<Item = (String, u64)>,
+    limits: adocweave_workspace::RetainedResourceLimits,
+) -> Result<(), CliError> {
+    let limit_error =
+        || CliError::ResourceLimit("configured retained resource limit exceeded".to_owned());
+    for (id, bytes) in entries {
+        let id = adocweave_workspace::ResourceId::new(id).map_err(|_| limit_error())?;
+        budget
+            .try_replace_layers(
+                id,
+                adocweave_workspace::RetainedLayerCharge::new(Some(bytes), None),
+                limits,
+            )
+            .map_err(|_| limit_error())?;
     }
-
-    fn limit_error() -> CliError {
-        CliError::ResourceLimit("configured retained resource limit exceeded".to_owned())
-    }
+    Ok(())
 }
 
 fn decode_input(input: &[u8]) -> Result<&str, CliError> {
@@ -929,8 +894,10 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
     let resolved_inputs = resolve_input_path_scopes(arguments, &paths, &boundary_policy)?;
     let mut project_filesystems =
         std::collections::BTreeMap::<ProjectScopeId, adocweave_host::LocalFilesystemSession>::new();
-    let mut project_retained =
-        std::collections::BTreeMap::<ProjectScopeId, ProjectRetainedBudget>::new();
+    let mut project_retained = std::collections::BTreeMap::<
+        ProjectScopeId,
+        adocweave_workspace::RetainedResourceBudget,
+    >::new();
     match &arguments.command {
         CommandOptions::Format(options) => {
             if !options.supports_multiple_inputs() {
@@ -1012,29 +979,21 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .map_err(CliError::Include)?;
                     validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;
-                    project_retained
-                        .entry(project_key)
-                        .or_default()
-                        .replace_all(
-                            prepared
-                                .resource_entries()
-                                .map(|(id, bytes)| (id.to_owned(), bytes)),
-                            retained_limits.max_files,
-                            retained_limits.max_total_bytes,
-                            retained_limits.max_resource_bytes,
-                        )?;
+                    charge_retained(
+                        project_retained.entry(project_key).or_default(),
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        retained_limits,
+                    )?;
                 } else {
                     validate_resource_plan([original.len() as u64], config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;
-                    project_retained
-                        .entry(project_key)
-                        .or_default()
-                        .replace_all(
-                            [(path.to_string_lossy().into_owned(), original.len() as u64)],
-                            retained_limits.max_files,
-                            retained_limits.max_total_bytes,
-                            retained_limits.max_resource_bytes,
-                        )?;
+                    charge_retained(
+                        project_retained.entry(project_key).or_default(),
+                        [(path.to_string_lossy().into_owned(), original.len() as u64)],
+                        retained_limits,
+                    )?;
                 }
                 let format_config = commands::format::format_config(*options, &original, config);
                 let formatted =
@@ -1188,30 +1147,22 @@ fn run_multi_path(arguments: &Arguments) -> Result<Option<ExitCode>, CliError> {
                     .map_err(CliError::Include)?;
                     validate_resource_plan(prepared.resource_sizes(), config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;
-                    project_retained
-                        .entry(project_key)
-                        .or_default()
-                        .replace_all(
-                            prepared
-                                .resource_entries()
-                                .map(|(id, bytes)| (id.to_owned(), bytes)),
-                            retained_limits.max_files,
-                            retained_limits.max_total_bytes,
-                            retained_limits.max_resource_bytes,
-                        )?;
+                    charge_retained(
+                        project_retained.entry(project_key).or_default(),
+                        prepared
+                            .resource_entries()
+                            .map(|(id, bytes)| (id.to_owned(), bytes)),
+                        retained_limits,
+                    )?;
                     check_preprocessed(&mut prepared, check, &config.analysis)?
                 } else {
                     validate_resource_plan([checked.len() as u64], config.resources.limit_plan)?;
                     let retained_limits = config.resources.limit_plan.retained_layers;
-                    project_retained
-                        .entry(project_key)
-                        .or_default()
-                        .replace_all(
-                            [(path.to_string_lossy().into_owned(), checked.len() as u64)],
-                            retained_limits.max_files,
-                            retained_limits.max_total_bytes,
-                            retained_limits.max_resource_bytes,
-                        )?;
+                    charge_retained(
+                        project_retained.entry(project_key).or_default(),
+                        [(path.to_string_lossy().into_owned(), checked.len() as u64)],
+                        retained_limits,
+                    )?;
                     process_check(
                         &checked,
                         check,
@@ -1854,7 +1805,7 @@ fn run() -> Result<ExitCode, CliError> {
                 )?);
             }
             validate_resource_plan([input.len() as u64], project_config.resources.limit_plan)?;
-            let mut retained_resources = ProjectRetainedBudget::default();
+            let mut retained_resources = adocweave_workspace::RetainedResourceBudget::default();
             let mut prepared = None;
             let processed = if include {
                 let source = decode_input(&input)?;
@@ -1913,13 +1864,12 @@ fn run() -> Result<ExitCode, CliError> {
                     project_config.resources.limit_plan,
                 )?;
                 let retained_limits = project_config.resources.limit_plan.retained_layers;
-                retained_resources.replace_all(
+                charge_retained(
+                    &mut retained_resources,
                     include_input
                         .resource_entries()
                         .map(|(id, bytes)| (id.to_owned(), bytes)),
-                    retained_limits.max_files,
-                    retained_limits.max_total_bytes,
-                    retained_limits.max_resource_bytes,
+                    retained_limits,
                 )?;
                 let processed = if command_id == CommandId::Format {
                     input.clone()
@@ -1935,11 +1885,10 @@ fn run() -> Result<ExitCode, CliError> {
                 processed
             } else {
                 let retained_limits = project_config.resources.limit_plan.retained_layers;
-                retained_resources.replace_all(
+                charge_retained(
+                    &mut retained_resources,
                     [(source_id.clone(), input.len() as u64)],
-                    retained_limits.max_files,
-                    retained_limits.max_total_bytes,
-                    retained_limits.max_resource_bytes,
+                    retained_limits,
                 )?;
                 input.clone()
             };
@@ -2076,11 +2025,11 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         Action, CliError, CommandOptions, CompletionShell, DEFAULT_PREVIEW_DEBOUNCE_MS,
-        DEFAULT_PREVIEW_PORT, DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES,
-        ProjectRetainedBudget, charge_scan_entry, cli_project_scope,
-        configuration_stylesheet_session, filesystem_authority, filesystem_from_authority,
-        load_project_config_at, parse_arguments, read_primary_in_session, render_completion_script,
-        resolve_input_path_scopes_with_hook, validate_project_config_authority,
+        DEFAULT_PREVIEW_PORT, DiagnosticFormat, FormatOptions, MAX_SCAN_ENTRIES, charge_retained,
+        charge_scan_entry, cli_project_scope, configuration_stylesheet_session,
+        filesystem_authority, filesystem_from_authority, load_project_config_at, parse_arguments,
+        read_primary_in_session, render_completion_script, resolve_input_path_scopes_with_hook,
+        validate_project_config_authority,
     };
     use crate::commands::model::{self, CommandId};
 
@@ -2474,17 +2423,24 @@ mod tests {
         assert_eq!(first, same);
         assert_ne!(first, second);
 
+        let limits = adocweave_workspace::RetainedResourceLimits {
+            max_files: 1,
+            max_total_bytes: 1,
+            max_resource_bytes: 1,
+        };
         let mut budgets = std::collections::BTreeMap::new();
-        budgets
-            .entry(first)
-            .or_insert_with(ProjectRetainedBudget::default)
-            .replace_all([("a".to_owned(), 1)], 1, 1, 1)
-            .expect("first project boundary");
-        budgets
-            .entry(second)
-            .or_insert_with(ProjectRetainedBudget::default)
-            .replace_all([("a".to_owned(), 1)], 1, 1, 1)
-            .expect("second project has an independent budget");
+        charge_retained(
+            budgets.entry(first).or_default(),
+            [("a".to_owned(), 1)],
+            limits,
+        )
+        .expect("first project boundary");
+        charge_retained(
+            budgets.entry(second).or_default(),
+            [("a".to_owned(), 1)],
+            limits,
+        )
+        .expect("second project has an independent budget");
     }
 
     #[test]
@@ -2648,46 +2604,5 @@ mod tests {
             Err(CliError::ConfigAuthority(path))
                 if path == external.path().join("style.css")
         ));
-    }
-
-    #[test]
-    fn project_retained_budget_applies_replacements_without_partial_failure() {
-        let mut budget = ProjectRetainedBudget::default();
-        budget
-            .replace_all([("a".to_owned(), 2)], 2, 4, 3)
-            .expect("first resource");
-        budget
-            .replace_all([("b".to_owned(), 2)], 2, 4, 3)
-            .expect("total boundary");
-        budget
-            .replace_all([("a".to_owned(), 1)], 2, 4, 3)
-            .expect("replacement");
-        assert_eq!(budget.bytes, 3);
-
-        let committed = budget.resources.clone();
-        assert!(budget.replace_all([("c".to_owned(), 1)], 2, 4, 3).is_err());
-        assert_eq!(budget.resources, committed);
-        assert_eq!(budget.bytes, 3);
-        assert!(budget.replace_all([("a".to_owned(), 4)], 2, 4, 3).is_err());
-        assert_eq!(budget.resources, committed);
-        assert_eq!(budget.bytes, 3);
-    }
-
-    #[test]
-    fn project_retained_budget_handles_a_large_batch_without_recloning_committed_entries() {
-        let mut budget = ProjectRetainedBudget::default();
-        budget
-            .replace_all(
-                (0..10_000).map(|index| (format!("resource-{index:05}"), 1)),
-                10_000,
-                10_000,
-                1,
-            )
-            .expect("large boundary");
-        budget
-            .replace_all([("resource-09999".to_owned(), 1)], 10_000, 10_000, 1)
-            .expect("single replacement");
-        assert_eq!(budget.resources.len(), 10_000);
-        assert_eq!(budget.bytes, 10_000);
     }
 }
