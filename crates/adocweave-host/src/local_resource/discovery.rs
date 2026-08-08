@@ -61,7 +61,6 @@ impl LocalFilesystemView<'_> {
                         {
                             continue;
                         }
-                        self.state.meter.observe_directory_read();
                         let mut job_permit = self
                             .job
                             .map(|(session, job)| job.begin_directory_read(session))
@@ -92,7 +91,6 @@ impl LocalFilesystemView<'_> {
                                 }
                                 break;
                             };
-                            self.state.meter.observe_directory_entry();
                             if let Some(reservation) = reservation {
                                 reservation.commit(1).map_err(ResourceError::from)?;
                             }
@@ -155,7 +153,6 @@ impl LocalFilesystemView<'_> {
                 {
                     continue;
                 }
-                self.state.meter.observe_directory_read();
                 let mut job_permit = self
                     .job
                     .map(|(session, job)| job.begin_directory_read(session))
@@ -187,7 +184,6 @@ impl LocalFilesystemView<'_> {
                         }
                         break;
                     };
-                    self.state.meter.observe_directory_entry();
                     let child = match child {
                         Ok(child) => child,
                         Err(source) => {

@@ -1,7 +1,6 @@
 //! Behaviour tests for the bounded local-resource boundary.
 
 use super::*;
-use crate::io_observation::FilesystemIoUsage;
 use std::error::Error;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -93,10 +92,6 @@ fn source_id() -> LogicalSourceId {
 
 /// The draft shares the meter of the session it was cloned from, so reading
 /// it after the draft is gone still reports the draft's work.
-fn draft_meter(draft: &LocalFilesystemDraft) -> FilesystemIoMeter {
-    draft.candidate().meter.clone()
-}
-
 fn cached_texts(session: &LocalFilesystemSession) -> usize {
     session
         .state
@@ -329,8 +324,6 @@ fn missing_outcomes_keep_distinct_path_inspections_bounded() {
         session.read_utf8_outcome(source_id(), &second),
         Err(ResourceError::FileLimit { limit: 1 })
     );
-    assert_eq!(session.state.meter.usage().read_operations, 2);
-    assert_eq!(session.state.meter.usage().read_bytes, 0);
 }
 
 #[test]
@@ -709,43 +702,13 @@ fn exhausted_binding_generation_rejects_read_before_io() {
 }
 
 #[test]
-fn a_failed_read_keeps_the_bytes_it_already_obtained() {
-    let root = TestDir::new("meter-invalid-utf8");
-    let path = root.path().join("source.adoc");
-    fs::write(&path, [0xff, 0xfe, 0xfd]).expect("invalid UTF-8 source");
-    let session = policy(root.path(), 100).session().expect("session");
-    let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
-
-    let result = draft.read_utf8(source_id(), &path);
-
-    assert_eq!(
-        result,
-        Err(FilesystemDraftError::Resource(ResourceError::InvalidUtf8 {
-            path,
-            source: "input is not valid UTF-8".to_owned(),
-        }))
-    );
-    assert_eq!(
-        meter.usage(),
-        FilesystemIoUsage {
-            read_operations: 1,
-            read_bytes: 3,
-            directory_read_operations: 0,
-            directory_entries: 0,
-        }
-    );
-}
-
-#[test]
-fn a_missing_resource_counts_an_attempt_and_keeps_the_draft_usable() {
+fn a_missing_resource_keeps_the_draft_usable() {
     let root = TestDir::new("meter-missing-then-usable");
     let missing = root.path().join("missing.adoc");
     let existing = root.path().join("existing.adoc");
     fs::write(&existing, "text").expect("existing source");
     let session = policy(root.path(), 100).session().expect("session");
     let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
 
     assert_eq!(
         draft.read_utf8_outcome(source_id(), &missing),
@@ -754,15 +717,10 @@ fn a_missing_resource_counts_an_attempt_and_keeps_the_draft_usable() {
             candidate_path: missing,
         })
     );
-    let after_failure = meter.usage();
-    assert_eq!(after_failure.read_operations, 1);
-    assert_eq!(after_failure.read_bytes, 0);
-
     assert!(matches!(
         draft.read_utf8_outcome(source_id(), &existing),
         Ok(FilesystemReadOutcome::Found(_))
     ));
-    assert_eq!(meter.usage().read_operations, 2);
 }
 
 #[test]
@@ -772,9 +730,7 @@ fn a_poisoned_draft_starts_no_filesystem_work_at_all() {
     fs::write(&existing, "text").expect("existing source");
     let session = policy(root.path(), 100).session().expect("session");
     let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
     assert!(draft.read_utf8(source_id(), root.path()).is_err());
-    let after_failure = meter.usage();
 
     assert_eq!(
         draft.scan_utf8(path_source_id),
@@ -794,78 +750,6 @@ fn a_poisoned_draft_starts_no_filesystem_work_at_all() {
             .err(),
         Some(FilesystemDraftError::PoisonedDraft)
     );
-    assert_eq!(meter.usage(), after_failure);
-}
-
-#[test]
-fn a_capacity_rejection_counts_an_attempt_without_bytes() {
-    let root = TestDir::new("meter-capacity-rejection");
-    let path = root.path().join("source.adoc");
-    fs::write(&path, "text").expect("source");
-    let session = LocalFilesystemPolicy::new(
-        [root.path().to_owned()],
-        FilesystemReadLimits {
-            max_files: 0,
-            max_total_bytes: 100,
-            max_resource_bytes: 100,
-        },
-    )
-    .expect("policy")
-    .session()
-    .expect("session");
-    let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
-
-    assert_eq!(
-        draft.read_utf8(source_id(), &path),
-        Err(FilesystemDraftError::Resource(ResourceError::FileLimit {
-            limit: 0
-        }))
-    );
-    assert_eq!(meter.usage().read_operations, 1);
-    assert_eq!(meter.usage().read_bytes, 0);
-}
-
-#[test]
-fn a_cached_read_counts_the_request_without_reading_bytes() {
-    let root = TestDir::new("meter-cache-hit");
-    let path = root.path().join("source.adoc");
-    fs::write(&path, "text").expect("source");
-    let session = policy(root.path(), 100).session().expect("session");
-    let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
-    draft
-        .mutation_cursor()
-        .read_utf8_with(source_id(), &path, true, || {})
-        .expect("cache miss");
-    let after_miss = meter.usage();
-
-    draft
-        .mutation_cursor()
-        .read_utf8_with(source_id(), &path, true, || {})
-        .expect("cache hit");
-
-    assert_eq!(after_miss.read_operations, 1);
-    assert_eq!(after_miss.read_bytes, 4);
-    let hit = meter.usage().since(after_miss);
-    assert_eq!(hit.read_operations, 1);
-    assert_eq!(hit.read_bytes, 0);
-}
-
-#[test]
-fn a_discarded_draft_leaves_its_work_counted_in_the_session() {
-    let root = TestDir::new("meter-shared-with-session");
-    let path = root.path().join("source.adoc");
-    fs::write(&path, "abc").expect("source");
-    let session = policy(root.path(), 100).session().expect("session");
-    let session_meter = session.state.meter.clone();
-    let mut draft = session.draft(&unbounded_job()).expect("draft");
-
-    draft.read_utf8(source_id(), &path).expect("read");
-    drop(draft);
-
-    assert_eq!(session_meter.usage().read_operations, 1);
-    assert_eq!(session_meter.usage().read_bytes, 3);
 }
 
 #[test]
@@ -1357,12 +1241,11 @@ fn cancelled_discovery_never_returns_a_partial_candidate_set() {
 }
 
 #[test]
-fn a_cancelled_discovery_keeps_the_directory_work_it_performed() {
+fn a_cancelled_discovery_reports_cancellation() {
     let root = TestDir::new("meter-scan-cancellation");
     fs::write(root.path().join("a.adoc"), "a").expect("first source");
     fs::write(root.path().join("b.adoc"), "b").expect("second source");
     let session = policy(root.path(), 100).session().expect("session");
-    let meter = session.state.meter.clone();
     let checks = std::cell::Cell::new(0_usize);
 
     let result = LocalFilesystemView {
@@ -1384,29 +1267,18 @@ fn a_cancelled_discovery_keeps_the_directory_work_it_performed() {
             "local filesystem scan was cancelled".to_owned()
         ))
     );
-    assert_eq!(
-        meter.usage(),
-        FilesystemIoUsage {
-            read_operations: 0,
-            read_bytes: 0,
-            directory_read_operations: 1,
-            directory_entries: 0,
-        }
-    );
 }
 
 /// A directory that disappears between being queued and being opened fails
-/// the scan on every platform. The failed enumeration is still counted,
-/// because the work of attempting it was performed. Each implementation's
-/// stable error category and the affected path are asserted separately.
+/// the scan on every platform. Each implementation's stable error category
+/// and the affected path are asserted separately.
 #[test]
-fn a_failed_directory_enumeration_still_counts_the_attempt() {
+fn a_vanished_directory_fails_the_scan() {
     let root = TestDir::new("meter-directory-enumeration-failure");
     let nested = root.path().join("nested");
     fs::create_dir(&nested).expect("nested directory");
     fs::write(nested.join("a.adoc"), "abc").expect("source");
     let session = policy(root.path(), 100).session().expect("session");
-    let meter = session.state.meter.clone();
 
     let result = LocalFilesystemView {
         state: &session.state,
@@ -1434,35 +1306,6 @@ fn a_failed_directory_enumeration_still_counts_the_attempt() {
         ),
         "a vanished directory must report an inspection failure for its path: {result:?}"
     );
-    assert_eq!(meter.usage().directory_read_operations, 2);
-}
-
-/// Entries are counted as the iterator yields them, before anything decides
-/// what they are. On Linux that includes `.` and `..`, which the scan then
-/// skips, so the entry count is higher there than the four visible names.
-#[test]
-fn a_scan_counts_directory_entries_and_the_files_it_reads() {
-    let root = TestDir::new("meter-scan-usage");
-    let nested = root.path().join("nested");
-    fs::create_dir(&nested).expect("nested directory");
-    fs::write(root.path().join("a.adoc"), "abc").expect("first source");
-    fs::write(root.path().join("ignored.txt"), "ignored").expect("ignored source");
-    fs::write(nested.join("b.adoc"), "de").expect("second source");
-    let session = policy(root.path(), 100).session().expect("session");
-    let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
-
-    let loaded = draft.scan_utf8(path_source_id).expect("scan");
-
-    assert_eq!(loaded.len(), 2);
-    let usage = meter.usage();
-    assert_eq!(usage.directory_read_operations, 2);
-    #[cfg(target_os = "linux")]
-    assert_eq!(usage.directory_entries, 8);
-    #[cfg(not(target_os = "linux"))]
-    assert_eq!(usage.directory_entries, 4);
-    assert_eq!(usage.read_operations, 2);
-    assert_eq!(usage.read_bytes, 5);
 }
 
 #[test]
@@ -1472,7 +1315,6 @@ fn legacy_scan_keeps_a_disappearing_file_as_an_error() {
     fs::write(&path, "text").expect("source");
     let mut session = policy(root.path(), 100).session().expect("session");
     let mut draft = session.draft(&unbounded_job()).expect("draft");
-    let meter = draft_meter(&draft);
 
     let result = draft.scan_utf8(|candidate| {
         assert_eq!(candidate, path);
@@ -1485,7 +1327,6 @@ fn legacy_scan_keeps_a_disappearing_file_as_an_error() {
         Err(FilesystemDraftError::Resource(ResourceError::Missing(path)))
     );
     assert_eq!(draft.budget().files(), 0);
-    assert_eq!(meter.usage().read_operations, 1);
     assert!(matches!(
         draft.prepare_commit(&mut session),
         Err(FilesystemDraftError::PoisonedDraft)

@@ -23,7 +23,6 @@ use path::{
 
 use crate::filesystem_job::{FilesystemJobError, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
-use crate::io_observation::FilesystemIoMeter;
 
 /// How many times a confined open may be retried after a concurrent-change race.
 ///
@@ -193,7 +192,6 @@ impl LocalTargetPolicy {
         max_bytes: u64,
         after_open: impl FnOnce(),
     ) -> Result<(Self, LoadedLocalTarget), LocalTargetError> {
-        let meter = FilesystemIoMeter::detached();
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::fs::MetadataExt;
@@ -275,7 +273,7 @@ impl LocalTargetPolicy {
                     prior_race_failure = Some(explicit_target_changed_error());
                     continue;
                 }
-                let loaded = read_bounded_utf8(file, candidate, max_bytes, &meter)?;
+                let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
                 return Ok((policy, loaded));
             }
             Err(prior_race_failure.unwrap_or_else(explicit_target_changed_error))
@@ -295,7 +293,7 @@ impl LocalTargetPolicy {
             after_open();
             let candidate = policy.root.join(file_name);
             let file = policy.open_confined(&candidate)?;
-            let loaded = read_bounded_utf8(file, candidate, max_bytes, &meter)?;
+            let loaded = read_bounded_utf8(file, candidate, max_bytes)?;
             Ok((policy, loaded))
         }
     }
@@ -962,9 +960,8 @@ fn read_bounded_utf8(
     file: fs::File,
     canonical_path: PathBuf,
     max_bytes: u64,
-    meter: &FilesystemIoMeter,
 ) -> Result<LoadedLocalTarget, LocalTargetError> {
-    let bytes = read_bounded_bytes(file, &canonical_path, max_bytes, meter)?;
+    let bytes = read_bounded_bytes(file, &canonical_path, max_bytes)?;
     if bytes.len() as u64 > max_bytes {
         return Err(LocalTargetError::ResourceTooLarge(canonical_path));
     }
@@ -983,13 +980,11 @@ fn read_bounded_bytes(
     reader: impl Read,
     canonical_path: &Path,
     max_bytes: u64,
-    meter: &FilesystemIoMeter,
 ) -> Result<Vec<u8>, LocalTargetError> {
     let mut bytes = Vec::new();
     let result = reader
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes);
-    meter.observe_read_bytes(bytes.len());
     result.map_err(|source| classify_io(canonical_path.to_owned(), source))?;
     Ok(bytes)
 }
@@ -998,7 +993,7 @@ fn read_bounded_bytes_with_job(
     mut reader: impl Read,
     canonical_path: &Path,
     max_bytes: u64,
-    meter: &FilesystemIoMeter,
+
     permit: &mut FilesystemReadPermit,
 ) -> Result<Vec<u8>, CoordinatedLocalTargetError> {
     const CHUNK_SIZE: usize = 8 * 1024;
@@ -1018,7 +1013,6 @@ fn read_bounded_bytes_with_job(
         let read = reader
             .read(&mut chunk[..granted])
             .map_err(|source| classify_io(canonical_path.to_owned(), source))?;
-        meter.observe_read_bytes(read);
         if read > 0 {
             bytes.extend_from_slice(&chunk[..read]);
         }
@@ -1095,10 +1089,6 @@ pub struct LocalTargetSession {
     bases: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
     inspections: BTreeMap<PathBuf, Result<PathBuf, LocalTargetError>>,
     text: BTreeMap<PathBuf, Result<Arc<str>, LocalTargetError>>,
-    /// Every read this session performs is counted here. Binding the meter to
-    /// the session, rather than passing it to each read, is what makes an
-    /// unmeasured read impossible to write by accident.
-    meter: FilesystemIoMeter,
 }
 
 #[derive(Clone, Debug)]
@@ -1164,19 +1154,10 @@ impl LoadedLocalBytes {
 
 impl LocalTargetSession {
     pub fn new(policy: LocalTargetPolicy, max_paths: usize, limits: FilesystemReadLimits) -> Self {
-        Self::metered(policy, max_paths, limits, FilesystemIoMeter::detached())
+        Self::build(policy, max_paths, limits)
     }
 
-    /// Creates a session whose reads are counted by `meter`.
-    ///
-    /// Callers that own several sessions for one analysis pass the same meter to
-    /// all of them, so the counters describe the analysis rather than one root.
-    pub(crate) fn metered(
-        policy: LocalTargetPolicy,
-        max_paths: usize,
-        limits: FilesystemReadLimits,
-        meter: FilesystemIoMeter,
-    ) -> Self {
+    fn build(policy: LocalTargetPolicy, max_paths: usize, limits: FilesystemReadLimits) -> Self {
         Self {
             policy,
             max_paths,
@@ -1187,7 +1168,6 @@ impl LocalTargetSession {
             bases: BTreeMap::new(),
             inspections: BTreeMap::new(),
             text: BTreeMap::new(),
-            meter,
         }
     }
 
@@ -1343,7 +1323,6 @@ impl LocalTargetSession {
             file,
             &canonical,
             capacity.max_resource_bytes.min(capacity.max_total_bytes),
-            &self.meter,
         )?;
         self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
         if bytes.len() as u64 > capacity.max_total_bytes {
@@ -1501,15 +1480,12 @@ impl LocalTargetSession {
         if !capacity.allow_file {
             return Err(LocalTargetError::ReadLimitExceeded.into());
         }
-        let meter = self.meter.clone();
         let result: Result<Arc<str>, CoordinatedLocalTargetError> = (|| {
             self.read_files += 1;
             let max_bytes = capacity.max_resource_bytes.min(capacity.max_total_bytes);
             let bytes = match permit {
-                Some(permit) => {
-                    read_bounded_bytes_with_job(file, &canonical, max_bytes, &meter, permit)?
-                }
-                None => read_bounded_bytes(file, &canonical, max_bytes, &meter)?,
+                Some(permit) => read_bounded_bytes_with_job(file, &canonical, max_bytes, permit)?,
+                None => read_bounded_bytes(file, &canonical, max_bytes)?,
             };
             self.read_bytes = self.read_bytes.saturating_add(bytes.len() as u64);
             if bytes.len() as u64 > capacity.max_total_bytes {
@@ -1646,26 +1622,10 @@ impl LocalTargetSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io_observation::FilesystemIoUsage;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestDir(PathBuf);
-
-    struct PartialThenError {
-        emitted: bool,
-    }
-
-    impl Read for PartialThenError {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if self.emitted {
-                return Err(std::io::Error::other("forced partial read failure"));
-            }
-            self.emitted = true;
-            buffer[..3].copy_from_slice(b"abc");
-            Ok(3)
-        }
-    }
 
     impl TestDir {
         fn new() -> Self {
@@ -2676,97 +2636,6 @@ mod tests {
         assert_eq!(loaded.source(), b"suffix");
         assert_eq!(session.read_files(), 1);
         assert_eq!(session.read_bytes, 6);
-    }
-
-    fn metered_session(root: &Path, max_paths: usize) -> (LocalTargetSession, FilesystemIoMeter) {
-        let policy = LocalTargetPolicy::new(root).expect("policy");
-        let meter = FilesystemIoMeter::detached();
-        let session = LocalTargetSession::metered(
-            policy,
-            max_paths,
-            FilesystemReadLimits::default(),
-            meter.clone(),
-        );
-        (session, meter)
-    }
-
-    #[test]
-    fn a_cache_hit_reads_no_bytes_while_a_miss_reads_the_file() {
-        let root = TestDir::new();
-        let target = root.0.join("docs/guide.adoc");
-        let (mut session, meter) = metered_session(&root.0, 2);
-        let capacity = session.default_read_capacity();
-
-        session
-            .read_candidate_utf8_with_capacity(&target, true, true, || {}, |_| capacity)
-            .expect("cache miss");
-        let after_miss = meter.usage();
-        let capacity = session.default_read_capacity();
-        session
-            .read_candidate_utf8_with_capacity(&target, true, true, || {}, |_| capacity)
-            .expect("cache hit");
-
-        assert_eq!(after_miss.read_bytes, 7);
-        assert_eq!(meter.usage().since(after_miss).read_bytes, 0);
-    }
-
-    #[test]
-    fn an_oversized_resource_counts_the_byte_that_detected_it() {
-        let root = TestDir::new();
-        let target = root.0.join("docs/guide.adoc");
-        fs::write(&target, b"abcd").expect("oversize source");
-        let (mut session, meter) = metered_session(&root.0, 2);
-        let capacity = CandidateReadCapacity {
-            allow_file: true,
-            max_total_bytes: 3,
-            max_resource_bytes: 3,
-        };
-
-        let error = session
-            .read_candidate_utf8_with_capacity(&target, false, true, || {}, |_| capacity)
-            .expect_err("oversize source");
-
-        assert!(matches!(error, LocalTargetError::ReadLimitExceeded));
-        assert_eq!(meter.usage().read_bytes, 4);
-    }
-
-    #[test]
-    fn invalid_utf8_still_counts_the_bytes_it_took_to_find_out() {
-        let root = TestDir::new();
-        let target = root.0.join("docs/guide.adoc");
-        fs::write(&target, [0xff, 0xfe, 0xfd]).expect("invalid UTF-8 source");
-        let (mut session, meter) = metered_session(&root.0, 2);
-        let capacity = session.default_read_capacity();
-
-        let error = session
-            .read_candidate_utf8_with_capacity(&target, false, true, || {}, |_| capacity)
-            .expect_err("invalid UTF-8 source");
-
-        assert!(matches!(error, LocalTargetError::InvalidUtf8(_)));
-        assert_eq!(meter.usage().read_bytes, 3);
-    }
-
-    #[test]
-    fn bytes_obtained_before_a_read_error_are_not_lost() {
-        let path = Path::new("partial.adoc");
-        let meter = FilesystemIoMeter::detached();
-
-        let error = read_bounded_bytes(PartialThenError { emitted: false }, path, 100, &meter)
-            .expect_err("partial read failure");
-
-        assert!(matches!(error, LocalTargetError::Unverifiable(_)));
-        assert_eq!(meter.usage().read_bytes, 3);
-    }
-
-    #[test]
-    fn loading_an_explicit_file_is_kept_out_of_a_shared_meter() {
-        let root = TestDir::new();
-        let target = root.0.join("docs/guide.adoc");
-        let (_session, meter) = metered_session(&root.0, 2);
-
-        LocalTargetPolicy::load_explicit_utf8(&target, 1024).expect("explicit file");
-
-        assert_eq!(meter.usage(), FilesystemIoUsage::default());
     }
 
     #[cfg(target_os = "linux")]

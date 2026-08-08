@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::filesystem_job::{FilesystemJobCoordinator, FilesystemReadPermit};
 use crate::filesystem_limits::FilesystemReadLimits;
-use crate::io_observation::FilesystemIoMeter;
 use crate::local_target::{
     CoordinatedLocalTargetError, FilesystemRaceResistance, LocalTargetError, LocalTargetPolicy,
     LocalTargetSession, LocalTargetTextRollback,
@@ -257,7 +256,7 @@ struct LocalFilesystemState {
     /// Shared with every [`LocalTargetSession`] above and with any draft cloned
     /// from this state, so discovery and reads land in one set of counters and a
     /// discarded draft does not un-count the work it performed.
-    meter: FilesystemIoMeter,
+
     #[cfg(test)]
     clone_count: Arc<AtomicU64>,
 }
@@ -278,7 +277,6 @@ impl Clone for LocalFilesystemState {
             budget: self.budget,
             charged: self.charged.clone(),
             candidates: self.candidates.clone(),
-            meter: self.meter.clone(),
             #[cfg(test)]
             clone_count: Arc::clone(&self.clone_count),
         }
@@ -498,13 +496,12 @@ impl LocalFilesystemAccess {
 
     /// Creates a session with a fresh shared budget for these selected roots.
     pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
-        let meter = FilesystemIoMeter::detached();
         let sessions = self
             .root_policies
             .iter()
             .cloned()
             .map(|policy| {
-                LocalTargetSession::metered(
+                LocalTargetSession::new(
                     policy,
                     self.limits.max_files,
                     FilesystemReadLimits {
@@ -512,7 +509,6 @@ impl LocalFilesystemAccess {
                         max_total_bytes: u64::MAX,
                         max_resource_bytes: self.limits.max_resource_bytes,
                     },
-                    meter.clone(),
                 )
             })
             .collect();
@@ -531,7 +527,6 @@ impl LocalFilesystemAccess {
                 budget: ResourceBudget::default(),
                 charged: BTreeMap::new(),
                 candidates: BTreeMap::new(),
-                meter,
                 #[cfg(test)]
                 clone_count: Arc::new(AtomicU64::new(0)),
             },
@@ -1108,7 +1103,6 @@ impl LocalFilesystemMutationCursor<'_> {
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         let mut permit = self.begin_read()?;
-        self.state.meter.observe_read_operation();
         let index = self.root_index(base)?;
         let candidate = self.state.sessions[index]
             .candidate(base, target)
@@ -1188,7 +1182,6 @@ impl LocalFilesystemMutationCursor<'_> {
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         let mut permit = self.begin_read()?;
-        self.state.meter.observe_read_operation();
         let index = self.root_index(path)?;
         let candidate_rollback = self.state.sessions[index].candidate_rollback(path);
         let binding_generation = self.reserve_binding_generation()?;
@@ -1276,7 +1269,6 @@ impl LocalFilesystemMutationCursor<'_> {
         missing: MissingDisposition,
     ) -> Result<FilesystemReadOutcome, FilesystemDraftError> {
         let mut permit = self.begin_read()?;
-        self.state.meter.observe_read_operation();
         if !path.is_absolute() {
             return Err(ResourceError::PathNotAbsolute(path.to_owned()).into());
         }
