@@ -79,8 +79,8 @@ pub mod semantic {
     pub use crate::document::{
         Document, DocumentElement, DocumentIdentifiers, DocumentSymbol, HeadingId, ReferenceTarget,
         ReferenceTargetKind, SymbolKind, document_element_at, document_symbols,
-        generate_heading_ids, heading_id_base, reference_targets, render_symbols_json,
-        source_language_candidates,
+        generate_heading_ids, heading_id_base, is_valid_anchor_id, reference_targets,
+        render_symbols_json, source_language_candidates,
     };
     pub use crate::inline::{inline_at, is_plain_inline_text};
     pub use crate::inline_model::{

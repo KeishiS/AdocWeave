@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use adocweave::Analysis;
 use adocweave::output::formatter::{self, FormatConfig};
 use adocweave::resolution::ReferenceKey;
+use adocweave::semantic::{ReferenceTarget, ReferenceTargetKind, is_valid_anchor_id};
 use async_lsp::lsp_types as lsp;
 
 use crate::cancellation::{QueryCancellation, QueryResult};
@@ -42,27 +43,41 @@ pub(crate) fn formatting(
 /// `prepareRename` and `rename` must agree on which positions can be renamed:
 /// an editor that is told a position is renameable and then receives no edit
 /// looks broken. Both answers come from here, so they cannot diverge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RenameTarget {
+    pub(crate) key: ReferenceKey,
+    pub(crate) range: lsp::Range,
+    pub(crate) placeholder: String,
+}
+
 pub(crate) fn renameable_anchor(
     analysis: &Analysis,
     position: lsp::Position,
     encoding: PositionEncoding,
-) -> Result<Option<(ReferenceKey, lsp::Range, String)>, String> {
+) -> Result<Option<RenameTarget>, String> {
     let offset = request_offset(analysis.source_document(), position, encoding)?;
-    let Some(target) = analysis
-        .reference_targets()
-        .iter()
-        .find(|target| range_contains_offset(target.id_range, offset))
-    else {
+    let Some(target) = analysis.reference_targets().iter().find(|target| {
+        range_contains_offset(target.id_range, offset) && has_explicit_id(analysis, target)
+    }) else {
         return Ok(None);
     };
     let range = range_to_lsp(target.id_range, analysis.source_document(), encoding)?;
-    Ok(Some((
-        ReferenceKey::Local {
+    Ok(Some(RenameTarget {
+        key: ReferenceKey::Local {
             anchor: target.id.clone(),
         },
         range,
-        target.id.clone(),
-    )))
+        placeholder: target.id.clone(),
+    }))
+}
+
+fn has_explicit_id(analysis: &Analysis, target: &ReferenceTarget) -> bool {
+    target.kind == ReferenceTargetKind::InlineAnchor
+        || analysis
+            .document()
+            .anchors()
+            .iter()
+            .any(|anchor| anchor.valid && anchor.id_range == target.id_range)
 }
 
 pub(crate) fn rename_target(
@@ -70,11 +85,22 @@ pub(crate) fn rename_target(
     position: lsp::Position,
     new_name: &str,
     encoding: PositionEncoding,
-) -> Result<Option<ReferenceKey>, String> {
-    if !valid_anchor_name(new_name) {
+) -> Result<Option<RenameTarget>, String> {
+    if !is_valid_anchor_id(new_name) {
         return Ok(None);
     }
-    Ok(renameable_anchor(analysis, position, encoding)?.map(|(key, _, _)| key))
+    let Some(target) = renameable_anchor(analysis, position, encoding)? else {
+        return Ok(None);
+    };
+    if new_name != target.placeholder
+        && analysis
+            .reference_targets()
+            .iter()
+            .any(|candidate| candidate.id == new_name)
+    {
+        return Ok(None);
+    }
+    Ok(Some(target))
 }
 
 pub(crate) fn rename_edit(
@@ -95,15 +121,6 @@ pub(crate) fn rename_edit(
         changes: Some(changes),
         ..lsp::WorkspaceEdit::default()
     })
-}
-
-fn valid_anchor_name(value: &str) -> bool {
-    !value.is_empty()
-        && !value.chars().any(|character| {
-            character.is_whitespace()
-                || character.is_control()
-                || matches!(character, '[' | ']' | '<' | '>' | '#')
-        })
 }
 
 #[cfg(test)]
@@ -153,10 +170,38 @@ mod tests {
                 "renamed",
                 PositionEncoding::Utf16,
             )
-            .expect("target"),
-            Some(ReferenceKey::Local {
-                anchor: "target".to_owned(),
-            })
+            .expect("target")
+            .expect("renameable target")
+            .key,
+            ReferenceKey::Local {
+                anchor: "target".to_owned()
+            }
+        );
+
+        for invalid in ["a,b", "a\"b", "a'b", "a&b", "a=b", "a(b", "a)b"] {
+            assert!(
+                rename_target(
+                    &analysis,
+                    lsp::Position::new(0, 3),
+                    invalid,
+                    PositionEncoding::Utf16,
+                )
+                .expect("invalid anchor name")
+                .is_none(),
+                "{invalid} must follow the parser's anchor rule",
+            );
+        }
+
+        let implicit_heading = analyze("== Generated Heading\n");
+        assert!(
+            renameable_anchor(
+                &implicit_heading,
+                lsp::Position::new(0, 5),
+                PositionEncoding::Utf16,
+            )
+            .expect("implicit heading lookup")
+            .is_none(),
+            "a generated heading ID has no authored identifier to rename",
         );
 
         let uri = lsp::Url::parse("file:///a.adoc").expect("URI");

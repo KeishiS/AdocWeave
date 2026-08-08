@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.38.0";
+export const PREVIOUS_RELEASE_VERSION = "0.39.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#524・#527：公開projectionからpackageVersionを外し、版の識別をprotocolのenvelopeへ一本化しました。",
+  "Language Serverのrenameが、明示的なanchor IDと参照中のanchor部分だけを安全に変更するよう修正しました。",
+  "依存関係、HTML5およびRust公開APIの検査が、影響する変更をPull Requestと標準ローカル検査で漏れなく扱うよう修正しました。",
 ];
 
 export function breakingContractNotes(changes) {
@@ -94,7 +95,7 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。projectionとparse summaryからpackageVersionを外したため、v${PREVIOUS_RELEASE_VERSION}から1つ進めました。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}、Worker protocol version：${protocol.workerProtocolVersion}。どちらもv${PREVIOUS_RELEASE_VERSION}から変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",

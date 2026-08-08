@@ -35,24 +35,24 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   const notes = buildReleaseNotes(`v${RELEASE_NOTES_VERSION}`);
   assert.doesNotThrow(() => validateReleaseNotes(notes));
   assert.match(notes, /## 主な変更/);
-  assert.equal(PREVIOUS_RELEASE_VERSION, "0.38.0");
+  assert.equal(PREVIOUS_RELEASE_VERSION, "0.39.0");
   assert.match(notes, /x86_64-unknown-linux-musl/);
   assert.match(notes, /aarch64-apple-darwin/);
   assert.match(notes, /x86_64-pc-windows-msvc/);
   assert.match(notes, /macOS 14\.0以降/);
   assert.match(notes, /Windows 10 version 1809（build 10\.0\.17763）以降/);
-  assert.match(notes, /packageVersionを外し/);
+  assert.match(notes, /明示的なanchor IDと参照中のanchor部分だけを安全に変更/);
+  assert.match(notes, /依存関係、HTML5およびRust公開APIの検査/);
   assert.match(notes, /WASM protocol schema version/);
-  assert.match(notes, /v0\.38\.0から1つ進めました/);
-  assert.match(notes, /``DocumentProjection``の``package_version`` fieldを削除/);
+  assert.match(notes, /どちらもv0\.39\.0から変更していません/);
+  assert.match(notes, /``ProjectedReference``へ``editable_anchor_origin`` fieldを追加/);
   assert.match(notes, new RegExp(`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}のpackageとAPIへ更新`));
-  assert.match(notes, /Worker protocol versionは2で変更していません/);
+  assert.match(notes, /Worker protocol version：2/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);
   assert.match(notes, /Rust APIの破壊的変更：/);
   assert.match(notes, new RegExp(`## v${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}への移行`));
   assert.match(notes, /``schemaVersion``はrequestの項目ではありません/);
   assert.match(notes, /requestには追加しないでください/);
-  assert.doesNotMatch(notes, /``schemaVersion``を11へ更新/);
   assert.match(
     notes,
     new RegExp(`\`\`PROTOCOL_SCHEMA_VERSION = ${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}\`\``),
@@ -86,7 +86,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
     notes,
     new RegExp(`WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}`),
   );
-  assert.match(notes, new RegExp(`Worker protocol versionは${protocol.workerProtocolVersion}`));
+  assert.match(notes, new RegExp(`Worker protocol version：${protocol.workerProtocolVersion}`));
   assert.match(notes, new RegExp(`統一package version：${RELEASE_NOTES_VERSION}`));
   assert.match(notes, new RegExp(`release manifest schema version：${manifest.schemaVersion}`));
   assert.match(notes, new RegExp(`対応Rust toolchain：${manifest.rustVersion}`));

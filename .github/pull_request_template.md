@@ -72,8 +72,9 @@
 
 <!--
 関連するIssueを記載してください。merge時に閉じる場合は、`Closes #123`のように記載してください。
-ロードマップが挙げるIssueを閉じる場合は、同じ変更で`docs/developer-guide/roadmap.adoc`と
-規約検査の期待集合も更新してください。どちらも手書きのため、閉じたIssueが残っても検査は通ります。
+ロードマップが挙げるIssueを閉じる場合は、同じ変更で
+`docs/developer-guide/roadmap.adoc`からそのIssueを外してください。
+閉じたIssueの状態はローカル検査では確認できません。
 -->
 
 ## 補足

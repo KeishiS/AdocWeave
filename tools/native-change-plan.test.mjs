@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import distributionPlan from "../release/distribution-plan.json" with { type: "json" };
 import {
   affectsGlobalCandidate,
@@ -66,6 +66,13 @@ test("global archiveへ影響する入力だけを選択する", () => {
     "tools/protocol-rust-codegen.test.mjs",
     "tools/sync-release-version.mjs",
     "release-manifest.json",
+    "crates/adocweave-textlint/src/lib.rs",
+    "crates/adocweave-textlint-wasm/src/lib.rs",
+    "tools/build-textlint-wasm-node.sh",
+    "tools/verify-textlint-wasm-memory.mjs",
+    "tools/textlint-plugin-package-contract.mjs",
+    "release/textlint-plugin-package-contract.json",
+    "release/textlint-plugin-package-contract.schema.json",
     "protocol/public-api.json",
   ]) {
     assert.equal(affectsGlobalCandidate(pathname), true, pathname);
@@ -275,7 +282,31 @@ test("core crateの変更ではRust sourceとそれに依存する検査を実�
   assert.equal(scope.fuzz, true);
   assert.equal(scope.nixPackage, true);
   assert.equal(scope.semver, true);
-  assert.equal(scope.documents, false);
+  assert.equal(scope.documents, true);
+});
+
+test("HTMLを生成する実装だけが文書とHTML5の検査を要求する", () => {
+  for (const pathname of [
+    "crates/adocweave/src/html.rs",
+    "crates/adocweave-cli/src/main.rs",
+    "crates/adocweave-config/src/lib.rs",
+    "crates/adocweave-host/src/lib.rs",
+    "crates/adocweave-workspace/src/lib.rs",
+    "crates/adocweave-wasm/src/lib.rs",
+    "tools/adoc-check.mjs",
+    "tools/adoc-check.test.mjs",
+    "tools/html5-check.mjs",
+    ".adocweave.toml",
+    "fuzz/.adocweave.toml",
+    "release-manifest.json",
+  ]) {
+    assert.equal(qualityScope([pathname]).documents, true, pathname);
+  }
+  for (const pathname of [
+    "crates/adocweave-lsp/src/service.rs",
+  ]) {
+    assert.equal(qualityScope([pathname]).documents, false, pathname);
+  }
 });
 
 test("VS Code拡張だけの変更ではRust sourceの検査を実行しない", () => {
@@ -351,6 +382,7 @@ test("依存監査が読むすべての入力が監査を要求する", () => {
       "release/textlint-plugin-package-contract.schema.json",
       "Cargo.lock",
       "Cargo.toml",
+      "crates/adocweave/Cargo.toml",
       "deny.toml",
       "editors/zed/Cargo.lock",
       "editors/vscode/package-lock.json",
@@ -359,6 +391,19 @@ test("依存監査が読むすべての入力が監査を要求する", () => {
   ) {
     assert.equal(qualityScope([pathname]).dependencies, true, pathname);
   }
+});
+
+test("crates直下のすべてのcrate manifestが依存監査を要求する", () => {
+  const manifests = readdirSync(new URL("../crates", import.meta.url), {
+    withFileTypes: true,
+  })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `crates/${entry.name}/Cargo.toml`);
+  assert.notEqual(manifests.length, 0);
+  for (const pathname of manifests) {
+    assert.equal(qualityScope([pathname]).dependencies, true, pathname);
+  }
+  assert.equal(qualityScope(["crates/adocweave/src/lib.rs"]).dependencies, false);
 });
 
 test("監査scriptが名指しするrepository pathは監査の入力一覧に載る", () => {

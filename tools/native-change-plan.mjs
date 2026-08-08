@@ -268,6 +268,10 @@ export const DEPENDENCY_AUDIT_FILES = new Set([
   "tools/verify-textlint-plugin-package.mjs",
   "tools/verify-textlint-plugin-reproducibility.mjs",
 ]);
+
+function isWorkspaceCrateManifest(pathname) {
+  return /^crates\/[^/]+\/Cargo\.toml$/.test(pathname);
+}
 /// Paths that decide whether the adapter contracts have anything to verify.
 const ADAPTER_ROOTS = [
   "crates/",
@@ -279,11 +283,35 @@ const ADAPTER_ROOTS = [
   "tools/textlint/",
 ];
 /// Paths whose authored AsciiDoc or generated HTML the document checks read.
-const DOCUMENT_ROOTS = ["docs/", "fixtures/", "packages/textlint-plugin-asciidoc/", "tools/textlint/"];
+const DOCUMENT_ROOTS = [
+  "docs/",
+  "fixtures/",
+  "packages/textlint-plugin-asciidoc/",
+  "tools/textlint/",
+  "crates/adocweave/",
+  "crates/adocweave-cli/",
+  "crates/adocweave-config/",
+  "crates/adocweave-host/",
+  "crates/adocweave-workspace/",
+  "crates/adocweave-wasm/",
+  "crates/adocweave-textlint/",
+  "crates/adocweave-textlint-wasm/",
+];
 const DOCUMENT_FILES = new Set([
+  ".adocweave.toml",
   "README.adoc",
   "CONTRIBUTING.adoc",
   "THIRD_PARTY_NOTICES.adoc",
+  "fuzz/.adocweave.toml",
+  "release-manifest.json",
+  "tools/adoc-check.mjs",
+  "tools/adoc-check.test.mjs",
+  "tools/html5-check.mjs",
+  "tools/build-textlint-wasm-node.sh",
+  "tools/verify-textlint-wasm-memory.mjs",
+  "tools/textlint-plugin-package-contract.mjs",
+  "release/textlint-plugin-package-contract.json",
+  "release/textlint-plugin-package-contract.schema.json",
 ]);
 
 /// Files that change how a check itself behaves.
@@ -332,7 +360,8 @@ export function qualityScope(paths) {
     affects(pathname, RUST_SOURCE_ROOTS, RUST_SOURCE_FILES)
   );
   const dependencies = paths.some((pathname) =>
-    affects(pathname, DEPENDENCY_AUDIT_ROOTS, DEPENDENCY_AUDIT_FILES)
+    affects(pathname, DEPENDENCY_AUDIT_ROOTS, DEPENDENCY_AUDIT_FILES) ||
+    isWorkspaceCrateManifest(pathname)
   );
   return {
     rustSource,

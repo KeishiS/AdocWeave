@@ -166,6 +166,22 @@ pub fn reference_targets(document: &Document) -> Vec<ReferenceTarget> {
     reference_targets_ast(document.inner())
 }
 
+/// Returns whether `id` can be authored as an explicit anchor identifier.
+///
+/// Hosts that create or edit anchors must use the same acceptance rule as the
+/// parser so an edit cannot turn a valid target into unsupported syntax.
+pub fn is_valid_anchor_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().all(|character| {
+            !character.is_control()
+                && !character.is_whitespace()
+                && !matches!(
+                    character,
+                    '[' | ']' | '<' | '>' | ',' | '#' | '"' | '\'' | '&' | '=' | '(' | ')'
+                )
+        })
+}
+
 pub(crate) fn reference_targets_ast(document: &AstDocument) -> Vec<ReferenceTarget> {
     document.identifiers().targets.clone()
 }

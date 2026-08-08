@@ -1041,6 +1041,7 @@ dependencies = [
   "dependency-governance",
   "fuzz",
   "nix-package-check",
+  "semver-check",
 ]
 
 [tasks.verify-with-global-candidate]
@@ -1054,11 +1055,9 @@ dependencies = [
 description = "Run the publish gate and report release WASM artifact sizes"
 dependencies = [
   "verify",
-  "semver-check",
   "test-profile-release",
   "wasm-size",
   "release-global-candidate",
   "release-installation-e2e-host",
   "dist-plan",
 ]
-

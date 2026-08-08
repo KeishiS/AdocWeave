@@ -60,7 +60,7 @@ pub(super) fn prepare<'input>(
     for (entry_index, entry) in bibliography.entries().iter().enumerate() {
         let key = entry.citation_key();
         let diagnostic_domain = format!("generated bibliography entry {entry_index}");
-        if !crate::block_grammar::valid_anchor_id(key) {
+        if !crate::document::is_valid_anchor_id(key) {
             diagnostics.push(render_input_diagnostic(
                 "invalid-generated-bibliography-entry",
                 &diagnostic_domain,
