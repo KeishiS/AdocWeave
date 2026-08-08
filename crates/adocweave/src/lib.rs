@@ -130,14 +130,12 @@ pub mod output {
             MONOSPACE_BOUNDARY, NESTING_LIMIT_EXCEEDED, NON_ASCIIDOC_XREF, PROTECTED_ATTRIBUTE,
             RuleSettings, TRAILING_WHITESPACE, UNCLOSED_BLOCK, UNCLOSED_INLINE,
             UNDEFINED_ATTRIBUTE, UNPROCESSED_DIRECTIVE, UNRESOLVED_CROSS_REFERENCE,
-            UNUSED_ATTRIBUTE, lint_analysis, lint_analysis_cancellable, lint_rule,
-            render_lint_rule_catalog_json,
+            UNUSED_ATTRIBUTE, lint_analysis, lint_rule, render_lint_rule_catalog_json,
         };
     }
     pub mod formatter {
         pub use crate::formatter::{
             FormatConfig, FormatError, FormatOutput, NewlineStyle, format_analysis,
-            format_analysis_cancellable,
         };
     }
     pub mod html {

@@ -489,9 +489,10 @@ fn formatter_preserves_attribute_bytes_and_is_idempotent() {
         final_newline: true,
         ..FormatConfig::default()
     };
-    let first = format_analysis(&analysis, &config).expect("format");
+    let first = format_analysis(&analysis, &config, &adocweave::NeverCancel).expect("format");
     let second_analysis = analyze(&first.formatted);
-    let second = format_analysis(&second_analysis, &config).expect("format");
+    let second =
+        format_analysis(&second_analysis, &config, &adocweave::NeverCancel).expect("format");
 
     assert_eq!(first.formatted, source);
     assert!(first.edits.is_empty());
@@ -506,9 +507,18 @@ fn formatter_preserves_attribute_bytes_and_is_idempotent() {
 #[test]
 fn formatter_preserves_valid_lf_body_attribute_fixture() {
     let source = include_str!("../../../fixtures/attributes/body-set-unset.adoc");
-    let first = format_analysis(&analyze(source), &FormatConfig::default()).expect("format");
-    let second =
-        format_analysis(&analyze(&first.formatted), &FormatConfig::default()).expect("format");
+    let first = format_analysis(
+        &analyze(source),
+        &FormatConfig::default(),
+        &adocweave::NeverCancel,
+    )
+    .expect("format");
+    let second = format_analysis(
+        &analyze(&first.formatted),
+        &FormatConfig::default(),
+        &adocweave::NeverCancel,
+    )
+    .expect("format");
 
     assert_eq!(first.formatted, source);
     assert_eq!(second.formatted, source);
@@ -525,6 +535,7 @@ fn formatter_preserves_multiline_attribute_bytes_and_meaning() {
             max_consecutive_blank_lines: 0,
             ..FormatConfig::default()
         },
+        &adocweave::NeverCancel,
     )
     .expect("format");
     let after = analyze(&first.formatted);
@@ -535,6 +546,7 @@ fn formatter_preserves_multiline_attribute_bytes_and_meaning() {
             max_consecutive_blank_lines: 0,
             ..FormatConfig::default()
         },
+        &adocweave::NeverCancel,
     )
     .expect("format");
 
@@ -562,6 +574,7 @@ fn formatter_keeps_the_required_body_attribute_offset_when_blank_limit_is_zero()
             max_consecutive_blank_lines: 0,
             ..FormatConfig::default()
         },
+        &adocweave::NeverCancel,
     )
     .expect("format");
     let after = analyze(&formatted.formatted);

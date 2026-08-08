@@ -1,8 +1,8 @@
 //! Conservative, CST-aware source formatting.
 
-use crate::core::{Analysis, CancellationCheck, NeverCancel};
+use crate::core::{Analysis, CancellationCheck};
 #[cfg(test)]
-use crate::core::{AnalysisOptions, ParseError, analyze};
+use crate::core::{AnalysisOptions, NeverCancel, ParseError, analyze};
 use crate::diagnostic::{Applicability, Fix, TextEdit};
 use crate::source::LineEnding;
 use crate::source::{PositionError, TextRange, TextSize};
@@ -79,21 +79,14 @@ impl FormatOutput {
 #[cfg(test)]
 fn format(source: &str, config: &FormatConfig) -> Result<FormatOutput, ParseError> {
     let analysis = analyze(source, &AnalysisOptions::default())?;
-    format_analysis(&analysis, config).map_err(ParseError::Position)
-}
-
-pub fn format_analysis(
-    analysis: &Analysis,
-    config: &FormatConfig,
-) -> Result<FormatOutput, PositionError> {
-    match format_analysis_cancellable(analysis, config, &NeverCancel) {
+    match format_analysis(&analysis, config, &NeverCancel) {
         Ok(output) => Ok(output),
-        Err(FormatError::Position(error)) => Err(error),
+        Err(FormatError::Position(error)) => Err(ParseError::Position(error)),
         Err(FormatError::Cancelled) => unreachable!("NeverCancel cannot cancel formatting"),
     }
 }
 
-pub fn format_analysis_cancellable(
+pub fn format_analysis(
     analysis: &Analysis,
     config: &FormatConfig,
     cancellation: &dyn CancellationCheck,
@@ -265,7 +258,7 @@ fn text_range(start: usize, end: usize) -> Result<TextRange, PositionError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FormatConfig, FormatError, NewlineStyle, format, format_analysis_cancellable};
+    use super::{FormatConfig, FormatError, NewlineStyle, format, format_analysis};
     use crate::block_model::AstBlock;
     use crate::core::{AnalysisOptions, CancellationCheck, Engine};
     use crate::parser::parse;
@@ -311,7 +304,7 @@ mod tests {
             .analyze("line  \n\n")
             .expect("analysis");
         assert!(matches!(
-            format_analysis_cancellable(&analysis, &FormatConfig::default(), &AlwaysCancel),
+            format_analysis(&analysis, &FormatConfig::default(), &AlwaysCancel),
             Err(FormatError::Cancelled)
         ));
     }

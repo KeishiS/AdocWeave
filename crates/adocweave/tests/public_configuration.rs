@@ -75,7 +75,7 @@ fn cancellable_lint_api_is_public() {
     cancellation.cancel();
 
     assert_eq!(
-        adocweave::output::diagnostics::lint_analysis_cancellable(
+        adocweave::output::diagnostics::lint_analysis(
             &analysis,
             &adocweave::output::diagnostics::LintConfig::default(),
             &cancellation,

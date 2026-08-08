@@ -1,5 +1,38 @@
 {
   "schemaVersion": 1,
   "releaseVersion": "0.37.0",
-  "changes": []
+  "changes": [
+    {
+      "crate": "adocweave",
+      "description": "整形とlintのAPIを一本化するため、``format_analysis_cancellable``を削除しました。同じ引数の``format_analysis``がcancellationを受け取ります。",
+      "item": "function adocweave::output::formatter::format_analysis_cancellable, previously",
+      "lint": "function_missing",
+      "migration": "``format_analysis_cancellable``の呼出しを``format_analysis``へ改名してください。引数と戻り値は同じです。",
+      "summary": "pub fn removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``lint_analysis_cancellable``を削除しました。同じ引数の``lint_analysis``がcancellationを受け取ります。",
+      "item": "function adocweave::output::diagnostics::lint_analysis_cancellable, previously",
+      "lint": "function_missing",
+      "migration": "``lint_analysis_cancellable``の呼出しを``lint_analysis``へ改名してください。引数と戻り値は同じです。",
+      "summary": "pub fn removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``format_analysis``へcancellation引数を追加し、戻り値を``Result<FormatOutput, FormatError>``へ変更しました。",
+      "item": "adocweave::output::formatter::format_analysis now takes 3 parameters instead of 2,",
+      "lint": "function_parameter_count_changed",
+      "migration": "取消を使わない``format_analysis``の呼出しへ``&adocweave::NeverCancel``を追加し、``FormatError::Position``を従来のerrorとして処理してください。``FormatError::Cancelled``は取消を渡さない限り発生しません。",
+      "summary": "pub fn parameter count changed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``lint_analysis``へcancellation引数を追加し、戻り値を``Result<Vec<Diagnostic>, LintError>``へ変更しました。",
+      "item": "adocweave::output::diagnostics::lint_analysis now takes 3 parameters instead of 2,",
+      "lint": "function_parameter_count_changed",
+      "migration": "取消を使わない``lint_analysis``の呼出しへ``&adocweave::NeverCancel``を追加し、``LintError::Position``を従来のerrorとして処理してください。``LintError::Cancelled``は取消を渡さない限り発生しません。",
+      "summary": "pub fn parameter count changed"
+    }
+  ]
 }

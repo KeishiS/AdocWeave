@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use adocweave::output::formatter::{FormatConfig, NewlineStyle, format_analysis};
+use adocweave::output::formatter::{FormatConfig, FormatError, NewlineStyle, format_analysis};
 use adocweave::{AnalysisOptions, Engine, ParseError};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -83,9 +83,11 @@ pub(crate) fn process(
     let analysis = Engine::new(analysis_options.clone())
         .analyze(source)
         .map_err(Error::Analysis)?;
-    Ok(format_analysis(&analysis, format_config)
-        .map_err(Error::Position)?
-        .formatted)
+    match format_analysis(&analysis, format_config, &adocweave::NeverCancel) {
+        Ok(output) => Ok(output.formatted),
+        Err(FormatError::Position(error)) => Err(Error::Position(error)),
+        Err(FormatError::Cancelled) => unreachable!("NeverCancel cannot cancel formatting"),
+    }
 }
 
 pub(crate) fn run_single(

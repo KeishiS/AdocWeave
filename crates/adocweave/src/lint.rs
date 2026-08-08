@@ -14,7 +14,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::cancellation::CancellationCheckpoint;
-use crate::core::{CancellationCheck, NeverCancel};
+use crate::core::CancellationCheck;
+#[cfg(test)]
+use crate::core::NeverCancel;
 use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticCode, DiagnosticId, Fix, RelatedInformation, Severity,
     TextEdit, sort_diagnostics,
@@ -593,21 +595,8 @@ fn lint_with_analysis_limits(
     lint_parsed_document(LintContext::new(&parsed.syntax, &parsed.ast), config)
 }
 
-pub fn lint_analysis(
-    analysis: &crate::core::Analysis,
-    config: &LintConfig,
-) -> Result<Vec<Diagnostic>, PositionError> {
-    match lint_analysis_cancellable(analysis, config, &NeverCancel) {
-        Ok(diagnostics) => Ok(diagnostics),
-        Err(LintError::Position(error)) => Err(error),
-        Err(LintError::Cancelled) => {
-            unreachable!("NeverCancel cannot cancel lint analysis")
-        }
-    }
-}
-
 /// Applies diagnostics to one analysis with cooperative cancellation.
-pub fn lint_analysis_cancellable(
+pub fn lint_analysis(
     analysis: &crate::core::Analysis,
     config: &LintConfig,
     cancellation: &dyn CancellationCheck,
