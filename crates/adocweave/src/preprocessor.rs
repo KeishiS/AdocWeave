@@ -905,7 +905,7 @@ pub enum HostResourceErrorKind {
 /// This enum is non-exhaustive so future suspension and terminal states can be
 /// added compatibly. Callers must retain a fallback match arm.
 #[non_exhaustive]
-pub enum PreprocessStep {
+pub(crate) enum PreprocessStep {
     /// Preprocessing completed and produced one immutable document.
     Complete(PreprocessedDocument),
     /// Processing stopped before the first resource whose availability is deferred.
@@ -981,7 +981,7 @@ fn bind_effective_step(
 ///
 /// The type intentionally does not implement `Clone`: exactly one response can
 /// advance the accumulated attributes, limits, include stack, and source map.
-pub struct SuspendedPreprocess {
+pub(crate) struct SuspendedPreprocess {
     machine: PreprocessMachine,
     pending: PendingInclude,
     request: ResourceRequest,
@@ -1039,7 +1039,7 @@ impl SuspendedPreprocess {
 }
 
 /// Starts preprocessing that may suspend when the lookup returns `Deferred`.
-pub fn preprocess_resumable(
+pub(crate) fn preprocess_resumable(
     source: &str,
     options: &PreprocessOptions,
     resources: &(impl ResourceLookup + ?Sized),
