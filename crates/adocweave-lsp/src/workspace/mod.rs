@@ -1015,23 +1015,18 @@ impl WorkspaceResources {
         Ok(())
     }
 
+    /// Replaces the whole state so no field can survive a failed load by
+    /// being missing from a hand-written clear list. Only the root request,
+    /// the bumped generation, and the monotonic disk version carry over.
     fn fail_closed(&mut self, roots: Vec<PathBuf>, limits: WorkspaceLimits) {
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
-        self.inner = Workspace::new_at_generation(limits, seed);
-        Arc::make_mut(&mut self.analysis_root_roles).clear();
-        self.roots = roots;
-        self.directory_roots.clear();
-        Arc::make_mut(&mut self.single_file_roots).clear();
-        Arc::make_mut(&mut self.scan_settings).clear();
-        self.filesystem_policy = None;
-        Arc::make_mut(&mut self.filesystems).clear();
-        Arc::make_mut(&mut self.project_plans).clear();
-        Arc::make_mut(&mut self.resource_projects).clear();
-        Arc::make_mut(&mut self.include_interests).clear();
-        Arc::make_mut(&mut self.loaded_include_resources).clear();
-        Arc::make_mut(&mut self.include_dependencies).clear();
-        Arc::make_mut(&mut self.retained_layers).clear();
-        self.last_load_failed_closed = true;
+        *self = Self {
+            inner: Workspace::new_at_generation(limits, seed),
+            roots,
+            next_disk_version: self.next_disk_version,
+            last_load_failed_closed: true,
+            ..Self::default()
+        };
     }
 
     pub(crate) const fn last_load_failed_closed(&self) -> bool {
