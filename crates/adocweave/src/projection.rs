@@ -407,43 +407,72 @@ fn project_link(link: &Link) -> ExternalLink {
     }
 }
 
+const fn role_search_kind(role: crate::text_role::BlockTextRole) -> Option<SearchTextKind> {
+    match role {
+        crate::text_role::BlockTextRole::Prose => Some(SearchTextKind::Prose),
+        crate::text_role::BlockTextRole::Code => Some(SearchTextKind::Code),
+        crate::text_role::BlockTextRole::Container | crate::text_role::BlockTextRole::Excluded => {
+            None
+        }
+    }
+}
+
+fn push_search_role(
+    output: &mut Vec<SearchTextSegment>,
+    role: crate::text_role::BlockTextRole,
+    source_range: TextRange,
+    text: String,
+) {
+    if let Some(kind) = role_search_kind(role) {
+        push_search(output, kind, source_range, text);
+    }
+}
+
 fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment>) {
     crate::walker::walk_block_slice(blocks, |node| match node {
-        crate::walker::SemanticNode::Block(AstBlock::Heading(heading)) => push_search(
+        crate::walker::SemanticNode::Block(block @ AstBlock::Heading(heading)) => push_search_role(
             output,
-            SearchTextKind::Prose,
+            crate::text_role::block_text_role(block),
             heading.text_range,
             inline_text(&heading.inlines),
         ),
-        crate::walker::SemanticNode::Block(AstBlock::Paragraph(paragraph)) => {
-            push_search(
+        crate::walker::SemanticNode::Block(block @ AstBlock::Paragraph(paragraph)) => {
+            push_search_role(
                 output,
-                SearchTextKind::Prose,
+                crate::text_role::block_text_role(block),
                 paragraph.content_range,
                 fold_line_endings(&inline_text(&paragraph.inlines)),
             );
         }
-        crate::walker::SemanticNode::Block(AstBlock::LiteralParagraph(literal)) => push_search(
-            output,
-            SearchTextKind::Code,
-            literal.content_range,
-            literal.value.clone(),
-        ),
-        crate::walker::SemanticNode::Block(AstBlock::Source(source)) => push_search(
-            output,
-            SearchTextKind::Code,
-            source.content_range,
-            source.value.clone(),
-        ),
-        crate::walker::SemanticNode::Block(AstBlock::Verbatim(source)) => push_search(
-            output,
-            SearchTextKind::Code,
-            source.content_range,
-            source.value.clone(),
-        ),
+        crate::walker::SemanticNode::Block(block @ AstBlock::LiteralParagraph(literal)) => {
+            push_search_role(
+                output,
+                crate::text_role::block_text_role(block),
+                literal.content_range,
+                literal.value.clone(),
+            );
+        }
+        crate::walker::SemanticNode::Block(
+            block @ (AstBlock::Source(_) | AstBlock::Verbatim(_)),
+        ) => {
+            let (content_range, value) = match block {
+                AstBlock::Source(source) => (source.content_range, source.value.clone()),
+                AstBlock::Verbatim(source) => (source.content_range, source.value.clone()),
+                _ => unreachable!("the pattern admits only source and verbatim blocks"),
+            };
+            push_search_role(
+                output,
+                crate::text_role::block_text_role(block),
+                content_range,
+                value,
+            );
+        }
         crate::walker::SemanticNode::Block(AstBlock::Delimited(block)) => {
             if let crate::block_model::DelimitedContent::Verbatim(value) = &block.content
-                && !matches!(block.kind, crate::block_model::DelimitedBlockKind::Comment)
+                && matches!(
+                    crate::text_role::delimited_text_role(block.kind),
+                    crate::text_role::BlockTextRole::Code
+                )
             {
                 push_search(
                     output,
@@ -469,21 +498,18 @@ fn collect_search_blocks(blocks: &[AstBlock], output: &mut Vec<SearchTextSegment
                 inline_text(&item.inlines),
             );
         }
-        crate::walker::SemanticNode::TableCell(cell) => match &cell.content {
-            crate::table::TableCellContent::Inlines(inlines) => push_search(
-                output,
-                SearchTextKind::Prose,
-                cell.content_range,
-                inline_text(inlines),
-            ),
-            crate::table::TableCellContent::Verbatim(value) => push_search(
-                output,
-                SearchTextKind::Code,
-                cell.content_range,
-                value.clone(),
-            ),
-            crate::table::TableCellContent::AsciiDoc(_) => {}
-        },
+        crate::walker::SemanticNode::TableCell(cell) => {
+            let role = crate::text_role::table_cell_text_role(&cell.content);
+            match &cell.content {
+                crate::table::TableCellContent::Inlines(inlines) => {
+                    push_search_role(output, role, cell.content_range, inline_text(inlines));
+                }
+                crate::table::TableCellContent::Verbatim(value) => {
+                    push_search_role(output, role, cell.content_range, value.clone());
+                }
+                crate::table::TableCellContent::AsciiDoc(_) => {}
+            }
+        }
         crate::walker::SemanticNode::Block(
             AstBlock::Break(_) | AstBlock::List(_) | AstBlock::Math(_) | AstBlock::Unsupported(_),
         )

@@ -405,45 +405,53 @@ impl<'analysis> Builder<'analysis> {
                 });
             }
             Block::List(list) => output.push(self.list(list)?),
-            Block::Delimited(block) => match block.kind {
-                DelimitedBlockKind::Comment => {
-                    self.budget.claim()?;
-                    output.push(ByteNode::Paragraph {
-                        range: ByteRange(block.range),
-                        children: vec![
-                            self.comment(ByteRange(block.range), ByteRange(block.content_range))?,
-                        ],
-                    });
-                }
-                DelimitedBlockKind::Listing | DelimitedBlockKind::Literal => {
-                    self.budget.claim()?;
-                    output.push(ByteNode::CodeBlock {
-                        range: ByteRange(block.range),
-                        value_range: ByteRange(block.content_range),
-                        lang: None,
-                    });
-                }
-                DelimitedBlockKind::Pass => {}
-                DelimitedBlockKind::Quote => {
-                    let mut children = self.compound(&block.content)?;
-                    sort_and_check(&mut children)?;
-                    self.budget.claim()?;
-                    output.push(ByteNode::BlockQuote {
-                        range: ByteRange(block.range),
-                        children,
-                    });
-                }
-                DelimitedBlockKind::Table => {
-                    if let DelimitedContent::Table(table) = &block.content {
-                        output.push(self.table(ByteRange(block.range), table)?);
+            // The shared text-role table decides which delimited kinds carry
+            // code, prose containers, or no lintable text, so this plan and
+            // the search index cannot diverge when a kind is added.
+            Block::Delimited(block) => {
+                match adocweave::output::projection::delimited_text_role(block.kind) {
+                    adocweave::output::projection::BlockTextRole::Code => {
+                        self.budget.claim()?;
+                        output.push(ByteNode::CodeBlock {
+                            range: ByteRange(block.range),
+                            value_range: ByteRange(block.content_range),
+                            lang: None,
+                        });
                     }
+                    adocweave::output::projection::BlockTextRole::Excluded => {
+                        if block.kind == DelimitedBlockKind::Comment {
+                            self.budget.claim()?;
+                            output.push(ByteNode::Paragraph {
+                                range: ByteRange(block.range),
+                                children: vec![self.comment(
+                                    ByteRange(block.range),
+                                    ByteRange(block.content_range),
+                                )?],
+                            });
+                        }
+                    }
+                    adocweave::output::projection::BlockTextRole::Prose
+                    | adocweave::output::projection::BlockTextRole::Container => match block.kind {
+                        DelimitedBlockKind::Quote => {
+                            let mut children = self.compound(&block.content)?;
+                            sort_and_check(&mut children)?;
+                            self.budget.claim()?;
+                            output.push(ByteNode::BlockQuote {
+                                range: ByteRange(block.range),
+                                children,
+                            });
+                        }
+                        DelimitedBlockKind::Table => {
+                            if let DelimitedContent::Table(table) = &block.content {
+                                output.push(self.table(ByteRange(block.range), table)?);
+                            }
+                        }
+                        _ => {
+                            output.extend(self.compound(&block.content)?);
+                        }
+                    },
                 }
-                DelimitedBlockKind::Example
-                | DelimitedBlockKind::Open
-                | DelimitedBlockKind::Sidebar => {
-                    output.extend(self.compound(&block.content)?);
-                }
-            },
+            }
         }
         sort_and_check(&mut output)?;
         Ok(output)
