@@ -230,7 +230,7 @@ test("破壊的変更記録はschemaと未知項目を厳密に検査する", ()
   // A release without a breaking change records none, so an empty list is a
   // valid state rather than a missing record.
   for (const change of actual.changes) {
-    assert.ok(change.crate.startsWith("adocweave-"), change.crate);
+    assert.ok(CHECKED_CRATES.includes(change.crate), change.crate);
     for (const field of ["lint", "item", "summary", "description", "migration"]) {
       assert.ok(change[field].length > 0, `${change.item}: ${field}`);
     }
