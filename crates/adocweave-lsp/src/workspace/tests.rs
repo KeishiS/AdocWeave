@@ -722,12 +722,16 @@ fn missing_include_interests_share_the_dependency_count_limit() {
     let target = uri_id(&target_uri).expect("target ID");
     let mut resources = WorkspaceResources::default();
     resources.load_roots(&[root_uri]).expect("load workspace");
-    resources.include_interests = (0..MAX_WATCHED_INCLUDE_RESOURCES)
-        .map(|index| ResourceId::new(format!("file:///retained/{index}.txt")).expect("interest ID"))
-        .collect();
-    resources.include_dependencies.insert(
+    resources.include_interests = std::sync::Arc::new(
+        (0..MAX_WATCHED_INCLUDE_RESOURCES)
+            .map(|index| {
+                ResourceId::new(format!("file:///retained/{index}.txt")).expect("interest ID")
+            })
+            .collect(),
+    );
+    std::sync::Arc::make_mut(&mut resources.include_dependencies).insert(
         uri_id(&source_uri).expect("source ID"),
-        resources.include_interests.clone(),
+        (*resources.include_interests).clone(),
     );
 
     let error = analyze_root(&mut resources, &source_uri)
