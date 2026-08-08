@@ -53,7 +53,7 @@ use cli_error::{CliError, check_error, convert_error, format_error, preview_erro
 
 fn read_input(
     path: Option<PathBuf>,
-    limits: adocweave_config::AnalysisSnapshotLimits,
+    limits: adocweave_workspace::RetainedResourceLimits,
 ) -> Result<Vec<u8>, CliError> {
     let limit = limits.max_resource_bytes.min(limits.max_total_bytes);
     let (mut reader, source_name): (Box<dyn io::Read>, String) = match path {

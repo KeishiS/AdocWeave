@@ -1081,7 +1081,7 @@ fn resolved_default_plan_names_each_budget_domain() {
         adocweave_workspace::RetainedResourceLimits::default()
     );
     assert_eq!(
-        plan.analysis_snapshot.max_resources,
+        plan.analysis_snapshot.max_files,
         plan.filesystem_reads.max_files
     );
 }
