@@ -555,12 +555,12 @@ pub struct Workspace {
     generation: Generation,
     limits: WorkspaceLimits,
     roots: Arc<BTreeSet<ResourceId>>,
-    disk: BTreeMap<ResourceId, Resource>,
-    overlays: BTreeMap<ResourceId, Resource>,
+    disk: Arc<BTreeMap<ResourceId, Resource>>,
+    overlays: Arc<BTreeMap<ResourceId, Resource>>,
     retained_resource_count: usize,
     retained_total_bytes: u64,
     effective: Arc<BTreeMap<ResourceId, Resource>>,
-    dependencies: DependencyGraph<ResourceId>,
+    dependencies: Arc<DependencyGraph<ResourceId>>,
 }
 
 impl Default for Workspace {
@@ -581,12 +581,12 @@ impl Workspace {
             generation,
             limits,
             roots: Arc::default(),
-            disk: BTreeMap::new(),
-            overlays: BTreeMap::new(),
+            disk: Arc::new(BTreeMap::new()),
+            overlays: Arc::new(BTreeMap::new()),
             retained_resource_count: 0,
             retained_total_bytes: 0,
             effective: Arc::default(),
-            dependencies: DependencyGraph::default(),
+            dependencies: Arc::new(DependencyGraph::default()),
         }
     }
 
@@ -648,7 +648,7 @@ impl Workspace {
         self.ensure_newer(self.disk.get(&id), &resource)?;
         let (retained_resource_count, retained_total_bytes) =
             self.ensure_capacity(Some((&id, &resource)), None)?;
-        self.disk.insert(id.clone(), resource);
+        Arc::make_mut(&mut self.disk).insert(id.clone(), resource);
         self.retained_resource_count = retained_resource_count;
         self.retained_total_bytes = retained_total_bytes;
         if self.overlays.contains_key(&id) {
@@ -673,7 +673,7 @@ impl Workspace {
         self.ensure_newer(self.overlays.get(&id), &resource)?;
         let (retained_resource_count, retained_total_bytes) =
             self.ensure_capacity(None, Some((&id, &resource)))?;
-        self.overlays.insert(id.clone(), resource);
+        Arc::make_mut(&mut self.overlays).insert(id.clone(), resource);
         self.retained_resource_count = retained_resource_count;
         self.retained_total_bytes = retained_total_bytes;
         self.refresh_effective(id)
@@ -684,7 +684,7 @@ impl Workspace {
         &mut self,
         id: &ResourceId,
     ) -> Result<BTreeSet<ResourceId>, WorkspaceError> {
-        let Some(overlay) = self.overlays.remove(id) else {
+        let Some(overlay) = Arc::make_mut(&mut self.overlays).remove(id) else {
             return Ok(BTreeSet::new());
         };
         self.retained_total_bytes -= overlay.text.len() as u64;
@@ -698,7 +698,7 @@ impl Workspace {
     ///
     /// An open overlay remains effective until it is closed.
     pub fn remove_disk(&mut self, id: &ResourceId) -> BTreeSet<ResourceId> {
-        let Some(disk) = self.disk.remove(id) else {
+        let Some(disk) = Arc::make_mut(&mut self.disk).remove(id) else {
             return BTreeSet::new();
         };
         self.retained_total_bytes -= disk.text.len() as u64;
@@ -796,8 +796,7 @@ impl Workspace {
             ));
         }
         for (owner, dependencies) in &analysis.dependencies {
-            self.dependencies
-                .replace(owner.clone(), dependencies.clone());
+            Arc::make_mut(&mut self.dependencies).replace(owner.clone(), dependencies.clone());
         }
         Ok(())
     }
@@ -961,7 +960,7 @@ impl Workspace {
         } else {
             Arc::make_mut(&mut self.effective).remove(&id);
             Arc::make_mut(&mut self.roots).remove(&id);
-            self.dependencies.remove(&id);
+            Arc::make_mut(&mut self.dependencies).remove(&id);
         }
         self.generation = self.generation.next();
         let mut affected = self.affected_roots(&id);
@@ -975,7 +974,7 @@ impl Workspace {
         let affected = self.affected_roots(id);
         Arc::make_mut(&mut self.effective).remove(id);
         Arc::make_mut(&mut self.roots).remove(id);
-        self.dependencies.remove(id);
+        Arc::make_mut(&mut self.dependencies).remove(id);
         self.generation = self.generation.next();
         affected
     }

@@ -176,25 +176,25 @@ pub struct LoadedRoots {
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceResources {
     inner: Workspace,
-    analysis_root_roles: BTreeMap<ResourceId, AnalysisRootRoles>,
+    analysis_root_roles: Arc<BTreeMap<ResourceId, AnalysisRootRoles>>,
     roots: Vec<PathBuf>,
     directory_roots: Vec<PathBuf>,
-    single_file_roots: BTreeSet<PathBuf>,
-    scan_settings: BTreeMap<PathBuf, adocweave_config::WorkspaceScanSettings>,
+    single_file_roots: Arc<BTreeSet<PathBuf>>,
+    scan_settings: Arc<BTreeMap<PathBuf, adocweave_config::WorkspaceScanSettings>>,
     filesystem_policy: Option<LocalFilesystemPolicy>,
-    filesystems: BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>,
-    project_plans: BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>,
-    resource_projects: BTreeMap<ResourceId, ProjectScopeId>,
+    filesystems: Arc<BTreeMap<ProjectScopeId, Arc<Mutex<LocalFilesystemSession>>>>,
+    project_plans: Arc<BTreeMap<ProjectScopeId, adocweave_config::ResolvedResourceLimitPlan>>,
+    resource_projects: Arc<BTreeMap<ResourceId, ProjectScopeId>>,
     /// Include targets which must remain observable by the file watcher.
     ///
     /// Unlike `loaded_include_resources`, this includes admitted targets which are
     /// currently missing or could not be read. Keeping the interest separate
     /// from the disk layer lets a later create or repair notification recover
     /// the dependent open document.
-    include_interests: BTreeSet<ResourceId>,
-    loaded_include_resources: BTreeSet<ResourceId>,
-    include_dependencies: BTreeMap<ResourceId, BTreeSet<ResourceId>>,
-    retained_layers: BTreeMap<ProjectScopeId, RetainedResourceBudget>,
+    include_interests: Arc<BTreeSet<ResourceId>>,
+    loaded_include_resources: Arc<BTreeSet<ResourceId>>,
+    include_dependencies: Arc<BTreeMap<ResourceId, BTreeSet<ResourceId>>>,
+    retained_layers: Arc<BTreeMap<ProjectScopeId, RetainedResourceBudget>>,
     /// Project files already discovered and parsed, keyed by the directory the
     /// search started from.
     ///
@@ -203,14 +203,14 @@ pub struct WorkspaceResources {
     /// this the work repeats on every keystroke, on the thread that answers
     /// every other request. Discovery depends only on the directory and the
     /// roots, so the directory is a complete key while the roots hold still.
-    config_cache: BTreeMap<PathBuf, Option<adocweave_config::ConfigSnapshot>>,
+    config_cache: Arc<BTreeMap<PathBuf, Option<adocweave_config::ConfigSnapshot>>>,
     /// The claim each disk resource holds on its project's filesystem session.
     ///
     /// Releasing a resource means giving up the exact claim its last read
     /// established, rather than naming a path. A claim carries a generation, so
     /// a stale watcher notification cannot release a resource that has since
     /// been read again.
-    resource_bindings: BTreeMap<ResourceId, FilesystemResourceBinding>,
+    resource_bindings: Arc<BTreeMap<ResourceId, FilesystemResourceBinding>>,
     next_disk_version: i64,
     last_load_failed_closed: bool,
 }
@@ -400,7 +400,7 @@ impl IncludeAcquisition<'_> {
                 "workspace include dependency limit exceeded: {MAX_WATCHED_INCLUDE_RESOURCES}"
             ));
         }
-        self.candidate.include_interests.insert(target.clone());
+        Arc::make_mut(&mut self.candidate.include_interests).insert(target.clone());
         self.requested.insert(target.clone());
         Ok(())
     }
@@ -447,8 +447,7 @@ impl IncludeAcquisition<'_> {
                 .map_err(|error| error.to_string())?;
         }
         for (scope, candidate) in &self.drafts {
-            self.candidate
-                .filesystems
+            Arc::make_mut(&mut self.candidate.filesystems)
                 .insert(scope.clone(), Arc::clone(&candidate.session));
         }
         Ok(self.candidate)
@@ -985,20 +984,20 @@ impl WorkspaceResources {
                 .map(|(scope, candidate)| (scope, candidate.session))
                 .collect();
             self.inner = inner;
-            self.analysis_root_roles = analysis_root_roles;
+            self.analysis_root_roles = Arc::new(analysis_root_roles);
             self.roots = paths.clone();
             self.directory_roots = directory_roots;
-            self.single_file_roots = single_file_roots;
-            self.scan_settings = scan_settings;
+            self.single_file_roots = Arc::new(single_file_roots);
+            self.scan_settings = Arc::new(scan_settings);
             self.filesystem_policy = authority;
-            self.filesystems = filesystems;
-            self.project_plans = project_plans;
-            self.resource_projects = resource_projects;
-            self.resource_bindings = resource_bindings;
-            self.include_interests.clear();
-            self.loaded_include_resources.clear();
-            self.include_dependencies.clear();
-            self.retained_layers = retained_layers;
+            self.filesystems = Arc::new(filesystems);
+            self.project_plans = Arc::new(project_plans);
+            self.resource_projects = Arc::new(resource_projects);
+            self.resource_bindings = Arc::new(resource_bindings);
+            Arc::make_mut(&mut self.include_interests).clear();
+            Arc::make_mut(&mut self.loaded_include_resources).clear();
+            Arc::make_mut(&mut self.include_dependencies).clear();
+            self.retained_layers = Arc::new(retained_layers);
             self.next_disk_version = next_disk_version;
             Ok(())
         })();
@@ -1019,19 +1018,19 @@ impl WorkspaceResources {
     fn fail_closed(&mut self, roots: Vec<PathBuf>, limits: WorkspaceLimits) {
         let seed = Generation::new(self.inner.generation().get().saturating_add(1));
         self.inner = Workspace::new_at_generation(limits, seed);
-        self.analysis_root_roles.clear();
+        Arc::make_mut(&mut self.analysis_root_roles).clear();
         self.roots = roots;
         self.directory_roots.clear();
-        self.single_file_roots.clear();
-        self.scan_settings.clear();
+        Arc::make_mut(&mut self.single_file_roots).clear();
+        Arc::make_mut(&mut self.scan_settings).clear();
         self.filesystem_policy = None;
-        self.filesystems.clear();
-        self.project_plans.clear();
-        self.resource_projects.clear();
-        self.include_interests.clear();
-        self.loaded_include_resources.clear();
-        self.include_dependencies.clear();
-        self.retained_layers.clear();
+        Arc::make_mut(&mut self.filesystems).clear();
+        Arc::make_mut(&mut self.project_plans).clear();
+        Arc::make_mut(&mut self.resource_projects).clear();
+        Arc::make_mut(&mut self.include_interests).clear();
+        Arc::make_mut(&mut self.loaded_include_resources).clear();
+        Arc::make_mut(&mut self.include_dependencies).clear();
+        Arc::make_mut(&mut self.retained_layers).clear();
         self.last_load_failed_closed = true;
     }
 
@@ -1090,11 +1089,11 @@ impl WorkspaceResources {
                 message,
                 journal_relevant: true,
             })?;
-            self.loaded_include_resources.remove(&id);
-            if let Some(roles) = self.analysis_root_roles.get_mut(&id) {
+            Arc::make_mut(&mut self.loaded_include_resources).remove(&id);
+            if let Some(roles) = Arc::make_mut(&mut self.analysis_root_roles).get_mut(&id) {
                 roles.scan_root = false;
                 if !roles.is_root() {
-                    self.analysis_root_roles.remove(&id);
+                    Arc::make_mut(&mut self.analysis_root_roles).remove(&id);
                     self.inner.unregister_root(&id);
                 }
             }
@@ -1231,18 +1230,18 @@ impl WorkspaceResources {
         })?;
         self.inner = inner;
         if discover_as_root {
-            self.analysis_root_roles
+            Arc::make_mut(&mut self.analysis_root_roles)
                 .entry(id.clone())
                 .or_default()
                 .scan_root = true;
         }
         self.retained_layers = retained_layers;
-        self.filesystems.insert(scope.clone(), filesystem);
-        self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id.clone(), scope);
-        self.resource_bindings.insert(id.clone(), binding);
+        Arc::make_mut(&mut self.filesystems).insert(scope.clone(), filesystem);
+        Arc::make_mut(&mut self.project_plans).insert(scope.clone(), plan);
+        Arc::make_mut(&mut self.resource_projects).insert(id.clone(), scope);
+        Arc::make_mut(&mut self.resource_bindings).insert(id.clone(), binding);
         if known_include {
-            self.loaded_include_resources.insert(id);
+            Arc::make_mut(&mut self.loaded_include_resources).insert(id);
         }
         self.next_disk_version = next_disk_version;
         self.gc_scopes();
@@ -1268,16 +1267,16 @@ impl WorkspaceResources {
             .cloned()
             .unwrap_or_default()
             .without_resource(id);
-        retained_layers.insert(scope.clone(), budget);
+        Arc::make_mut(&mut retained_layers).insert(scope.clone(), budget);
         self.release_resource_binding(id)?;
         self.inner = inner;
-        self.analysis_root_roles.remove(id);
+        Arc::make_mut(&mut self.analysis_root_roles).remove(id);
         self.retained_layers = retained_layers;
-        self.resource_projects.remove(id);
-        self.include_interests.remove(id);
-        self.loaded_include_resources.remove(id);
-        self.include_dependencies.remove(id);
-        for dependencies in self.include_dependencies.values_mut() {
+        Arc::make_mut(&mut self.resource_projects).remove(id);
+        Arc::make_mut(&mut self.include_interests).remove(id);
+        Arc::make_mut(&mut self.loaded_include_resources).remove(id);
+        Arc::make_mut(&mut self.include_dependencies).remove(id);
+        for dependencies in Arc::make_mut(&mut self.include_dependencies).values_mut() {
             dependencies.remove(id);
         }
         let pruned = self.prune_unreferenced_include_resources();
@@ -1349,10 +1348,10 @@ impl WorkspaceResources {
             .upsert_disk(id.clone(), Revision::new(next_disk_version), read.text)
             .map_err(|error| error.to_string())?;
         self.retained_layers = retained_layers;
-        self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id.clone(), scope);
-        self.resource_bindings.insert(id.clone(), read.binding);
-        self.loaded_include_resources.insert(id);
+        Arc::make_mut(&mut self.project_plans).insert(scope.clone(), plan);
+        Arc::make_mut(&mut self.resource_projects).insert(id.clone(), scope);
+        Arc::make_mut(&mut self.resource_bindings).insert(id.clone(), read.binding);
+        Arc::make_mut(&mut self.loaded_include_resources).insert(id);
         self.next_disk_version = next_disk_version;
         Ok(())
     }
@@ -1404,7 +1403,7 @@ impl WorkspaceResources {
         scope: &ProjectScopeId,
         charge: RetainedLayerCharge,
         limits: RetainedResourceLimits,
-    ) -> Result<BTreeMap<ProjectScopeId, RetainedResourceBudget>, String> {
+    ) -> Result<Arc<BTreeMap<ProjectScopeId, RetainedResourceBudget>>, String> {
         let mut retained_layers = self.retained_layers.clone();
         if let Some(previous_scope) = self.resource_projects.get(id)
             && previous_scope != scope
@@ -1414,7 +1413,7 @@ impl WorkspaceResources {
                 .cloned()
                 .unwrap_or_default()
                 .without_resource(id);
-            retained_layers.insert(previous_scope.clone(), previous);
+            Arc::make_mut(&mut retained_layers).insert(previous_scope.clone(), previous);
         }
         let replacement = retained_layers
             .get(scope)
@@ -1422,7 +1421,7 @@ impl WorkspaceResources {
             .unwrap_or_default()
             .with_layers(id.clone(), charge, limits)
             .map_err(|error| error.to_string())?;
-        retained_layers.insert(scope.clone(), replacement);
+        Arc::make_mut(&mut retained_layers).insert(scope.clone(), replacement);
         Ok(retained_layers)
     }
 
@@ -1433,7 +1432,7 @@ impl WorkspaceResources {
     /// reports such a claim as stale and keeps the resource, which is exactly
     /// what a late watcher notification must not be able to undo.
     fn release_resource_binding(&mut self, id: &ResourceId) -> Result<(), String> {
-        let Some(binding) = self.resource_bindings.remove(id) else {
+        let Some(binding) = Arc::make_mut(&mut self.resource_bindings).remove(id) else {
             return Ok(());
         };
         let Some(scope) = self.resource_projects.get(id) else {
@@ -1465,11 +1464,10 @@ impl WorkspaceResources {
             .values()
             .cloned()
             .collect::<BTreeSet<_>>();
-        self.retained_layers
+        Arc::make_mut(&mut self.retained_layers)
             .retain(|scope, budget| retained.contains(scope) || !budget.is_empty());
-        self.project_plans
-            .retain(|scope, _| retained.contains(scope));
-        self.filesystems.retain(|scope, _| retained.contains(scope));
+        Arc::make_mut(&mut self.project_plans).retain(|scope, _| retained.contains(scope));
+        Arc::make_mut(&mut self.filesystems).retain(|scope, _| retained.contains(scope));
     }
 
     pub fn get(&self, uri: &Url) -> Option<&adocweave_workspace::Resource> {
@@ -1576,17 +1574,17 @@ impl WorkspaceResources {
             .map(PreparedWorkspaceRead::commit)
             .transpose()?;
         self.inner = inner;
-        self.analysis_root_roles
+        Arc::make_mut(&mut self.analysis_root_roles)
             .entry(id.clone())
             .or_default()
             .open_overlay = true;
         self.retained_layers = retained_layers;
         if let Some((filesystem, binding)) = committed_disk {
-            self.filesystems.insert(scope.clone(), filesystem);
-            self.resource_bindings.insert(id.clone(), binding);
+            Arc::make_mut(&mut self.filesystems).insert(scope.clone(), filesystem);
+            Arc::make_mut(&mut self.resource_bindings).insert(id.clone(), binding);
         }
-        self.project_plans.insert(scope.clone(), plan);
-        self.resource_projects.insert(id.clone(), scope);
+        Arc::make_mut(&mut self.project_plans).insert(scope.clone(), plan);
+        Arc::make_mut(&mut self.resource_projects).insert(id.clone(), scope);
         self.next_disk_version = next_disk_version;
         self.gc_scopes();
         let mut affected = strings(affected);
@@ -1615,7 +1613,7 @@ impl WorkspaceResources {
                     plan.retained_layers,
                 )
                 .map_err(|error| error.to_string())?;
-            retained_layers.insert(scope.clone(), budget);
+            Arc::make_mut(&mut retained_layers).insert(scope.clone(), budget);
         }
         let mut inner = self.inner.clone();
         let mut affected = strings(inner.remove_disk(&id));
@@ -1624,7 +1622,7 @@ impl WorkspaceResources {
         self.inner = inner;
         self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
-            self.resource_projects.remove(&id);
+            Arc::make_mut(&mut self.resource_projects).remove(&id);
         }
         self.gc_scopes();
         Ok(affected)
@@ -1645,7 +1643,7 @@ impl WorkspaceResources {
                 .unwrap_or_default()
                 .with_overlay(id.clone(), None, plan.retained_layers)
                 .map_err(|error| error.to_string())?;
-            retained_layers.insert(project, budget);
+            Arc::make_mut(&mut retained_layers).insert(project, budget);
         }
         let mut inner = self.inner.clone();
         let mut affected = inner
@@ -1664,15 +1662,15 @@ impl WorkspaceResources {
         }
         affected.remove(&id);
         self.inner = inner;
-        if let Some(roles) = self.analysis_root_roles.get_mut(&id) {
+        if let Some(roles) = Arc::make_mut(&mut self.analysis_root_roles).get_mut(&id) {
             roles.open_overlay = false;
         }
         if remove_root {
-            self.analysis_root_roles.remove(&id);
+            Arc::make_mut(&mut self.analysis_root_roles).remove(&id);
         }
         self.retained_layers = retained_layers;
         if self.inner.get(&id).is_none() {
-            self.resource_projects.remove(&id);
+            Arc::make_mut(&mut self.resource_projects).remove(&id);
         }
         self.gc_scopes();
         Ok(strings(affected))
@@ -1981,7 +1979,7 @@ impl WorkspaceResources {
             {
                 break;
             }
-            self.include_interests.insert(id.clone());
+            Arc::make_mut(&mut self.include_interests).insert(id.clone());
         }
         self.record_include_dependencies(root, requested);
     }
@@ -1999,7 +1997,7 @@ impl WorkspaceResources {
             .into_iter()
             .filter(|id| self.include_interests.contains(id))
             .collect();
-        self.include_dependencies.insert(root.clone(), watched);
+        Arc::make_mut(&mut self.include_dependencies).insert(root.clone(), watched);
         self.prune_unreferenced_include_resources();
     }
 
@@ -2035,7 +2033,7 @@ impl WorkspaceResources {
 
     pub fn forget_include_dependencies(&mut self, root: &Url) -> Result<BTreeSet<String>, String> {
         let root = uri_id(root)?;
-        self.include_dependencies.remove(&root);
+        Arc::make_mut(&mut self.include_dependencies).remove(&root);
         Ok(self.prune_unreferenced_include_resources())
     }
 
@@ -2053,8 +2051,8 @@ impl WorkspaceResources {
             .collect::<Vec<_>>();
         let mut affected = BTreeSet::new();
         for id in stale {
-            self.include_interests.remove(&id);
-            let was_loaded_include = self.loaded_include_resources.remove(&id);
+            Arc::make_mut(&mut self.include_interests).remove(&id);
+            let was_loaded_include = Arc::make_mut(&mut self.loaded_include_resources).remove(&id);
             if !was_loaded_include
                 || self
                     .analysis_root_roles
@@ -2120,7 +2118,7 @@ impl WorkspaceResources {
             return Ok(cached.clone());
         }
         let config = config_for_path_typed(&self.roots, self.filesystem_policy.as_ref(), path)?;
-        self.config_cache.insert(cache_key, config.clone());
+        Arc::make_mut(&mut self.config_cache).insert(cache_key, config.clone());
         Ok(config)
     }
 
@@ -2131,7 +2129,7 @@ impl WorkspaceResources {
     /// invalidate entries recorded under many directories; clearing all of them
     /// keeps the cache from ever answering with a stale configuration.
     fn forget_configs(&mut self) {
-        self.config_cache.clear();
+        Arc::make_mut(&mut self.config_cache).clear();
     }
 
     fn open_scope_and_plan(
