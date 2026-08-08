@@ -13,6 +13,7 @@ description = "Command-line adapter for AdocWeave"
 adocweave = { path = "../adocweave" }
 adocweave-config = { path = "../adocweave-config" }
 adocweave-host = { path = "../adocweave-host" }
+adocweave-workspace = { path = "../adocweave-workspace" }
 glob = "0.3"
 serde_json = "1.0"
 similar = "3"

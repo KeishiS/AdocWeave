@@ -18,6 +18,7 @@ dependencies = [
  "adocweave",
  "adocweave-config",
  "adocweave-host",
+ "adocweave-workspace",
  "glob",
  "libc",
  "serde_json",
