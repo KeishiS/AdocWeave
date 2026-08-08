@@ -196,8 +196,9 @@ cargo make dist-plan
 cargo make release-check
 ----
 
-``release-check``は公開前の完全な検査です。source、配布物および導入経路の検査に加えて、直前のstable tagとの
-公開Rust API差分とRelease Notesに記載した公開仕様を``semver-check``で照合します。GitHub Actionsのsource qualityも、
+``release-check``は公開前の完全な検査です。標準の``verify``が行うsourceと公開Rust APIの検査に、配布物および
+導入経路の検査を加えます。公開Rust API差分とRelease Notesに記載した公開仕様は``semver-check``で照合します。
+GitHub Actionsのsource qualityも、
 変更pathに応じて実際の差分検査または対象外であることの記録を完了した``semver`` jobだけを成功として集約します。
 
 ``platform-contract``は、WindowsとPOSIXのpath計算、実行file名、archive path、Windows DLL許可一覧、
@@ -249,6 +250,7 @@ tagから再利用するcandidateでは、配布仕様に含まれる全assetを
 
 ``cargo make semver-check``は、候補の公開Rust APIを直前のstable tagと比較します。compileとtestが
 通っても、利用側が名前で参照している型や関数が消えたことは分かりません。この検査はその差分を列挙します。
+標準の``cargo make verify``からも実行するため、Pull Requestを作成する前にCIと同じ差分を確認できます。
 
 比較の対象は、library targetを持つworkspace memberです。binaryだけを提供するcrateはほかのcrateから
 名前で参照できるRust APIを持たないため対象外とし、その理由を``tools/semver-gate.mjs``に記録します。

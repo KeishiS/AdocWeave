@@ -112,6 +112,21 @@ pub struct Reference {
     pub label: Vec<Inline>,
 }
 
+impl Reference {
+    /// The authored identifier portion of a local, document, or scheme reference.
+    ///
+    /// This excludes a document locator and `#`, so editor operations can change
+    /// an anchor without rewriting the rest of the destination.
+    pub const fn authored_anchor_range(&self) -> Option<TextRange> {
+        match &self.authored_destination {
+            ReferenceDestination::Local { anchor_range, .. } => Some(*anchor_range),
+            ReferenceDestination::Document { anchor_range, .. }
+            | ReferenceDestination::Scheme { anchor_range, .. } => *anchor_range,
+            ReferenceDestination::Invalid => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReferenceDestination {
     Local {

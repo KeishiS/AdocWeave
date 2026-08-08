@@ -248,7 +248,7 @@
           default = shell {
             rust = developmentRust pkgs;
             rustSource = true;
-            extra = [ pkgs.rust-analyzer adocweave-fuzz ]
+            extra = [ pkgs.rust-analyzer adocweave-fuzz pkgs.cargo-semver-checks ]
               ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.chromium pkgs.xvfb ];
           };
           ci = shell {
@@ -261,9 +261,9 @@
             rust = ciRust pkgs;
             extra = [ adocweave-fuzz ];
           };
-          # Only the API compatibility gate needs cargo-semver-checks, and it
-          # builds rustdoc for both the candidate and the baseline tag, so it
-          # stays out of the shells that every other job realizes.
+          # CI keeps cargo-semver-checks in its dedicated shell because only the
+          # API compatibility job needs it. The default development shell also
+          # carries it so `cargo make verify` matches the pull request gate.
           ci-semver = shell {
             rust = ciRust pkgs;
             extra = [ pkgs.cargo-semver-checks ];

@@ -1323,6 +1323,15 @@ fn analysis_projection_maps_reference_resource_and_symbol_targets() {
             .map(SourceId::as_str),
         Some("part")
     );
+    let anchor_origin = projection.references[0]
+        .editable_anchor_origin
+        .as_ref()
+        .expect("editable authored anchor origin");
+    assert_eq!(
+        anchor_origin.source_id.as_ref().map(SourceId::as_str),
+        Some("part")
+    );
+    assert_eq!(anchor_origin.range.text_range(), range(32, 38));
     assert_eq!(
         projection.resources[0].target_origins[0]
             .source_id
@@ -1330,6 +1339,35 @@ fn analysis_projection_maps_reference_resource_and_symbol_targets() {
             .map(SourceId::as_str),
         Some("part")
     );
+}
+
+#[test]
+fn analysis_projection_marks_transformed_anchor_ranges_as_uneditable() {
+    let mut snapshot = ResourceSnapshot::default();
+    snapshot.insert(
+        "part.adoc",
+        ResourceDocument {
+            source_id: SourceId::new("part"),
+            source: "  xref:other.adoc#target[]\n".into(),
+        },
+    );
+    let engine = Engine::new(crate::core::AnalysisOptions::default());
+    let analysis = preprocess_and_analyze(
+        &engine,
+        "include::part.adoc[indent=-2]\n",
+        &snapshot,
+        &PreprocessOptions {
+            source_id: Some(SourceId::new("root")),
+            ..PreprocessOptions::default()
+        },
+    )
+    .expect("analysis");
+    let projection = analysis
+        .project_origins(ProjectionLimits::default())
+        .expect("projection");
+
+    assert_eq!(projection.references.len(), 1);
+    assert_eq!(projection.references[0].editable_anchor_origin, None);
 }
 
 #[test]

@@ -54,11 +54,11 @@ fn finish_document_propagates_lowering_cancellation_without_partial_output() {
 
 #[test]
 fn valid_anchor_id_rejects_html_attribute_metacharacters() {
-    assert!(crate::block_grammar::valid_anchor_id("section-1"));
-    assert!(crate::block_grammar::valid_anchor_id("item.lead"));
+    assert!(crate::document::is_valid_anchor_id("section-1"));
+    assert!(crate::document::is_valid_anchor_id("item.lead"));
     for id in ["a\"b", "a'b", "a&b", "a=b", "a(b)", "a b", "a\tb", ""] {
         assert!(
-            !crate::block_grammar::valid_anchor_id(id),
+            !crate::document::is_valid_anchor_id(id),
             "expected {id:?} to be invalid"
         );
     }

@@ -7,7 +7,6 @@ use crate::attributes::parse_lines as parse_attribute_lines;
 use crate::block_grammar::{
     LineRecognition, is_block_title, parse_block_attributes, parse_explicit_anchor,
     parse_math_attribute, parse_source_attribute, recognize_line, unsupported_reason,
-    valid_anchor_id,
 };
 use crate::block_model::*;
 use crate::block_sequence::{
@@ -769,7 +768,7 @@ fn parse_block_sequence(
                     id: id.value.clone(),
                     label: None,
                     target_range: None,
-                    valid: valid_anchor_id(&id.value),
+                    valid: crate::document::is_valid_anchor_id(&id.value),
                 });
             }
             parser

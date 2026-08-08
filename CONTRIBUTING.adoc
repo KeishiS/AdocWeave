@@ -22,7 +22,7 @@ cargo make docs-prose-lint
 
 ``cargo make verify``はPull Request用の標準検査です。ソース、依存関係、Nixパッケージ、
 browserおよびeditor adapter、HTML5標準適合性、文書をまとめて検査し、fuzz targetが既知の入力で
-落ちないことを確認します。
+落ちないことと、公開Rust APIの差分が選んだバージョンとRelease Notesに整合することを確認します。
 
 == 作業の進め方
 
@@ -193,7 +193,8 @@ source qualityは、書式や生成ファイルなどの短い検査、Rustワ�
 変更pathの分類を``cargo make ci-preflight``で先に確認します。global成果物へ影響する場合は、
 実Chromiumによるarchiveの受入検査もPull Requestで実行します。
 
-``cargo make verify``はsource gate、dependency governance、fuzzおよびNixパッケージを含みますが、
+``cargo make verify``はsource gate、dependency governance、fuzz、Nixパッケージおよび公開Rust APIの
+互換性検査を含みますが、
 実Chromiumによる受入検査は含みません。browser、ZedまたはVS Code向けの成果物へ影響する変更では、
 次を実行してCIの``build-global``と同じ範囲を手元で確認してください。
 

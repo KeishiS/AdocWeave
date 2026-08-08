@@ -25,6 +25,7 @@ pub(crate) enum Definition {
 pub(crate) struct References {
     pub fallback: Vec<lsp::Location>,
     pub host_target: Option<ReferenceKey>,
+    pub anchor_occurrences_are_authored: bool,
 }
 
 pub(crate) struct DocumentLinks {
@@ -190,6 +191,7 @@ pub(crate) fn references(
         return Ok(References {
             fallback: locations,
             host_target: None,
+            anchor_occurrences_are_authored: true,
         });
     }
     let local_binding_id = input
@@ -243,6 +245,7 @@ pub(crate) fn references(
         return Ok(References {
             fallback: locations,
             host_target: None,
+            anchor_occurrences_are_authored: true,
         });
     }
     let reference_at_position = input
@@ -268,6 +271,7 @@ pub(crate) fn references(
         return Ok(References {
             fallback: Vec::new(),
             host_target: None,
+            anchor_occurrences_are_authored: true,
         });
     };
     let identity = reference_at_position
@@ -289,10 +293,12 @@ pub(crate) fn references(
         return Ok(References {
             fallback: Vec::new(),
             host_target: Some(key),
+            anchor_occurrences_are_authored: true,
         });
     };
 
     let mut locations = Vec::new();
+    let mut anchor_occurrences_are_authored = true;
     if include_declaration
         && let Some(location) = target_location(input, &identity.uri, identity.anchor.as_deref())?
     {
@@ -309,10 +315,13 @@ pub(crate) fn references(
             if reference_identity(&candidate_uri, reference.target.as_ref()).as_ref()
                 == Some(&identity)
             {
+                if identity.anchor.is_some() && reference.authored_anchor_range().is_none() {
+                    anchor_occurrences_are_authored = false;
+                }
                 locations.push(lsp::Location::new(
                     candidate_uri.clone(),
                     range_to_lsp(
-                        reference.target_range,
+                        reference_location_range(reference, &identity),
                         candidate.analysis.source_document(),
                         input.encoding,
                     )?,
@@ -339,8 +348,17 @@ pub(crate) fn references(
             {
                 continue;
             }
-            let Some(target_origin) = reference
-                .target_origins
+            let occurrence_origins = if identity.anchor.is_some() {
+                if let Some(origin) = &reference.editable_anchor_origin {
+                    std::slice::from_ref(origin)
+                } else {
+                    anchor_occurrences_are_authored = false;
+                    &reference.target_origins
+                }
+            } else {
+                &reference.target_origins
+            };
+            let Some(target_origin) = occurrence_origins
                 .iter()
                 .find(|origin| origin.source_id.as_ref() == Some(source_id))
             else {
@@ -361,7 +379,21 @@ pub(crate) fn references(
     Ok(References {
         fallback: locations,
         host_target: Some(key),
+        anchor_occurrences_are_authored,
     })
+}
+
+fn reference_location_range(
+    reference: &adocweave::semantic::Reference,
+    identity: &TargetIdentity,
+) -> adocweave::text::TextRange {
+    if identity.anchor.is_some() {
+        reference
+            .authored_anchor_range()
+            .unwrap_or(reference.target_range)
+    } else {
+        reference.target_range
+    }
 }
 
 pub(crate) fn document_links(

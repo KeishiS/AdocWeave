@@ -48,6 +48,7 @@ pub struct ProjectedReference {
     pub value: Reference,
     pub origins: Vec<SourceOrigin>,
     pub target_origins: Vec<SourceOrigin>,
+    pub editable_anchor_origin: Option<SourceOrigin>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -454,6 +455,14 @@ fn project_origins(
     for value in input.analysis.references() {
         let origins = project(value.range)?;
         let target_origins = project(value.target_range)?;
+        let editable_anchor_origin = if let Some(range) = value.authored_anchor_range()
+            && map.mapping_is_identity(ExpandedRange::new(range))
+        {
+            let mut origins = project(range)?;
+            (origins.len() == 1).then(|| origins.remove(0))
+        } else {
+            None
+        };
         if let Some(local) = crate::local_target::LocalTargetReference::from_reference(value) {
             let local_target_origins = project(local.target_range)?;
             local_targets.push(ProjectedLocalTarget {
@@ -465,6 +474,7 @@ fn project_origins(
         references.push(ProjectedReference {
             origins,
             target_origins,
+            editable_anchor_origin,
             value: value.clone(),
         });
     }

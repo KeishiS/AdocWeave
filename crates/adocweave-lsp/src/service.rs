@@ -159,6 +159,11 @@ pub struct WorkspaceScan {
 pub trait HostReferenceIndex: Send + Sync {
     fn definition(&self, request: &HostReferenceRequest) -> Result<Option<lsp::Location>, String>;
 
+    /// Returns reference occurrences using ranges that can replace the referenced symbol.
+    ///
+    /// For an anchor, each non-declaration occurrence is only the authored
+    /// identifier, excluding a document locator and `#`. When
+    /// `include_declaration` is false, the result must not contain the declaration.
     fn references(
         &self,
         request: &HostReferenceRequest,
@@ -1415,14 +1420,21 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        Ok(
-            editing::renameable_anchor(&document.analysis, position, self.position_encoding)?.map(
-                |(_, range, placeholder)| lsp::PrepareRenameResponse::RangeWithPlaceholder {
-                    range,
-                    placeholder,
-                },
-            ),
-        )
+        let Some(target) =
+            editing::renameable_anchor(&document.analysis, position, self.position_encoding)?
+        else {
+            return Ok(None);
+        };
+        if self
+            .rename_locations_cancellable(&document, uri, position, &target, cancellation)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        Ok(Some(lsp::PrepareRenameResponse::RangeWithPlaceholder {
+            range: target.range,
+            placeholder: target.placeholder,
+        }))
     }
 
     pub fn rename_cancellable(
@@ -1436,7 +1448,7 @@ impl LanguageService {
         let Some(document) = self.documents.snapshot(uri.as_str()) else {
             return Ok(None);
         };
-        let Some(key) = editing::rename_target(
+        let Some(target) = editing::rename_target(
             &document.analysis,
             position,
             new_name,
@@ -1445,19 +1457,50 @@ impl LanguageService {
         else {
             return Ok(None);
         };
-        let host_request = host_reference_request(&document, uri, key, self.position_encoding);
-        cancellation.check_now()?;
-        let host_locations = self.host_index.references(&host_request, true);
-        cancellation.check_now()?;
-        let host_locations = host_locations?;
-        let locations = if let Some(locations) = host_locations {
-            locations
-        } else {
-            self.references_cancellable(uri, position, true, cancellation)?
-                .unwrap_or_default()
+        let Some(locations) =
+            self.rename_locations_cancellable(&document, uri, position, &target, cancellation)?
+        else {
+            return Ok(None);
         };
         cancellation.check_now()?;
         Ok(editing::rename_edit(locations, new_name))
+    }
+
+    fn rename_locations_cancellable(
+        &self,
+        document: &DocumentSnapshot,
+        uri: &lsp::Url,
+        position: lsp::Position,
+        target: &editing::RenameTarget,
+        cancellation: &QueryCancellation,
+    ) -> QueryResult<Option<Vec<lsp::Location>>> {
+        let host_request =
+            host_reference_request(document, uri, target.key.clone(), self.position_encoding);
+        cancellation.check_now()?;
+        let host_locations = self.host_index.references(&host_request, false);
+        cancellation.check_now()?;
+        let host_locations = host_locations?;
+        let mut locations = if let Some(locations) = host_locations {
+            locations
+        } else {
+            let snapshots = self.documents.snapshots();
+            let workspaces = self.documents.workspace_analyses().collect::<Vec<_>>();
+            let source_document = |source_uri: &lsp::Url| self.source_document(source_uri);
+            let input = NavigationInput {
+                document,
+                snapshots: &snapshots,
+                workspaces: &workspaces,
+                encoding: self.position_encoding,
+                source_document: &source_document,
+            };
+            let references = navigation::references(&input, uri, position, false, cancellation)?;
+            if !references.anchor_occurrences_are_authored {
+                return Ok(None);
+            }
+            references.fallback
+        };
+        locations.push(lsp::Location::new(uri.clone(), target.range));
+        Ok(Some(locations))
     }
 
     pub fn document_links_cancellable(

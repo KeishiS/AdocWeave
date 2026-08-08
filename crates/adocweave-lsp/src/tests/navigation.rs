@@ -140,23 +140,27 @@ impl HostReferenceIndex for TestHostIndex {
     fn references(
         &self,
         request: &HostReferenceRequest,
-        _include_declaration: bool,
+        include_declaration: bool,
     ) -> Result<Option<Vec<lsp::Location>>, String> {
         assert!(request.source_generation > 0);
         if self.fail {
             return Err("host index unavailable".to_owned());
         }
         Ok(self.complete.then(|| {
-            vec![
-                lsp::Location::new(
-                    request.source.clone(),
-                    lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
-                ),
-                lsp::Location::new(
-                    uri("file:///b.adoc"),
-                    lsp::Range::new(lsp::Position::new(3, 7), lsp::Position::new(3, 13)),
-                ),
-            ]
+            let mut locations = vec![lsp::Location::new(
+                uri("file:///b.adoc"),
+                lsp::Range::new(lsp::Position::new(3, 7), lsp::Position::new(3, 13)),
+            )];
+            if include_declaration {
+                locations.insert(
+                    0,
+                    lsp::Location::new(
+                        request.source.clone(),
+                        lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
+                    ),
+                );
+            }
+            locations
         }))
     }
 
@@ -219,12 +223,33 @@ fn host_index_result_is_rejected_when_the_document_changes_during_the_call() {
 #[test]
 fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
     let mut incomplete = LanguageService::default();
-    open(&mut incomplete, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    open(
+        &mut incomplete,
+        "file:///a.adoc",
+        1,
+        "[[target]]\n== A\n\nSee <<target>>.\n",
+    );
     let local_edit = incomplete
         .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
         .expect("rename")
         .expect("workspace edit");
-    assert_eq!(local_edit.changes.expect("changes").len(), 1);
+    let local_changes = local_edit.changes.expect("changes");
+    let edits = &local_changes[&uri("file:///a.adoc")];
+    assert_eq!(edits.len(), 2);
+    assert!(edits.contains(&lsp::TextEdit::new(
+        lsp::Range::new(lsp::Position::new(0, 2), lsp::Position::new(0, 8)),
+        "renamed".to_owned(),
+    )));
+    assert!(edits.contains(&lsp::TextEdit::new(
+        lsp::Range::new(lsp::Position::new(3, 6), lsp::Position::new(3, 12)),
+        "renamed".to_owned(),
+    )));
+    assert!(
+        edits
+            .iter()
+            .all(|edit| edit.range.start.line != 1 && edit.range.end.line != 1),
+        "rename must not replace the block an anchor targets",
+    );
 
     let mut complete = LanguageService::with_host_index(Arc::new(TestHostIndex {
         complete: true,
@@ -236,6 +261,138 @@ fn rename_uses_workspace_index_and_prefers_a_complete_host_index() {
         .expect("rename")
         .expect("complete edit");
     assert_eq!(edit.changes.expect("changes").len(), 2);
+}
+
+#[test]
+fn rename_preserves_cross_document_reference_locators() {
+    let mut service = LanguageService::default();
+    open_reference_workspace(&mut service);
+
+    let edit = service
+        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .expect("rename")
+        .expect("workspace edit");
+    let changes = edit.changes.expect("changes");
+    let external_edits = &changes[&uri("file:///b.adoc")];
+    assert!(
+        external_edits.contains(&lsp::TextEdit::new(
+            lsp::Range::new(lsp::Position::new(3, 12), lsp::Position::new(3, 18)),
+            "renamed".to_owned(),
+        )),
+        "unexpected external edits: {external_edits:?}",
+    );
+    assert!(
+        external_edits
+            .iter()
+            .all(|edit| edit.range.start.character >= 12),
+        "rename must preserve the document locator and # separator",
+    );
+}
+
+#[test]
+fn rename_refuses_expanded_reference_destinations() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-16"]);
+    open(&mut service, "file:///a.adoc", 1, "[[target]]\n== A\n");
+    open(
+        &mut service,
+        "file:///b.adoc",
+        1,
+        ":destination: a.adoc#target\n\nxref:{destination}[A]\n",
+    );
+
+    let edit = service
+        .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "renamed")
+        .expect("rename query");
+
+    assert_eq!(
+        edit, None,
+        "an expanded destination has no editable anchor token"
+    );
+    assert!(
+        service
+            .prepare_rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3))
+            .expect("prepare rename")
+            .is_none(),
+        "prepareRename and rename must apply the same safety check",
+    );
+}
+
+#[test]
+fn rename_rejects_an_existing_target_id() {
+    let mut service = LanguageService::default();
+    open(
+        &mut service,
+        "file:///a.adoc",
+        1,
+        "[[one]]\n== One\n\n[[two]]\n== Two\n\n<<one>>\n",
+    );
+
+    assert!(
+        service
+            .rename(&uri("file:///a.adoc"), lsp::Position::new(0, 3), "two")
+            .expect("rename")
+            .is_none(),
+        "rename must not create a duplicate target ID",
+    );
+}
+
+#[test]
+fn rename_accepts_only_authored_anchor_ids() {
+    let mut service = LanguageService::default();
+    initialize(&mut service, &["utf-16"]);
+    open(
+        &mut service,
+        "file:///a.adoc",
+        1,
+        "== Generated Heading\n\n[[explicit]]\n== Explicit Heading\n\nanchor:inline[]\n",
+    );
+    let document = uri("file:///a.adoc");
+
+    assert!(
+        service
+            .prepare_rename(&document, lsp::Position::new(0, 5))
+            .expect("generated heading")
+            .is_none(),
+    );
+    assert!(
+        service
+            .rename(&document, lsp::Position::new(0, 5), "renamed")
+            .expect("generated heading rename")
+            .is_none(),
+    );
+
+    let explicit = service
+        .prepare_rename(&document, lsp::Position::new(2, 3))
+        .expect("explicit anchor")
+        .expect("explicit anchor is renameable");
+    assert_eq!(
+        explicit,
+        lsp::PrepareRenameResponse::RangeWithPlaceholder {
+            range: lsp::Range::new(lsp::Position::new(2, 2), lsp::Position::new(2, 10)),
+            placeholder: "explicit".to_owned(),
+        }
+    );
+
+    let inline = service
+        .prepare_rename(&document, lsp::Position::new(5, 9))
+        .expect("inline anchor")
+        .expect("inline anchor is renameable");
+    assert_eq!(
+        inline,
+        lsp::PrepareRenameResponse::RangeWithPlaceholder {
+            range: lsp::Range::new(lsp::Position::new(5, 7), lsp::Position::new(5, 13)),
+            placeholder: "inline".to_owned(),
+        }
+    );
+
+    assert!(
+        service
+            .rename(&document, lsp::Position::new(2, 3), "a&b")
+            .expect("invalid anchor rename")
+            .is_none(),
+        "rename must reject every identifier the parser rejects",
+    );
 }
 
 #[test]

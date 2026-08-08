@@ -176,7 +176,7 @@ pub(crate) fn parse_explicit_anchor(
         id: id.to_owned(),
         label: label.map(str::to_owned),
         target_range: None,
-        valid: valid_anchor_id(id),
+        valid: crate::document::is_valid_anchor_id(id),
     })
 }
 
@@ -366,18 +366,6 @@ pub(crate) fn trailing_whitespace_is_structural(content: &str) -> bool {
                 text_range(0, trimmed.len()).expect("short fixture range"),
             )
             .is_some())
-}
-
-pub(crate) fn valid_anchor_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.chars().all(|character| {
-            !character.is_control()
-                && !character.is_whitespace()
-                && !matches!(
-                    character,
-                    '[' | ']' | '<' | '>' | ',' | '#' | '"' | '\'' | '&' | '=' | '(' | ')'
-                )
-        })
 }
 
 fn text_range(start: usize, end: usize) -> Option<TextRange> {
