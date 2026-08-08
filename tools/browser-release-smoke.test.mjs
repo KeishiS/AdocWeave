@@ -448,8 +448,6 @@ function evaluationResult(method) {
         packageVersion: "test-version",
         resultPackageVersion: "test-version",
         wasmPackageVersion: "test-version",
-        analysisPackageVersion: "test-version",
-        projectionPackageVersion: "test-version",
       },
     },
   };

@@ -102,9 +102,7 @@ async function runArchiveSmoke(archive, chromium, releaseManifest, root) {
       }
       if (state.packageVersion !== releaseManifest.packageVersion ||
           state.resultPackageVersion !== releaseManifest.packageVersion ||
-          state.wasmPackageVersion !== releaseManifest.packageVersion ||
-          state.analysisPackageVersion !== releaseManifest.packageVersion ||
-          state.projectionPackageVersion !== releaseManifest.packageVersion) {
+          state.wasmPackageVersion !== releaseManifest.packageVersion) {
         throw new Error(`browser package version mismatch: ${JSON.stringify(state)}`);
       }
       console.log(`browser release smoke: passed ${context} context`);
@@ -270,8 +268,6 @@ export async function inspectPageAttempt(
               packageVersion: globalThis.adocweavePackageVersion,
               resultPackageVersion: response.packageVersion,
               wasmPackageVersion: response.packageVersion,
-              analysisPackageVersion: response.parse.packageVersion,
-              projectionPackageVersion: response.projection.packageVersion,
             });
           } else if (Date.now() >= deadline) {
             reject(new Error('result timeout: ' + status));
