@@ -86,11 +86,21 @@ fn formatter_is_idempotent_over_generated_corpus() {
     let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let first_analysis = engine.analyze(&source).expect("first analysis");
-        let first = format_analysis(&first_analysis, &FormatConfig::default()).expect("format");
+        let first = format_analysis(
+            &first_analysis,
+            &FormatConfig::default(),
+            &adocweave::NeverCancel,
+        )
+        .expect("format");
         let second_analysis = engine
             .analyze(&first.formatted)
             .expect("formatted analysis");
-        let second = format_analysis(&second_analysis, &FormatConfig::default()).expect("format");
+        let second = format_analysis(
+            &second_analysis,
+            &FormatConfig::default(),
+            &adocweave::NeverCancel,
+        )
+        .expect("format");
         assert_eq!(first.formatted, second.formatted);
     }
 }
@@ -100,8 +110,8 @@ fn formatter_preserves_semantics_and_protected_source_regions() {
     let engine = Engine::new(AnalysisOptions::default());
     for source in corpus() {
         let before = engine.analyze(&source).expect("analysis before format");
-        let formatted =
-            format_analysis(&before, &FormatConfig::default()).expect("format generated input");
+        let formatted = format_analysis(&before, &FormatConfig::default(), &adocweave::NeverCancel)
+            .expect("format generated input");
 
         for range in before.syntax().formatting_protected_ranges() {
             assert!(formatted.edits.iter().all(|edit| {

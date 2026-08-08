@@ -44,7 +44,9 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /#524・#525：/);
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.36\.0から変更していません/);
-  assert.match(notes, /Rust APIの破壊的変更：ありません/);
+  assert.match(notes, /``format_analysis_cancellable``を削除/);
+  assert.match(notes, /``lint_analysis``へcancellation引数を追加/);
+  assert.match(notes, /``&adocweave::NeverCancel``を追加/);
   assert.match(notes, new RegExp(`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}のpackageとAPIへ更新`));
   assert.match(notes, /Worker protocol versionは2で変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);

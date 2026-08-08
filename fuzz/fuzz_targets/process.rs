@@ -15,6 +15,7 @@ fuzz_target!(|input: &[u8]| {
         let _ = adocweave::output::formatter::format_analysis(
             &analysis,
             &adocweave::output::formatter::FormatConfig::default(),
+            &adocweave::NeverCancel,
         );
         let _ = analysis.document().symbols();
         let _ = adocweave::output::diagnostics::render_json(analysis.diagnostics());

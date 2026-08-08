@@ -17,7 +17,7 @@ pub(crate) fn formatting(
     cancellation: &QueryCancellation,
 ) -> QueryResult<Vec<lsp::TextEdit>> {
     cancellation.check_now()?;
-    let formatted = match formatter::format_analysis_cancellable(analysis, config, cancellation) {
+    let formatted = match formatter::format_analysis(analysis, config, cancellation) {
         Ok(formatted) => formatted,
         Err(formatter::FormatError::Cancelled) => {
             cancellation.check_now()?;

@@ -105,6 +105,7 @@ fn grammar_ambiguous_fixture_has_normative_ast_and_recovery() {
     let diagnostics = adocweave::output::diagnostics::lint_analysis(
         &parsed,
         &adocweave::output::diagnostics::LintConfig::default(),
+        &adocweave::NeverCancel,
     )
     .expect("fixture lints");
     assert_eq!(

@@ -5,8 +5,8 @@ use super::{
     DUPLICATE_ANCHOR, DUPLICATE_HEADING_ID, INVALID_ANCHOR, INVALID_CATALOG, INVALID_TABLE,
     LINE_TOO_LONG, LINT_RULES, LintConfig, LintContext, LintDiagnosticBody, LintDiagnosticSink,
     LintError, LintRuleId, MACRO_BOUNDARY, PROTECTED_ATTRIBUTE, RuleSettings, TRAILING_WHITESPACE,
-    UNUSED_ATTRIBUTE, lint, lint_analysis, lint_analysis_cancellable, lint_rule,
-    lint_with_analysis_limits, render_lint_rule_catalog_json, text_range,
+    UNUSED_ATTRIBUTE, lint, lint_analysis, lint_rule, lint_with_analysis_limits,
+    render_lint_rule_catalog_json, text_range,
 };
 use crate::core::{AnalysisOptions, CancellationCheck, Engine};
 use crate::diagnostic::{Applicability, RelatedInformation, Severity, TextEdit};
@@ -98,7 +98,7 @@ fn linting_cancels_at_a_bounded_line_checkpoint() {
         .expect("analysis");
     let cancellation = CancelAfterFirstCheckpoint(AtomicUsize::new(0));
 
-    let error = lint_analysis_cancellable(&analysis, &LintConfig::default(), &cancellation)
+    let error = lint_analysis(&analysis, &LintConfig::default(), &cancellation)
         .expect_err("linting should be cancelled");
 
     assert_eq!(error, LintError::Cancelled);
@@ -177,9 +177,8 @@ fn never_cancel_lint_api_preserves_diagnostics() {
     let config = LintConfig::default();
 
     assert_eq!(
-        lint_analysis_cancellable(&analysis, &config, &crate::core::NeverCancel)
-            .expect("cancellable lint"),
-        lint_analysis(&analysis, &config).expect("compatibility lint")
+        lint_analysis(&analysis, &config, &crate::core::NeverCancel).expect("cancellable lint"),
+        lint_analysis(&analysis, &config, &crate::core::NeverCancel).expect("compatibility lint")
     );
 }
 
