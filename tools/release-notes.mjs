@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.36.0";
+export const PREVIOUS_RELEASE_VERSION = "0.37.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,7 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#524・#525：リリース基盤の簡素化とコアmoduleの保守性改善を進めました。利用者から見える機能とHTML出力は変わりません。",
+  "#526：内部の重複機構の整理を進めました。上限と予算の実装を共有し、利用者から見える機能とHTML出力は変わりません。",
 ];
 
 export function breakingContractNotes(changes) {
