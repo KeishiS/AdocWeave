@@ -48,6 +48,7 @@ mod syntax;
 mod syntax_builder;
 mod syntax_diagnostics;
 mod table;
+mod text_role;
 mod url;
 mod walker;
 
@@ -152,6 +153,9 @@ pub mod output {
             FormulaKind, FormulaProjection, OrderedListProjection, ProjectedText, ReferenceEdge,
             RenderingFeatures, SearchTextKind, SearchTextSegment, SearchableText,
             SourceBlockProjection, project, searchable_text,
+        };
+        pub use crate::text_role::{
+            BlockTextRole, block_text_role, delimited_text_role, table_cell_text_role,
         };
     }
 }
