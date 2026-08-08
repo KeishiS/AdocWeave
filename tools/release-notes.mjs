@@ -94,7 +94,7 @@ export const CONTRACT_VERSION_FIELDS = ["packageVersion"];
 const contractNotes = [
   `統一package version：${RELEASE_NOTES_VERSION}`,
   `release manifest schema version：${manifest.schemaVersion}、distribution plan schema version：${plan.schemaVersion}、配布manifest schema version：2。`,
-  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。v${PREVIOUS_RELEASE_VERSION}から変更していません。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
+  `WASM protocol schema version：${RELEASE_NOTES_PROTOCOL_SCHEMA_VERSION}。projectionとparse summaryからpackageVersionを外したため、v${PREVIOUS_RELEASE_VERSION}から1つ進めました。Worker protocol versionは${protocol.workerProtocolVersion}で変更していません。`,
   manifestSchemaNote,
   ...breakingContractNotes(breakingRustApi.changes),
   "textlint Processorの公開API、TxtASTへの変換結果および自動修正を行わない保証は変更していません。",

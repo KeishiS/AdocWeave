@@ -12,7 +12,6 @@ use crate::source::TextRange;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentProjection {
-    pub package_version: &'static str,
     pub source_id: Option<SourceId>,
     pub title: Option<ProjectedText>,
     pub targets: Vec<ReferenceTarget>,
@@ -363,7 +362,6 @@ pub fn project(analysis: &Analysis, inputs: &RenderInputs) -> DocumentProjection
     formulas.sort_by_key(|formula| (formula.source_range.start(), formula.source_range.end()));
 
     DocumentProjection {
-        package_version: crate::VERSION,
         source_id: analysis.source_id().cloned(),
         title,
         targets: analysis.reference_targets().to_vec(),
@@ -760,7 +758,6 @@ mod wire {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     pub(super) struct Doc<'a> {
-        package_version: &'a str,
         source_id: Option<&'a str>,
         title: Option<TextW<'a>>,
         targets: Vec<TargetW<'a>>,
@@ -1068,7 +1065,6 @@ mod wire {
     impl<'a> Doc<'a> {
         pub(super) fn new(doc: &'a DocumentProjection) -> Self {
             Self {
-                package_version: doc.package_version,
                 source_id: doc.source_id.as_ref().map(SourceId::as_str),
                 title: doc.title.as_ref().map(TextW::from),
                 targets: doc
@@ -1414,7 +1410,6 @@ stem:[x+y]
         let projected = project(&analysis, &RenderInputs::default());
         let html = crate::html::render(analysis.document(), &crate::html::RenderPolicy::default());
 
-        assert_eq!(projected.package_version, crate::VERSION);
         assert!(html.html.contains("<h1"));
         assert_eq!(projected.external_links.len(), 1);
         assert_eq!(projected.reference_edges.len(), 3);
@@ -1713,7 +1708,7 @@ let x = 1;
                 "\"packageVersion\":\"<package-version>\"",
                 1,
             ),
-            "{\"packageVersion\":\"<package-version>\",\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"citations\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
+            "{\"sourceId\":null,\"title\":{\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"},\"targets\":[{\"kind\":\"document-title\",\"id\":\"_t\",\"label\":\"T\",\"idRange\":{\"start\":2,\"end\":3},\"targetRange\":{\"start\":0,\"end\":3}}],\"externalLinks\":[],\"referenceEdges\":[],\"sourceBlocks\":[],\"formulas\":[],\"citations\":[],\"orderedLists\":[],\"blockPresentations\":[],\"structure\":{\"headings\":[{\"kind\":\"document-title\",\"level\":0,\"id\":\"_t\",\"idRange\":{\"start\":2,\"end\":3},\"title\":\"T\",\"range\":{\"start\":0,\"end\":3},\"titleRange\":{\"start\":2,\"end\":3},\"number\":[],\"tocIncluded\":false}],\"toc\":[],\"manpage\":null},\"catalogs\":{\"footnotes\":[],\"bibliography\":[],\"index\":[]},\"searchableText\":{\"text\":\"T\",\"segments\":[{\"kind\":\"prose\",\"sourceRange\":{\"start\":2,\"end\":3},\"text\":\"T\"}]}}"
         );
     }
 

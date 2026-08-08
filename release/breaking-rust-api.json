@@ -1,5 +1,38 @@
 {
   "schemaVersion": 1,
   "releaseVersion": "0.39.0",
-  "changes": []
+  "changes": [
+    {
+      "crate": "adocweave",
+      "description": "公開projectionからpackageVersionを外し、版の識別をprotocol envelopeへ一本化するため、``DocumentProjection``の``package_version`` fieldを削除しました。",
+      "item": "field package_version of struct DocumentProjection, previously",
+      "lint": "struct_pub_field_missing",
+      "migration": "``projected.package_version``の参照を``adocweave::VERSION``へ置き換えてください。値は同一です。",
+      "summary": "pub struct's pub field removed or renamed"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "wire構造体``WasmDocumentProjection``から``package_version``を削除しました。応答envelopeの``packageVersion``が版の正本です。",
+      "item": "field package_version of struct WasmDocumentProjection, previously",
+      "lint": "struct_pub_field_missing",
+      "migration": "projection内のpackageVersionを読んでいるconsumerは、応答envelopeの``packageVersion``を参照してください。",
+      "summary": "pub struct's pub field removed or renamed"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "wire構造体``ParseSummary``から``package_version``を削除しました。",
+      "item": "field package_version of struct ParseSummary, previously",
+      "lint": "struct_pub_field_missing",
+      "migration": "``parse.packageVersion``の参照を応答envelopeの``packageVersion``へ置き換えてください。",
+      "summary": "pub struct's pub field removed or renamed"
+    },
+    {
+      "crate": "adocweave-wasm",
+      "description": "String fieldの削除に伴い、``ParseSummary``がCopyを実装するようになりました。",
+      "item": "adocweave_wasm::ParseSummary",
+      "lint": "copy_impl_added",
+      "migration": "対応は不要です。既存のClone利用はそのまま動作します。",
+      "summary": "type now implements Copy"
+    }
+  ]
 }

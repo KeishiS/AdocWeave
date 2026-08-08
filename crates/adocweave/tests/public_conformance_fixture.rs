@@ -14,7 +14,6 @@ use serde_json::Value;
 struct Manifest {
     schema_version: u16,
     output_contract_version: u16,
-    package_version: String,
     license: String,
     cases: Vec<Case>,
     global_implementation_details: Vec<String>,
@@ -274,7 +273,6 @@ fn public_fixtures_match_declared_products_and_stable_contracts() {
     let manifest = manifest();
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.output_contract_version, 1);
-    assert_eq!(manifest.package_version, adocweave::VERSION);
     assert_eq!(manifest.license, "MIT OR Apache-2.0");
     assert_eq!(manifest.cases.len(), 6);
     assert!(!manifest.global_implementation_details.is_empty());

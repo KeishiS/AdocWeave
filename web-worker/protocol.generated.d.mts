@@ -207,7 +207,6 @@ export interface ResourceCapabilities {
 }
 
 export interface ParseSummary {
-  packageVersion: string;
   blockCount: number;
   nodeCount: number;
   referenceCount: number;
@@ -473,7 +472,6 @@ export interface Fix {
 }
 
 export interface DocumentProjection {
-  packageVersion: string;
   sourceId: string | null;
   sourceBlocks: SourceBlockProjection[];
   formulas: FormulaProjection[];
@@ -619,7 +617,7 @@ export interface AdocWeaveError {
   generation: number;
 }
 
-export declare const PROTOCOL_SCHEMA_VERSION: 11;
+export declare const PROTOCOL_SCHEMA_VERSION: 12;
 export declare const WORKER_PROTOCOL_VERSION: 2;
 export declare const PACKAGE_VERSION: "0.39.0";
 export declare const PRODUCT_FIELDS: readonly ["syntax", "canonicalAst", "html", "attributeOccurrences", "attributeQueries", "resourceQueries", "diagnostics", "symbols", "projection"];

@@ -1,13 +1,19 @@
 {
   "schemaVersion": 1,
   "outputContractVersion": 1,
-  "packageVersion": "0.39.0",
   "license": "MIT OR Apache-2.0",
   "cases": [
     {
       "name": "document-title-toc-section-numbers",
-      "features": ["document-title", "toc", "section-numbers"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "document-title",
+        "toc",
+        "section-numbers"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:document-structure",
       "files": {
         "source": "fixtures/public-conformance/document-structure.adoc",
@@ -18,9 +24,23 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/title/text", "value": "Public Contract"},
-          {"pointer": "/structure/headings/1/number", "value": [1]},
-          {"pointer": "/structure/toc/0/children/0/number", "value": [1, 1]}
+          {
+            "pointer": "/title/text",
+            "value": "Public Contract"
+          },
+          {
+            "pointer": "/structure/headings/1/number",
+            "value": [
+              1
+            ]
+          },
+          {
+            "pointer": "/structure/toc/0/children/0/number",
+            "value": [
+              1,
+              1
+            ]
+          }
         ],
         "htmlContains": [
           "<h1 class=\"document-title\" id=\"_public_contract\">Public Contract</h1>",
@@ -30,12 +50,24 @@
         "diagnosticCodes": [],
         "renderDiagnosticCodes": []
       },
-      "implementationDetails": ["generated heading IDs", "HTML whitespace and attribute order"]
+      "implementationDetails": [
+        "generated heading IDs",
+        "HTML whitespace and attribute order"
+      ]
     },
     {
       "name": "source-block-title-and-options",
-      "features": ["source-block", "block-title", "source-language-option", "source-line-numbers", "source-start-line"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "source-block",
+        "block-title",
+        "source-language-option",
+        "source-line-numbers",
+        "source-start-line"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:source-block",
       "files": {
         "source": "fixtures/public-conformance/source-block.adoc",
@@ -46,11 +78,26 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/sourceBlocks/0/title/text", "value": "Example <source>"},
-          {"pointer": "/sourceBlocks/0/language", "value": "rust"},
-          {"pointer": "/sourceBlocks/0/lineNumbers", "value": true},
-          {"pointer": "/sourceBlocks/0/startLine", "value": 7},
-          {"pointer": "/sourceBlocks/0/source", "value": "fn main() {}\n"}
+          {
+            "pointer": "/sourceBlocks/0/title/text",
+            "value": "Example <source>"
+          },
+          {
+            "pointer": "/sourceBlocks/0/language",
+            "value": "rust"
+          },
+          {
+            "pointer": "/sourceBlocks/0/lineNumbers",
+            "value": true
+          },
+          {
+            "pointer": "/sourceBlocks/0/startLine",
+            "value": 7
+          },
+          {
+            "pointer": "/sourceBlocks/0/source",
+            "value": "fn main() {}\n"
+          }
         ],
         "htmlContains": [
           "<figure class=\"source-block\">",
@@ -66,8 +113,14 @@
     },
     {
       "name": "inline-and-block-formulas",
-      "features": ["inline-formula", "block-formula"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "inline-formula",
+        "block-formula"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:formulas",
       "files": {
         "source": "fixtures/public-conformance/formulas.adoc",
@@ -78,12 +131,30 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/formulas/0/kind", "value": "inline"},
-          {"pointer": "/formulas/0/language", "value": "latex"},
-          {"pointer": "/formulas/0/source", "value": "x < y"},
-          {"pointer": "/formulas/1/kind", "value": "block"},
-          {"pointer": "/formulas/1/language", "value": "latex"},
-          {"pointer": "/formulas/1/source", "value": "x^2 < y\n"}
+          {
+            "pointer": "/formulas/0/kind",
+            "value": "inline"
+          },
+          {
+            "pointer": "/formulas/0/language",
+            "value": "latex"
+          },
+          {
+            "pointer": "/formulas/0/source",
+            "value": "x < y"
+          },
+          {
+            "pointer": "/formulas/1/kind",
+            "value": "block"
+          },
+          {
+            "pointer": "/formulas/1/language",
+            "value": "latex"
+          },
+          {
+            "pointer": "/formulas/1/source",
+            "value": "x^2 < y\n"
+          }
         ],
         "htmlContains": [
           "<code class=\"math-latex\" data-math-language=\"latexmath\" data-math-display=\"inline\">x &lt; y</code>",
@@ -92,12 +163,22 @@
         "diagnosticCodes": [],
         "renderDiagnosticCodes": []
       },
-      "implementationDetails": ["math engine integration", "HTML whitespace and attribute order"]
+      "implementationDetails": [
+        "math engine integration",
+        "HTML whitespace and attribute order"
+      ]
     },
     {
       "name": "table-quote-and-list",
-      "features": ["table", "quote", "unordered-list"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "table",
+        "quote",
+        "unordered-list"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:blocks",
       "files": {
         "source": "fixtures/public-conformance/blocks.adoc",
@@ -108,9 +189,18 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/blockPresentations/0/kind", "value": "quote"},
-          {"pointer": "/blockPresentations/0/attribution", "value": "Author"},
-          {"pointer": "/blockPresentations/0/citation", "value": "Work"}
+          {
+            "pointer": "/blockPresentations/0/kind",
+            "value": "quote"
+          },
+          {
+            "pointer": "/blockPresentations/0/attribution",
+            "value": "Author"
+          },
+          {
+            "pointer": "/blockPresentations/0/citation",
+            "value": "Work"
+          }
         ],
         "htmlContains": [
           "<caption>Public table</caption>",
@@ -121,12 +211,21 @@
         "diagnosticCodes": [],
         "renderDiagnosticCodes": []
       },
-      "implementationDetails": ["HTML whitespace and attribute order", "projection fields not selected by stableContract"]
+      "implementationDetails": [
+        "HTML whitespace and attribute order",
+        "projection fields not selected by stableContract"
+      ]
     },
     {
       "name": "unsafe-url-diagnostic",
-      "features": ["unsafe-url", "diagnostic"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "unsafe-url",
+        "diagnostic"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:diagnostics",
       "files": {
         "source": "fixtures/public-conformance/diagnostics.adoc",
@@ -137,18 +236,37 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/externalLinks/0/target", "value": "javascript:alert(1)"}
+          {
+            "pointer": "/externalLinks/0/target",
+            "value": "javascript:alert(1)"
+          }
         ],
-        "htmlContains": ["<p>unsafe</p>"],
-        "diagnosticCodes": ["invalid-url-scheme"],
-        "renderDiagnosticCodes": ["invalid-url-scheme"]
+        "htmlContains": [
+          "<p>unsafe</p>"
+        ],
+        "diagnosticCodes": [
+          "invalid-url-scheme"
+        ],
+        "renderDiagnosticCodes": [
+          "invalid-url-scheme"
+        ]
       },
-      "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
+      "implementationDetails": [
+        "diagnostic message wording",
+        "diagnostic IDs and source ranges"
+      ]
     },
     {
       "name": "unsupported-source-option-diagnostic",
-      "features": ["source-block", "unsupported-source-option", "diagnostic"],
-      "profile": {"analysis": "default", "render": "default-fragment"},
+      "features": [
+        "source-block",
+        "unsupported-source-option",
+        "diagnostic"
+      ],
+      "profile": {
+        "analysis": "default",
+        "render": "default-fragment"
+      },
       "sourceId": "public-conformance:unsupported-source-option",
       "files": {
         "source": "fixtures/public-conformance/unsupported-source-option.adoc",
@@ -159,16 +277,24 @@
       },
       "stableContract": {
         "projectionAssertions": [
-          {"pointer": "/sourceBlocks", "value": []}
+          {
+            "pointer": "/sourceBlocks",
+            "value": []
+          }
         ],
         "htmlContains": [
           "<p>[source,rust,options=unknown]</p>",
           "<pre>unsupported();"
         ],
-        "diagnosticCodes": ["invalid-attribute"],
+        "diagnosticCodes": [
+          "invalid-attribute"
+        ],
         "renderDiagnosticCodes": []
       },
-      "implementationDetails": ["diagnostic message wording", "diagnostic IDs and source ranges"]
+      "implementationDetails": [
+        "diagnostic message wording",
+        "diagnostic IDs and source ranges"
+      ]
     }
   ],
   "globalImplementationDetails": [

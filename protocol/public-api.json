@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "packageVersion": "0.39.0",
   "identityField": "packageVersion",
   "workerProtocolVersion": 2,
@@ -281,7 +281,6 @@
     },
     "ParseSummary": {
       "fields": [
-        { "json": "packageVersion", "type": "string", "required": true },
         { "json": "blockCount", "type": "u32", "required": true },
         { "json": "nodeCount", "type": "u32", "required": true },
         { "json": "referenceCount", "type": "u32", "required": true }
@@ -707,7 +706,6 @@
     },
     "DocumentProjection": {
       "fields": [
-        { "json": "packageVersion", "type": "string" },
         { "json": "sourceId", "type": "string | null" },
         { "json": "sourceBlocks", "type": "SourceBlockProjection[]" },
         { "json": "formulas", "type": "FormulaProjection[]" },

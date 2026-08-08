@@ -31,7 +31,9 @@
     {
       "type": "cargo-lock",
       "path": "fuzz/Cargo.lock",
-      "packages": ["adocweave"]
+      "packages": [
+        "adocweave"
+      ]
     },
     {
       "type": "literal",
@@ -42,7 +44,9 @@
     {
       "type": "cargo-lock",
       "path": "editors/zed/Cargo.lock",
-      "packages": ["adocweave-zed"]
+      "packages": [
+        "adocweave-zed"
+      ]
     },
     {
       "type": "literal",
@@ -136,36 +140,6 @@
     },
     {
       "type": "literal",
-      "path": "crates/adocweave/conformance/cases.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "fixtures/public-conformance.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "fixtures/conformance/full.projection.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "fixtures/conformance/math-public-contract.projection.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
-      "path": "fixtures/conformance/source-block-presentation.projection.json",
-      "template": "\"packageVersion\": \"{version}\"",
-      "count": 1
-    },
-    {
-      "type": "literal",
       "path": "release/adocweave-dist-manifest.fixture.json",
       "template": "\"packageVersion\": \"{version}\"",
       "count": 1
@@ -246,7 +220,7 @@
         },
         {
           "path": "fixtures/public-conformance/document-structure.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/document-structure.diagnostics.json",
@@ -262,7 +236,7 @@
         },
         {
           "path": "fixtures/public-conformance/source-block.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/source-block.diagnostics.json",
@@ -278,7 +252,7 @@
         },
         {
           "path": "fixtures/public-conformance/formulas.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/formulas.diagnostics.json",
@@ -294,7 +268,7 @@
         },
         {
           "path": "fixtures/public-conformance/blocks.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/blocks.diagnostics.json",
@@ -310,7 +284,7 @@
         },
         {
           "path": "fixtures/public-conformance/diagnostics.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/diagnostics.diagnostics.json",
@@ -326,7 +300,7 @@
         },
         {
           "path": "fixtures/public-conformance/unsupported-source-option.projection.json",
-          "versionOccurrences": 1
+          "versionOccurrences": 0
         },
         {
           "path": "fixtures/public-conformance/unsupported-source-option.diagnostics.json",
@@ -342,22 +316,22 @@
   "preserved": [
     {
       "path": "dist-workspace.toml",
-      "literal": "cargo-dist-version = \"0.32\u002e0\"",
+      "literal": "cargo-dist-version = \"0.32.0\"",
       "count": 1
     },
     {
       "path": "release/distribution-plan.json",
-      "literal": "\"distVersion\": \"0.32\u002e0\"",
+      "literal": "\"distVersion\": \"0.32.0\"",
       "count": 1
     },
     {
       "path": "release/windows-dist-bootstrap.json",
-      "literal": "0.32\u002e0",
+      "literal": "0.32.0",
       "count": 2
     },
     {
       "path": "tools/release-contract.mjs",
-      "literal": "0.32\u002e0",
+      "literal": "0.32.0",
       "count": 3
     },
     {
