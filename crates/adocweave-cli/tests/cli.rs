@@ -106,7 +106,7 @@ fn configured_resource_limit_rejects_root_before_processing() {
 
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("single-resource byte limit"),
+        String::from_utf8_lossy(&output.stderr).contains("total byte limit"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );

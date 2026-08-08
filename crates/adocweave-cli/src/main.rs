@@ -87,8 +87,6 @@ fn read_primary_in_session(
     path: &Path,
     filesystem: &mut adocweave_host::LocalFilesystemSession,
 ) -> Result<Vec<u8>, CliError> {
-    let budget_before_read = filesystem.budget();
-    let limits = filesystem.limits();
     let loaded = filesystem
         .read_utf8(
             adocweave_host::LogicalSourceId::new(path.to_string_lossy())
@@ -103,14 +101,6 @@ fn read_primary_in_session(
             adocweave_host::ResourceError::FileLimit { limit } => CliError::ResourceLimit(format!(
                 "filesystem resource count limit exceeded: {limit}"
             )),
-            adocweave_host::ResourceError::ByteLimit
-                if budget_before_read.files() == 0
-                    && limits.max_resource_bytes <= limits.max_total_bytes =>
-            {
-                CliError::ResourceLimit(
-                    "analysis snapshot single-resource byte limit exceeded".to_owned(),
-                )
-            }
             adocweave_host::ResourceError::ByteLimit => {
                 CliError::ResourceLimit("analysis snapshot total byte limit exceeded".to_owned())
             }
