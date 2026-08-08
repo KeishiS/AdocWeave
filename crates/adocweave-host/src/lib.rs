@@ -6,7 +6,6 @@
 mod exit_status;
 mod filesystem_job;
 mod filesystem_limits;
-mod io_observation;
 mod local_resource;
 mod local_target;
 
