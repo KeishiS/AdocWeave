@@ -39,17 +39,6 @@ impl LocalFilesystemPolicy {
     pub const MAX_ROOTS: usize = 128;
 }
 
-/// Immutable selection of retained filesystem roots and read limits.
-///
-/// The selected root handles, their path identities and limits travel as one
-/// value, so callers cannot accidentally pair roots from another authority.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LocalFilesystemAccess {
-    roots: Vec<PathBuf>,
-    root_policies: Vec<LocalTargetPolicy>,
-    limits: FilesystemReadLimits,
-}
-
 /// Filesystem roots derived from one retained anchor.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DerivedFilesystemRoots {
@@ -349,14 +338,14 @@ impl LocalFilesystemPolicy {
         self.limits
     }
 
-    /// Selects an immutable access set from roots this policy already retains.
+    /// Selects a narrowed policy from roots this policy already retains.
     pub fn access_existing(
         &self,
         roots: impl IntoIterator<Item = PathBuf>,
         limits: FilesystemReadLimits,
-    ) -> Result<LocalFilesystemAccess, ResourceError> {
+    ) -> Result<Self, ResourceError> {
         validate_derived_limits(self.limits, limits)?;
-        let mut policies = roots
+        let policies = roots
             .into_iter()
             .map(|root| {
                 self.root_policy(&root)
@@ -364,9 +353,7 @@ impl LocalFilesystemPolicy {
                     .ok_or(ResourceError::OutsideRoots(root))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        policies.sort_by(|left, right| left.root().cmp(right.root()));
-        policies.dedup_by(|left, right| left.root() == right.root());
-        LocalFilesystemAccess::from_policies(policies, limits)
+        Self::from_selected(policies, limits)
     }
 
     /// Extends the retained authority transactionally and returns one opaque
@@ -376,7 +363,7 @@ impl LocalFilesystemPolicy {
         anchor: &Path,
         roots: DerivedFilesystemRoots,
         limits: FilesystemReadLimits,
-    ) -> Result<LocalFilesystemAccess, ResourceError> {
+    ) -> Result<Self, ResourceError> {
         validate_derived_limits(self.limits, limits)?;
         let anchor_policy = self
             .root_policy(anchor)
@@ -444,14 +431,10 @@ impl LocalFilesystemPolicy {
             .iter()
             .find(|policy| policy.root() == root)
     }
-
-    pub fn session(&self) -> Result<LocalFilesystemSession, ResourceError> {
-        LocalFilesystemAccess::from_policies(self.root_policies.clone(), self.limits)?.session()
-    }
 }
 
-impl LocalFilesystemAccess {
-    fn from_policies(
+impl LocalFilesystemPolicy {
+    fn from_selected(
         mut root_policies: Vec<LocalTargetPolicy>,
         limits: FilesystemReadLimits,
     ) -> Result<Self, ResourceError> {
@@ -474,16 +457,6 @@ impl LocalFilesystemAccess {
             root_policies,
             limits,
         })
-    }
-
-    /// Returns the logical paths paired with the retained root authorities.
-    pub fn roots(&self) -> &[PathBuf] {
-        &self.roots
-    }
-
-    /// Returns the limits applied independently to each new session.
-    pub const fn limits(&self) -> FilesystemReadLimits {
-        self.limits
     }
 
     /// Selects the deepest retained root containing `path`.

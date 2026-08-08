@@ -1,5 +1,14 @@
 {
   "schemaVersion": 1,
   "releaseVersion": "0.38.0",
-  "changes": []
+  "changes": [
+    {
+      "crate": "adocweave-host",
+      "description": "``LocalFilesystemPolicy``と全fieldが同一だった``LocalFilesystemAccess``を削除しました。``access_existing``と``access_derived``は、選択したrootと上限へ絞った``LocalFilesystemPolicy``を返します。",
+      "item": "struct adocweave_host::LocalFilesystemAccess, previously",
+      "lint": "struct_missing",
+      "migration": "型注釈の``LocalFilesystemAccess``を``LocalFilesystemPolicy``へ置き換えてください。``roots``・``limits``・``policy_for_path``・``session``の使い方は同じです。",
+      "summary": "pub struct removed or renamed"
+    }
+  ]
 }

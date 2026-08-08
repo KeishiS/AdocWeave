@@ -36,7 +36,7 @@ pub(crate) struct RunRequest<'request> {
     pub(crate) project: &'request adocweave_config::ResolvedProjectConfig,
     pub(crate) css: &'request [StylesheetArgument],
     pub(crate) configuration_policy: adocweave_host::LocalTargetPolicy,
-    pub(crate) filesystem_access: adocweave_host::LocalFilesystemAccess,
+    pub(crate) filesystem_access: adocweave_host::LocalFilesystemPolicy,
     pub(crate) server: ServerOptions,
 }
 
@@ -53,7 +53,7 @@ struct BuildRequest<'request> {
 #[derive(Clone)]
 struct PreviewAuthorities {
     configuration_policy: adocweave_host::LocalTargetPolicy,
-    filesystem_access: adocweave_host::LocalFilesystemAccess,
+    filesystem_access: adocweave_host::LocalFilesystemPolicy,
     explicit_stylesheets: html_policy::ExplicitStylesheetAuthorities,
 }
 
