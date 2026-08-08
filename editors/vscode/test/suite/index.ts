@@ -12,6 +12,20 @@ async function waitFor<T>(read: () => T | undefined, timeout = 20_000): Promise<
   throw new Error("VS Code extension hostの応答を待機中にtimeoutしました");
 }
 
+async function waitForQuery<T>(
+  query: () => Thenable<T | undefined>,
+  ready: (value: T) => boolean,
+  timeout = 20_000,
+): Promise<T> {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    const value = await query();
+    if (value !== undefined && ready(value)) return value;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  throw new Error("VS Code extension hostのprovider応答を待機中にtimeoutしました");
+}
+
 function hasDiagnostic(uri: vscode.Uri, code: string): boolean {
   return vscode.languages.getDiagnostics(uri).some((diagnostic) => diagnostic.code === code);
 }
@@ -48,16 +62,26 @@ export async function run(): Promise<void> {
   assert.deepEqual(unicodeDiagnostic.range, new vscode.Range(0, 5, 0, 6));
   await vscode.window.showTextDocument(document);
 
-  const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-    "vscode.executeDocumentSymbolProvider",
-    uri,
+  // The language server registers its providers while the host is already
+  // running the suite, so the first queries retry until an answer arrives.
+  const symbols = await waitForQuery(
+    () =>
+      vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+        "vscode.executeDocumentSymbolProvider",
+        uri,
+      ),
+    (value) => value.length > 0,
   );
   assert.ok(symbols.length > 0, "Outlineが空です");
 
-  const hover = await vscode.commands.executeCommand<vscode.Hover[]>(
-    "vscode.executeHoverProvider",
-    uri,
-    new vscode.Position(6, 2),
+  const hover = await waitForQuery(
+    () =>
+      vscode.commands.executeCommand<vscode.Hover[]>(
+        "vscode.executeHoverProvider",
+        uri,
+        new vscode.Position(6, 2),
+      ),
+    (value) => value.length > 0,
   );
   assert.ok(hover.length > 0, "Hoverが空です");
 
