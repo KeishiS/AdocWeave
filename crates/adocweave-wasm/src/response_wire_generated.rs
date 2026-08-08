@@ -195,7 +195,6 @@ pub struct WasmDocumentCatalogs {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WasmDocumentProjection {
-    pub package_version: String,
     pub source_id: Option<String>,
     pub source_blocks: Vec<WasmSourceBlockProjection>,
     pub formulas: Vec<WasmFormulaProjection>,
@@ -321,10 +320,9 @@ pub enum WasmOrderedListStyle {
     Lowergreek,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ParseSummary {
-    pub package_version: String,
     pub block_count: u32,
     pub node_count: u32,
     pub reference_count: u32,

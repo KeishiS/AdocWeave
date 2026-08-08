@@ -216,8 +216,6 @@ function verifyRepository() {
   const vscodePackage = json("editors/vscode/package.json");
   const vscodeLock = json("editors/vscode/package-lock.json");
   const protocol = json("protocol/public-api.json");
-  const conformance = json("crates/adocweave/conformance/cases.json");
-  const publicConformance = json("fixtures/public-conformance.json");
   const worker = json("web-worker/package.json");
   const textlintPlugin = json("packages/textlint-plugin-asciidoc/package.json");
   const textlintContract = loadTextlintPluginPackageContract();
@@ -277,8 +275,6 @@ function verifyRepository() {
     "release manifest": manifest.packageVersion,
     "distribution plan": plan.packageVersion,
     "browser package": worker.version,
-    "cross-runtime conformance manifest": conformance.packageVersion,
-    "public conformance manifest": publicConformance.packageVersion,
     "Zed extension": tomlValue(extension, "version"),
     "Zed crate": tomlValue(extensionCargo, "version"),
   });

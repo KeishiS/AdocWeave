@@ -35,7 +35,6 @@ fn native_adapter_accepts_every_shared_conformance_case() {
     let manifest: Value =
         serde_json::from_str(&fs::read_to_string(manifest_path).expect("conformance manifest"))
             .expect("valid conformance manifest");
-    assert_eq!(manifest["packageVersion"], adocweave::VERSION);
 
     for entry in manifest["cases"].as_array().expect("cases") {
         let name = entry["name"].as_str().expect("case name");

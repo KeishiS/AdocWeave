@@ -711,7 +711,6 @@ function responseEnvelope(version, generation, packageVersion, html) {
         projection: false,
       },
       parse: {
-        packageVersion,
         blockCount: 0,
         nodeCount: 0,
         referenceCount: 0,

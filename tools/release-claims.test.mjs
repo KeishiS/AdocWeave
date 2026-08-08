@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { changedContracts, contractShape } from "./release-claims.mjs";
+import { PUBLIC_PROTOCOL_SCHEMA_VERSION } from "./release-policy.mjs";
 import {
   CONTRACT_SOURCES,
   CONTRACT_VERSION_FIELDS,
@@ -62,6 +63,6 @@ test("WASM requestのversion fieldとprotocol schemaの識別子を区別する"
   const requestFields = protocol.request.fields.map((field) => field.json);
   assert.ok(requestFields.includes("packageVersion"));
   assert.equal(requestFields.includes("schemaVersion"), false);
-  assert.equal(protocol.schemaVersion, 11);
+  assert.equal(protocol.schemaVersion, PUBLIC_PROTOCOL_SCHEMA_VERSION);
   assert.equal(protocol.request.unknownFields, "reject");
 });

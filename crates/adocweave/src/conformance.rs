@@ -31,13 +31,11 @@ pub fn fixture_source(name: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct FixtureManifest {
-        package_version: String,
         cases: Vec<FixtureCase>,
     }
 
     let manifest: FixtureManifest = serde_json::from_str(include_str!("../conformance/cases.json"))
         .expect("repository conformance fixture manifest is valid");
-    assert_eq!(manifest.package_version, crate::VERSION);
     manifest
         .cases
         .into_iter()

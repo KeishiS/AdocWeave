@@ -33,7 +33,6 @@ pub(crate) fn project_response(
         generation,
         products: requested_products,
         parse: ParseSummary {
-            package_version: analysis.package_version().to_owned(),
             block_count: response_count("blockCount", analysis.document().blocks().len())?,
             node_count: response_count("nodeCount", analysis.document().node_count())?,
             reference_count: response_count("referenceCount", analysis.references().len())?,

@@ -1,5 +1,4 @@
 {
-  "packageVersion": "0.39.0",
   "cases": [
     {
       "name": "release-lf",
@@ -261,9 +260,16 @@
             "outcome": {
               "status": "resolved",
               "segments": [
-                { "text": "(" },
-                { "text": "Smith 2024", "anchor": "smith2024" },
-                { "text": "; Tanaka 2025)" }
+                {
+                  "text": "("
+                },
+                {
+                  "text": "Smith 2024",
+                  "anchor": "smith2024"
+                },
+                {
+                  "text": "; Tanaka 2025)"
+                }
               ]
             }
           }
@@ -301,8 +307,16 @@
         "generatedBibliography": {
           "title": "References",
           "entries": [
-            { "citationKey": "one", "text": "First entry.", "number": 1 },
-            { "citationKey": "two", "text": "Second entry.", "number": 2 }
+            {
+              "citationKey": "one",
+              "text": "First entry.",
+              "number": 1
+            },
+            {
+              "citationKey": "two",
+              "text": "Second entry.",
+              "number": 2
+            }
           ]
         }
       },
@@ -429,18 +443,35 @@
               "status": "resolved",
               "href": "/notes/123",
               "displayText": "Resolved note title",
-              "notices": ["fallback"]
+              "notices": [
+                "fallback"
+              ]
             }
           }
         ]
       },
       "renderPolicy": {
-        "activeUrls": { "allowResolvedRootRelative": true },
-        "externalLinks": { "openInNewContext": true, "noreferrer": true },
-        "sourceLanguages": { "allowed": ["rust"], "unknown": "diagnostic" },
-        "mathLanguages": ["latex"],
+        "activeUrls": {
+          "allowResolvedRootRelative": true
+        },
+        "externalLinks": {
+          "openInNewContext": true,
+          "noreferrer": true
+        },
+        "sourceLanguages": {
+          "allowed": [
+            "rust"
+          ],
+          "unknown": "diagnostic"
+        },
+        "mathLanguages": [
+          "latex"
+        ],
         "unresolvedReferences": "label-only",
-        "resources": { "images": false, "media": false }
+        "resources": {
+          "images": false,
+          "media": false
+        }
       },
       "compatibility": "host-extension-contract",
       "rationale": "任意scheme参照、解決済み表示テキスト、由来別URL、固定link属性、source・数式policyおよびresource無効化をアプリ固有parserなしで全runtimeへ適用する",
@@ -461,7 +492,9 @@
           }
         ]
       },
-      "renderPolicy": { "unresolvedReferences": "label-only" },
+      "renderPolicy": {
+        "unresolvedReferences": "label-only"
+      },
       "compatibility": "host-safety-contract",
       "rationale": "解決失敗は安定kindだけを保持し、自由形式のACL・DB・非公開タイトル情報をruntime境界へ渡さない",
       "contractImpact": "core-api,projection,conformance,wasm-api"
@@ -469,7 +502,11 @@
     {
       "name": "strict-unsupported",
       "source": "[role=raw]\n",
-      "analysisOptions": { "syntax": { "syntaxMode": "strict" } },
+      "analysisOptions": {
+        "syntax": {
+          "syntaxMode": "strict"
+        }
+      },
       "expectedErrorCode": "invalid-input",
       "compatibility": "intentional-difference",
       "rationale": "Core profileのstrict modeは未対応ブロックを明示的に拒否する",
@@ -478,7 +515,13 @@
     {
       "name": "input-limit",
       "source": "12345",
-      "analysisOptions": { "syntax": { "limits": { "maxInputBytes": 4 } } },
+      "analysisOptions": {
+        "syntax": {
+          "limits": {
+            "maxInputBytes": 4
+          }
+        }
+      },
       "expectedErrorCode": "limit-exceeded",
       "compatibility": "host-safety-contract",
       "rationale": "処理上限はAsciiDoc意味論ではなく全runtime共通のホスト安全仕様である",
@@ -487,7 +530,9 @@
     {
       "name": "aggregate-output-limit",
       "source": "text",
-      "outputLimits": { "maxOutputBytes": 1 },
+      "outputLimits": {
+        "maxOutputBytes": 1
+      },
       "expectedErrorCode": "limit-exceeded",
       "compatibility": "host-safety-contract",
       "rationale": "WASM応答全体にもnative公開処理と同じ出力上限を適用する",
@@ -498,8 +543,12 @@
       "source": "= Options\n:name: source\n\n{name} link.adoc[relative]\n",
       "analysisOptions": {
         "diagnostics": {
-          "protectedAttributes": { "name": "host" },
-          "authoredUrls": { "allowRelative": true }
+          "protectedAttributes": {
+            "name": "host"
+          },
+          "authoredUrls": {
+            "allowRelative": true
+          }
         }
       },
       "compatibility": "host-extension-contract",

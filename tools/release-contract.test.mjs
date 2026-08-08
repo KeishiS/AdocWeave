@@ -87,25 +87,13 @@ test("public client manifests match the release train and remain private", () =>
   }
 });
 
-test("cross-runtime conformance manifestはrelease trainと一致する", () => {
-  assert.doesNotThrow(() =>
-    validateReleaseTrainVersions(plan.packageVersion, {
-      "cross-runtime conformance manifest": conformance.packageVersion,
-      "public conformance manifest": publicConformance.packageVersion,
-    }));
+test("release trainの不一致は名前付きで拒否する", () => {
   assert.throws(
     () =>
       validateReleaseTrainVersions(plan.packageVersion, {
-        "cross-runtime conformance manifest": "9.9.9",
+        "browser package": "9.9.9",
       }),
-    /cross-runtime conformance manifest version/,
-  );
-  assert.throws(
-    () =>
-      validateReleaseTrainVersions(plan.packageVersion, {
-        "public conformance manifest": "9.9.9",
-      }),
-    /public conformance manifest version/,
+    /browser package version/,
   );
 });
 
@@ -125,6 +113,6 @@ test("公開WASM protocolは対応schemaを必須とする", () => {
         vscodeLock,
         { ...protocol, schemaVersion: SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION - 1 },
       ),
-    /public protocol schemaVersion must be 11/,
+    new RegExp(`public protocol schemaVersion must be ${SUPPORTED_PUBLIC_PROTOCOL_SCHEMA_VERSION}`),
   );
 });

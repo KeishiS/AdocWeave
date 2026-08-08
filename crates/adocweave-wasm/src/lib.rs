@@ -358,14 +358,6 @@ mod tests {
         assert!(response.ast.contains("\"blocks\""));
         assert!(response.html.contains("<h1"));
         assert_eq!(response.symbols[0].name, "Title");
-        assert_eq!(
-            response
-                .projection
-                .as_ref()
-                .expect("projection")
-                .package_version,
-            VERSION
-        );
         assert_eq!(response.parse.reference_count, 0);
     }
 
