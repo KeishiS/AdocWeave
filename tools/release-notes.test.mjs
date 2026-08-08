@@ -44,7 +44,7 @@ test(`Release Notesはv${RELEASE_NOTES_VERSION}の変更内容と移行方法を
   assert.match(notes, /#526：/);
   assert.match(notes, /WASM protocol schema version/);
   assert.match(notes, /v0\.37\.0から変更していません/);
-  assert.match(notes, /Rust APIの破壊的変更：ありません/);
+  assert.match(notes, /``LocalFilesystemAccess``を削除/);
   assert.match(notes, new RegExp(`${RELEASE_NOTES_VERSION.replaceAll(".", "\\.")}のpackageとAPIへ更新`));
   assert.match(notes, /Worker protocol versionは2で変更していません/);
   assert.match(notes, /schema versionは4のままで、項目を追加も削除もしていません/);

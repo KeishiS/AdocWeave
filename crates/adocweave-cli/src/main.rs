@@ -172,7 +172,7 @@ fn filesystem_access_from_authority(
     confined_roots: Vec<PathBuf>,
     independent_roots: Vec<PathBuf>,
     limits: adocweave_host::FilesystemReadLimits,
-) -> Result<adocweave_host::LocalFilesystemAccess, CliError> {
+) -> Result<adocweave_host::LocalFilesystemPolicy, CliError> {
     authority
         .access_derived(
             anchor,
@@ -556,7 +556,7 @@ fn retained_input_candidate(
     authority: &mut adocweave_host::LocalFilesystemPolicy,
     anchor: &Path,
     authored: &Path,
-) -> Result<(adocweave_host::LocalFilesystemAccess, PathBuf), CliError> {
+) -> Result<(adocweave_host::LocalFilesystemPolicy, PathBuf), CliError> {
     if authored == Path::new(".") {
         let access = authority
             .access_existing(
