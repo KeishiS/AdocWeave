@@ -9,6 +9,14 @@
       "lint": "struct_missing",
       "migration": "型注釈の``LocalFilesystemAccess``を``LocalFilesystemPolicy``へ置き換えてください。``roots``・``limits``・``policy_for_path``・``session``の使い方は同じです。",
       "summary": "pub struct removed or renamed"
+    },
+    {
+      "crate": "adocweave-config",
+      "description": "``AnalysisSnapshotLimits``を削除しました。analysis snapshotの上限は、保持layerと同じworkspaceの``RetainedResourceLimits``を使います。",
+      "item": "struct adocweave_config::AnalysisSnapshotLimits, previously",
+      "lint": "struct_missing",
+      "migration": "``AnalysisSnapshotLimits``を``adocweave_workspace::RetainedResourceLimits``へ置き換え、``max_resources`` fieldを``max_files``へ改名してください。上限の意味と既定値は同じです。",
+      "summary": "pub struct removed or renamed"
     }
   ]
 }

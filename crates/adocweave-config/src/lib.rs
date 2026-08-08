@@ -438,17 +438,6 @@ fn config_read_failed() -> ConfigError {
     )
 }
 
-/// Bounds applied to the effective resources of one analysis snapshot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AnalysisSnapshotLimits {
-    /// Maximum number of effective resources visible to one analysis root.
-    pub max_resources: usize,
-    /// Maximum combined bytes visible to one analysis root.
-    pub max_total_bytes: u64,
-    /// Maximum bytes visible from one effective resource.
-    pub max_resource_bytes: u64,
-}
-
 /// Stable category for analysis-snapshot resource limit failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnalysisSnapshotLimitError {
@@ -475,14 +464,14 @@ impl Error for AnalysisSnapshotLimitError {}
 /// Transactional counter shared by adapters which build one analysis snapshot.
 #[derive(Clone, Copy, Debug)]
 pub struct AnalysisSnapshotBudget {
-    limits: AnalysisSnapshotLimits,
+    limits: adocweave_workspace::RetainedResourceLimits,
     resources: usize,
     bytes: u64,
 }
 
 impl AnalysisSnapshotBudget {
     /// Starts an empty budget with resolved limits.
-    pub const fn new(limits: AnalysisSnapshotLimits) -> Self {
+    pub const fn new(limits: adocweave_workspace::RetainedResourceLimits) -> Self {
         Self {
             limits,
             resources: 0,
@@ -499,7 +488,7 @@ impl AnalysisSnapshotBudget {
             .resources
             .checked_add(1)
             .ok_or(AnalysisSnapshotLimitError::ResourceCount)?;
-        if resources > self.limits.max_resources {
+        if resources > self.limits.max_files {
             return Err(AnalysisSnapshotLimitError::ResourceCount);
         }
         let total = self
@@ -527,9 +516,10 @@ impl AnalysisSnapshotBudget {
 
 /// Resource limits resolved once from one document's nearest project file.
 ///
-/// The three fields deliberately use different types because filesystem reads,
-/// retained disk and overlay layers, and effective analysis resources have
-/// different accounting semantics.
+/// Filesystem reads use the host's limit type, while retained layers and the
+/// analysis snapshot share the workspace's. One shared type for all three is
+/// impossible because the workspace state machine must not depend on the host
+/// crate; what differs between the fields is the budget that enforces them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResolvedResourceLimitPlan {
     /// Limits enforced by the host before and during filesystem reads.
@@ -537,7 +527,7 @@ pub struct ResolvedResourceLimitPlan {
     /// Limits enforced before disk or overlay layers enter workspace state.
     pub retained_layers: RetainedResourceLimits,
     /// Limits enforced when selecting effective resources for analysis.
-    pub analysis_snapshot: AnalysisSnapshotLimits,
+    pub analysis_snapshot: adocweave_workspace::RetainedResourceLimits,
 }
 
 impl Default for ResolvedResourceLimitPlan {
@@ -563,8 +553,8 @@ impl ResolvedResourceLimitPlan {
                 max_total_bytes,
                 max_resource_bytes,
             },
-            analysis_snapshot: AnalysisSnapshotLimits {
-                max_resources: max_files,
+            analysis_snapshot: adocweave_workspace::RetainedResourceLimits {
+                max_files,
                 max_total_bytes,
                 max_resource_bytes,
             },
@@ -1445,8 +1435,8 @@ stylesheet-urls = ["https://example.test/manual.css"]
                     max_total_bytes: 4096,
                     max_resource_bytes: 2048,
                 },
-                analysis_snapshot: AnalysisSnapshotLimits {
-                    max_resources: 20,
+                analysis_snapshot: adocweave_workspace::RetainedResourceLimits {
+                    max_files: 20,
                     max_total_bytes: 4096,
                     max_resource_bytes: 2048,
                 },
@@ -1871,8 +1861,8 @@ exclude = ["**/.venv", "build/?emp", "vendor/**"]
 
     #[test]
     fn analysis_snapshot_budget_is_transactional_at_each_boundary() {
-        let limits = AnalysisSnapshotLimits {
-            max_resources: 2,
+        let limits = adocweave_workspace::RetainedResourceLimits {
+            max_files: 2,
             max_total_bytes: 5,
             max_resource_bytes: 3,
         };
