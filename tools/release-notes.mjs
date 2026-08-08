@@ -26,7 +26,7 @@ if (breakingRustApi.releaseVersion !== RELEASE_NOTES_VERSION) {
     `破壊的変更記録のreleaseVersionがRelease Notesと一致しません：${breakingRustApi.releaseVersion}`,
   );
 }
-export const PREVIOUS_RELEASE_VERSION = "0.37.0";
+export const PREVIOUS_RELEASE_VERSION = "0.38.0";
 
 // The release manifest schema version the previous stable release shipped.
 //
@@ -52,8 +52,7 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#526：Language Serverの内部状態を共有参照へ切り替え、大きなworkspaceでの打鍵・補完・hoverごとの複製費用を削減しました。機能とHTML出力は変わりません。",
-  "#526：上限・予算・filesystem authorityの重複実装を整理しました。設定の意味と既定値は変わりません。",
+  "#524・#527：公開projectionからpackageVersionを外し、版の識別をprotocolのenvelopeへ一本化しました。",
 ];
 
 export function breakingContractNotes(changes) {
