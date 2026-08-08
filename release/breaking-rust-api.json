@@ -1,14 +1,5 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.36.0",
-  "changes": [
-    {
-      "crate": "adocweave-wasm",
-      "description": "参考文献の項目へ番号を渡せるようにするため、公開wire構造体のWasmGeneratedBibliographyEntryへnumber fieldを追加しました。この構造体はすべてのfieldが公開されており、struct literalで構築できます。",
-      "item": "field WasmGeneratedBibliographyEntry.number",
-      "lint": "constructible_struct_adds_field",
-      "migration": "WasmGeneratedBibliographyEntryをstruct literalで構築しているRust consumerは、number: Noneを追加してください。番号を渡さない場合の動作は従来と同じです。JSONから受け取る場合は既定値がnullのため対応は不要です。",
-      "summary": "externally-constructible struct adds field"
-    }
-  ]
+  "releaseVersion": "0.37.0",
+  "changes": []
 }
