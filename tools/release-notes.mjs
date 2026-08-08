@@ -52,7 +52,8 @@ export const REQUIRED_RELEASE_NOTE_HEADINGS = [
 ];
 
 const highlights = [
-  "#526：内部の重複機構の整理を進めました。上限と予算の実装を共有し、利用者から見える機能とHTML出力は変わりません。",
+  "#526：Language Serverの内部状態を共有参照へ切り替え、大きなworkspaceでの打鍵・補完・hoverごとの複製費用を削減しました。機能とHTML出力は変わりません。",
+  "#526：上限・予算・filesystem authorityの重複実装を整理しました。設定の意味と既定値は変わりません。",
 ];
 
 export function breakingContractNotes(changes) {
