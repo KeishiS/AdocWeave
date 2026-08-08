@@ -1,7 +1,6 @@
 //! Deterministic, host-independent projections derived from one [`Analysis`].
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
 use crate::block_model::AstBlock;
 use crate::core::{Analysis, SourceId};
@@ -639,206 +638,9 @@ impl DocumentProjection {
         }
     }
 
-    /// Stable JSON without relying on a host serialization framework.
+    /// Stable JSON with the crate's fixed key order and escaping.
     pub fn render_json(&self) -> String {
-        let mut output = String::new();
-        write!(
-            output,
-            "{{\"packageVersion\":\"{}\",\"sourceId\":",
-            self.package_version
-        )
-        .expect("writing to String cannot fail");
-        write_optional_string(&mut output, self.source_id.as_ref().map(SourceId::as_str));
-        output.push_str(",\"title\":");
-        match &self.title {
-            Some(title) => write_projected_text(&mut output, title),
-            None => output.push_str("null"),
-        }
-        output.push_str(",\"targets\":[");
-        for (index, target) in self.targets.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"kind\":\"{}\",\"id\":{},\"label\":{},\"idRange\":{},\"targetRange\":{}}}",
-                reference_target_kind(target.kind),
-                json_string(&target.id),
-                json_string(&target.label),
-                json_range(target.id_range),
-                json_range(target.target_range)
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("],\"externalLinks\":[");
-        for (index, link) in self.external_links.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"sourceRange\":{},\"targetRange\":{},\"target\":{},\"label\":{}}}",
-                json_range(link.source_range),
-                json_range(link.target_range),
-                json_string(&link.target),
-                json_string(&link.label)
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("],\"referenceEdges\":[");
-        for (index, edge) in self.reference_edges.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write_reference_edge(&mut output, edge);
-        }
-        output.push_str("],\"sourceBlocks\":[");
-        for (index, source) in self.source_blocks.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"sourceRange\":{},\"contentRange\":{},\"title\":",
-                json_range(source.source_range),
-                json_range(source.content_range),
-            )
-            .expect("writing to String cannot fail");
-            match &source.title {
-                Some(title) => write_projected_text(&mut output, title),
-                None => output.push_str("null"),
-            }
-            write!(
-                output,
-                ",\"languageRange\":{},\"language\":{},\"lineNumbers\":{},\"startLine\":{},\"source\":{}}}",
-                source
-                    .language_range
-                    .map_or_else(|| "null".to_owned(), json_range),
-                source
-                    .language
-                    .as_deref()
-                    .map_or_else(|| "null".to_owned(), json_string),
-                source.line_numbers,
-                source
-                    .start_line
-                    .map_or_else(|| "null".to_owned(), |value| value.to_string()),
-                json_string(&source.source),
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("],\"formulas\":[");
-        for (index, formula) in self.formulas.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"kind\":\"{}\",\"language\":\"{}\",\"sourceRange\":{},\"contentRange\":{},\"source\":{}}}",
-                formula.kind.as_str(),
-                math_language(formula.language),
-                json_range(formula.source_range),
-                json_range(formula.content_range),
-                json_string(&formula.source),
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("],\"citations\":[");
-        for (index, citation) in self.citations.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"order\":{},\"sourceRange\":{},\"keys\":[",
-                citation.order,
-                json_range(citation.range),
-            )
-            .expect("writing to String cannot fail");
-            for (key_index, key) in citation.keys.iter().enumerate() {
-                if key_index > 0 {
-                    output.push(',');
-                }
-                write!(
-                    output,
-                    "{{\"sourceRange\":{},\"key\":{}}}",
-                    json_range(key.range),
-                    json_string(&key.value),
-                )
-                .expect("writing to String cannot fail");
-            }
-            output.push_str("],\"attributes\":[");
-            for (attribute_index, attribute) in citation.attributes.iter().enumerate() {
-                if attribute_index > 0 {
-                    output.push(',');
-                }
-                write!(
-                    output,
-                    "{{\"sourceRange\":{},\"name\":{},\"value\":{}}}",
-                    json_range(attribute.range),
-                    attribute
-                        .name
-                        .as_deref()
-                        .map_or_else(|| "null".to_owned(), json_string),
-                    json_string(&attribute.value),
-                )
-                .expect("writing to String cannot fail");
-            }
-            output.push_str("]}");
-        }
-        output.push_str("],\"orderedLists\":[");
-        for (index, list) in self.ordered_lists.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"sourceRange\":{},\"start\":{},\"reversed\":{},\"style\":\"{}\"}}",
-                json_range(list.source_range),
-                list.start
-                    .map_or_else(|| "null".to_owned(), |value| value.to_string()),
-                list.reversed,
-                list.style_name(),
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("],\"blockPresentations\":[");
-        for (index, block) in self.block_presentations.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"kind\":\"{}\",\"sourceRange\":{},\"contentRange\":{},\"title\":{},\"attribution\":{},\"citation\":{}}}",
-                block.kind.as_str(),
-                json_range(block.source_range),
-                json_range(block.content_range),
-                block.title.as_deref().map_or_else(|| "null".to_owned(), json_string),
-                block.attribution.as_deref().map_or_else(|| "null".to_owned(), json_string),
-                block.citation.as_deref().map_or_else(|| "null".to_owned(), json_string),
-            ).expect("writing to String cannot fail");
-        }
-        output.push_str("],\"structure\":");
-        write_structure(&mut output, &self.structure, &self.presentation);
-        output.push_str(",\"catalogs\":");
-        write_catalogs(&mut output, &self.catalogs);
-        output.push_str(",\"searchableText\":{\"text\":");
-        output.push_str(&json_string(&self.searchable_text.text));
-        output.push_str(",\"segments\":[");
-        for (index, segment) in self.searchable_text.segments.iter().enumerate() {
-            if index > 0 {
-                output.push(',');
-            }
-            write!(
-                output,
-                "{{\"kind\":\"{}\",\"sourceRange\":{},\"text\":{}}}",
-                segment.kind.as_str(),
-                json_range(segment.source_range),
-                json_string(&segment.text)
-            )
-            .expect("writing to String cannot fail");
-        }
-        output.push_str("]}}");
-        output
+        serde_json::to_string(&wire::Doc::new(self)).expect("projection serializes to JSON")
     }
 }
 
@@ -869,92 +671,6 @@ const fn math_language(language: crate::inline_model::MathLanguage) -> &'static 
     }
 }
 
-fn write_structure(
-    output: &mut String,
-    structure: &crate::structure::DocumentStructure,
-    presentation: &crate::presentation::DocumentPresentation,
-) {
-    output.push_str("{\"headings\":[");
-    for (index, heading) in structure.headings().iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        write!(
-            output,
-            "{{\"kind\":\"{}\",\"level\":{},\"id\":{},\"idRange\":{},\"title\":{},\"range\":{},\"titleRange\":{},\"number\":[",
-            structure_kind(heading.kind),
-            heading.level,
-            json_string(&heading.id),
-            json_range(heading.id_range),
-            json_string(&heading.title),
-            json_range(heading.range),
-            json_range(heading.title_range),
-        )
-        .expect("writing to String cannot fail");
-        let presentation = presentation
-            .heading_at(heading.range)
-            .expect("every projected heading has presentation facts");
-        write_numbers(output, &presentation.number);
-        write!(output, "],\"tocIncluded\":{}}}", presentation.toc_included)
-            .expect("writing to String cannot fail");
-    }
-    output.push_str("],\"toc\":");
-    write_toc(output, presentation.toc());
-    output.push_str(",\"manpage\":");
-    if let Some(manpage) = structure.manpage() {
-        write!(
-            output,
-            "{{\"name\":{},\"section\":{},\"purpose\":{},\"titleRange\":{},\"nameRange\":{},\"purposeRange\":{}}}",
-            json_string(&manpage.name),
-            json_string(&manpage.section),
-            json_string(&manpage.purpose),
-            json_range(manpage.title_range),
-            json_range(manpage.name_range),
-            json_range(manpage.purpose_range),
-        )
-        .expect("writing to String cannot fail");
-    } else {
-        output.push_str("null");
-    }
-    output.push('}');
-}
-
-fn write_toc(output: &mut String, entries: &[crate::structure::TocEntry]) {
-    output.push('[');
-    for (index, entry) in entries.iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        write!(
-            output,
-            "{{\"id\":{},\"title\":{},\"level\":{},\"number\":[",
-            json_string(&entry.id),
-            json_string(&entry.title),
-            entry.level,
-        )
-        .expect("writing to String cannot fail");
-        write_numbers(output, &entry.number);
-        write!(
-            output,
-            "],\"range\":{},\"children\":",
-            json_range(entry.range)
-        )
-        .expect("writing to String cannot fail");
-        write_toc(output, &entry.children);
-        output.push('}');
-    }
-    output.push(']');
-}
-
-fn write_numbers(output: &mut String, numbers: &[u32]) {
-    for (index, number) in numbers.iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        write!(output, "{number}").expect("writing to String cannot fail");
-    }
-}
-
 const fn structure_kind(kind: crate::structure::SectionKind) -> &'static str {
     match kind {
         crate::structure::SectionKind::DocumentTitle => "document-title",
@@ -962,163 +678,6 @@ const fn structure_kind(kind: crate::structure::SectionKind) -> &'static str {
         crate::structure::SectionKind::Section => "section",
         crate::structure::SectionKind::Appendix => "appendix",
         crate::structure::SectionKind::Discrete => "discrete",
-    }
-}
-
-fn write_catalogs(output: &mut String, catalogs: &crate::catalog::DocumentCatalogs) {
-    output.push_str("{\"footnotes\":[");
-    for (index, footnote) in catalogs.footnotes().iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        write!(
-            output,
-            "{{\"number\":{},\"id\":{},\"definitionRange\":{},\"contentRange\":{},\"text\":{},\"occurrences\":[",
-            footnote.number,
-            footnote.id.as_ref().map_or_else(|| "null".to_owned(), |id| json_string(id)),
-            json_range(footnote.definition_range),
-            json_range(footnote.content_range),
-            json_string(&footnote.text),
-        )
-        .expect("writing to String cannot fail");
-        for (occurrence_index, occurrence) in footnote.occurrences.iter().enumerate() {
-            if occurrence_index > 0 {
-                output.push(',');
-            }
-            output.push_str(&json_range(occurrence.range));
-        }
-        output.push_str("]}");
-    }
-    output.push_str("],\"bibliography\":[");
-    for (index, entry) in catalogs.bibliography().iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        write!(
-            output,
-            "{{\"id\":{},\"label\":{},\"definitionRange\":{},\"references\":[",
-            json_string(&entry.id),
-            entry
-                .label
-                .as_deref()
-                .map_or_else(|| "null".to_owned(), json_string),
-            json_range(entry.definition_range),
-        )
-        .expect("writing to String cannot fail");
-        for (reference_index, reference) in entry.references.iter().enumerate() {
-            if reference_index > 0 {
-                output.push(',');
-            }
-            output.push_str(&json_range(reference.range));
-        }
-        output.push_str("]}");
-    }
-    output.push_str("],\"index\":[");
-    for (index, entry) in catalogs.index().iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        output.push_str("{\"terms\":[");
-        for (term_index, term) in entry.terms.iter().enumerate() {
-            if term_index > 0 {
-                output.push(',');
-            }
-            output.push_str(&json_string(term));
-        }
-        write!(
-            output,
-            "],\"display\":{},\"occurrences\":[",
-            json_string(&entry.display)
-        )
-        .expect("writing to String cannot fail");
-        for (occurrence_index, range) in entry.occurrences.iter().enumerate() {
-            if occurrence_index > 0 {
-                output.push(',');
-            }
-            output.push_str(&json_range(*range));
-        }
-        output.push_str("]}");
-    }
-    output.push_str("]}");
-}
-
-fn write_projected_text(output: &mut String, text: &ProjectedText) {
-    write!(
-        output,
-        "{{\"sourceRange\":{},\"text\":{}}}",
-        json_range(text.source_range),
-        json_string(&text.text)
-    )
-    .expect("writing to String cannot fail");
-}
-
-fn write_reference_edge(output: &mut String, edge: &ReferenceEdge) {
-    output.push_str("{\"sourceId\":");
-    write_optional_string(output, edge.source_id.as_ref().map(SourceId::as_str));
-    write!(
-        output,
-        ",\"sourceRange\":{},\"target\":{}",
-        json_range(edge.source_range),
-        reference_key_json(&edge.target)
-    )
-    .expect("writing to String cannot fail");
-    output.push_str(",\"resolution\":");
-    match &edge.resolution {
-        Some(ResolutionOutcome::Resolved {
-            href,
-            display_text,
-            notices,
-        }) => {
-            write!(
-                output,
-                "{{\"status\":\"resolved\",\"href\":{},\"displayText\":{},\"notices\":[",
-                json_string(href),
-                display_text
-                    .as_ref()
-                    .map_or_else(|| "null".to_owned(), |text| json_string(text))
-            )
-            .expect("writing to String cannot fail");
-            for (index, notice) in notices.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                output.push_str(&json_string(notice.kind.diagnostic_code()));
-            }
-            output.push_str("]}");
-        }
-        Some(ResolutionOutcome::Failed(failure)) => {
-            write!(
-                output,
-                "{{\"status\":\"failed\",\"kind\":\"{}\"}}",
-                failure.kind.diagnostic_code()
-            )
-            .expect("writing to String cannot fail");
-        }
-        None => output.push_str("null"),
-    }
-    output.push('}');
-}
-
-fn reference_key_json(key: &ReferenceKey) -> String {
-    match key {
-        ReferenceKey::Local { anchor } => {
-            format!("{{\"kind\":\"local\",\"anchor\":{}}}", json_string(anchor))
-        }
-        ReferenceKey::Document { document, anchor } => format!(
-            "{{\"kind\":\"document\",\"document\":{},\"anchor\":{}}}",
-            json_string(document),
-            optional_string_json(anchor.as_deref())
-        ),
-        ReferenceKey::Scheme {
-            scheme,
-            locator,
-            anchor,
-        } => format!(
-            "{{\"kind\":\"scheme\",\"scheme\":{},\"locator\":{},\"anchor\":{}}}",
-            json_string(scheme),
-            json_string(locator),
-            optional_string_json(anchor.as_deref())
-        ),
     }
 }
 
@@ -1132,24 +691,560 @@ const fn reference_target_kind(kind: ReferenceTargetKind) -> &'static str {
     }
 }
 
-fn write_optional_string(output: &mut String, value: Option<&str>) {
-    output.push_str(&optional_string_json(value));
-}
+/// Serde views that pin the projection's public JSON key order.
+mod wire {
+    use serde::Serialize;
 
-fn optional_string_json(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_owned(), json_string)
-}
+    use super::{
+        DocumentProjection, ProjectedText, ReferenceKey, ResolutionOutcome, SourceId, TextRange,
+        math_language, reference_target_kind, structure_kind,
+    };
 
-fn json_range(range: TextRange) -> String {
-    format!(
-        "{{\"start\":{},\"end\":{}}}",
-        range.start().to_u32(),
-        range.end().to_u32()
-    )
-}
+    #[derive(Serialize)]
+    struct RangeW {
+        start: u32,
+        end: u32,
+    }
 
-fn json_string(value: &str) -> String {
-    crate::json::string(value)
+    impl From<TextRange> for RangeW {
+        fn from(range: TextRange) -> Self {
+            Self {
+                start: range.start().to_u32(),
+                end: range.end().to_u32(),
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct TextW<'a> {
+        #[serde(rename = "sourceRange")]
+        source_range: RangeW,
+        text: &'a str,
+    }
+
+    impl<'a> From<&'a ProjectedText> for TextW<'a> {
+        fn from(text: &'a ProjectedText) -> Self {
+            Self {
+                source_range: text.source_range.into(),
+                text: &text.text,
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(super) struct Doc<'a> {
+        package_version: &'a str,
+        source_id: Option<&'a str>,
+        title: Option<TextW<'a>>,
+        targets: Vec<TargetW<'a>>,
+        external_links: Vec<LinkW<'a>>,
+        reference_edges: Vec<EdgeW<'a>>,
+        source_blocks: Vec<SourceBlockW<'a>>,
+        formulas: Vec<FormulaW<'a>>,
+        citations: Vec<CitationW<'a>>,
+        ordered_lists: Vec<OrderedListW>,
+        block_presentations: Vec<BlockPresentationW<'a>>,
+        structure: StructureW<'a>,
+        catalogs: CatalogsW<'a>,
+        searchable_text: SearchableTextW<'a>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TargetW<'a> {
+        kind: &'static str,
+        id: &'a str,
+        label: &'a str,
+        id_range: RangeW,
+        target_range: RangeW,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LinkW<'a> {
+        source_range: RangeW,
+        target_range: RangeW,
+        target: &'a str,
+        label: &'a str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EdgeW<'a> {
+        source_id: Option<&'a str>,
+        source_range: RangeW,
+        target: KeyW<'a>,
+        resolution: Option<ResolutionW<'a>>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum KeyW<'a> {
+        Local {
+            kind: &'static str,
+            anchor: &'a str,
+        },
+        Document {
+            kind: &'static str,
+            document: &'a str,
+            anchor: Option<&'a str>,
+        },
+        Scheme {
+            kind: &'static str,
+            scheme: &'a str,
+            locator: &'a str,
+            anchor: Option<&'a str>,
+        },
+    }
+
+    impl<'a> From<&'a ReferenceKey> for KeyW<'a> {
+        fn from(key: &'a ReferenceKey) -> Self {
+            match key {
+                ReferenceKey::Local { anchor } => Self::Local {
+                    kind: "local",
+                    anchor,
+                },
+                ReferenceKey::Document { document, anchor } => Self::Document {
+                    kind: "document",
+                    document,
+                    anchor: anchor.as_deref(),
+                },
+                ReferenceKey::Scheme {
+                    scheme,
+                    locator,
+                    anchor,
+                } => Self::Scheme {
+                    kind: "scheme",
+                    scheme,
+                    locator,
+                    anchor: anchor.as_deref(),
+                },
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum ResolutionW<'a> {
+        #[serde(rename_all = "camelCase")]
+        Resolved {
+            status: &'static str,
+            href: &'a str,
+            display_text: Option<&'a str>,
+            notices: Vec<&'static str>,
+        },
+        Failed {
+            status: &'static str,
+            kind: &'static str,
+        },
+    }
+
+    impl<'a> From<&'a ResolutionOutcome> for ResolutionW<'a> {
+        fn from(outcome: &'a ResolutionOutcome) -> Self {
+            match outcome {
+                ResolutionOutcome::Resolved {
+                    href,
+                    display_text,
+                    notices,
+                } => Self::Resolved {
+                    status: "resolved",
+                    href,
+                    display_text: display_text.as_deref(),
+                    notices: notices
+                        .iter()
+                        .map(|notice| notice.kind.diagnostic_code())
+                        .collect(),
+                },
+                ResolutionOutcome::Failed(failure) => Self::Failed {
+                    status: "failed",
+                    kind: failure.kind.diagnostic_code(),
+                },
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SourceBlockW<'a> {
+        source_range: RangeW,
+        content_range: RangeW,
+        title: Option<TextW<'a>>,
+        language_range: Option<RangeW>,
+        language: Option<&'a str>,
+        line_numbers: bool,
+        start_line: Option<u32>,
+        source: &'a str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FormulaW<'a> {
+        kind: &'static str,
+        language: &'static str,
+        source_range: RangeW,
+        content_range: RangeW,
+        source: &'a str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CitationW<'a> {
+        order: u32,
+        source_range: RangeW,
+        keys: Vec<CitationKeyW<'a>>,
+        attributes: Vec<CitationAttributeW<'a>>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CitationKeyW<'a> {
+        source_range: RangeW,
+        key: &'a str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CitationAttributeW<'a> {
+        source_range: RangeW,
+        name: Option<&'a str>,
+        value: &'a str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct OrderedListW {
+        source_range: RangeW,
+        start: Option<u32>,
+        reversed: bool,
+        style: &'static str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct BlockPresentationW<'a> {
+        kind: &'static str,
+        source_range: RangeW,
+        content_range: RangeW,
+        title: Option<&'a str>,
+        attribution: Option<&'a str>,
+        citation: Option<&'a str>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct StructureW<'a> {
+        headings: Vec<HeadingW<'a>>,
+        toc: Vec<TocW<'a>>,
+        manpage: Option<ManpageW<'a>>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HeadingW<'a> {
+        kind: &'static str,
+        level: u8,
+        id: &'a str,
+        id_range: RangeW,
+        title: &'a str,
+        range: RangeW,
+        title_range: RangeW,
+        number: &'a [u32],
+        toc_included: bool,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TocW<'a> {
+        id: &'a str,
+        title: &'a str,
+        level: u8,
+        number: &'a [u32],
+        range: RangeW,
+        children: Vec<TocW<'a>>,
+    }
+
+    impl<'a> From<&'a crate::structure::TocEntry> for TocW<'a> {
+        fn from(entry: &'a crate::structure::TocEntry) -> Self {
+            Self {
+                id: &entry.id,
+                title: &entry.title,
+                level: entry.level,
+                number: &entry.number,
+                range: entry.range.into(),
+                children: entry.children.iter().map(TocW::from).collect(),
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ManpageW<'a> {
+        name: &'a str,
+        section: &'a str,
+        purpose: &'a str,
+        title_range: RangeW,
+        name_range: RangeW,
+        purpose_range: RangeW,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CatalogsW<'a> {
+        footnotes: Vec<FootnoteW<'a>>,
+        bibliography: Vec<BibliographyW<'a>>,
+        index: Vec<IndexW<'a>>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FootnoteW<'a> {
+        number: u32,
+        id: Option<&'a str>,
+        definition_range: RangeW,
+        content_range: RangeW,
+        text: &'a str,
+        occurrences: Vec<RangeW>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct BibliographyW<'a> {
+        id: &'a str,
+        label: Option<&'a str>,
+        definition_range: RangeW,
+        references: Vec<RangeW>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct IndexW<'a> {
+        terms: &'a [String],
+        display: &'a str,
+        occurrences: Vec<RangeW>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SearchableTextW<'a> {
+        text: &'a str,
+        segments: Vec<SegmentW<'a>>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SegmentW<'a> {
+        kind: &'static str,
+        source_range: RangeW,
+        text: &'a str,
+    }
+
+    impl<'a> Doc<'a> {
+        pub(super) fn new(doc: &'a DocumentProjection) -> Self {
+            Self {
+                package_version: doc.package_version,
+                source_id: doc.source_id.as_ref().map(SourceId::as_str),
+                title: doc.title.as_ref().map(TextW::from),
+                targets: doc
+                    .targets
+                    .iter()
+                    .map(|target| TargetW {
+                        kind: reference_target_kind(target.kind),
+                        id: &target.id,
+                        label: &target.label,
+                        id_range: target.id_range.into(),
+                        target_range: target.target_range.into(),
+                    })
+                    .collect(),
+                external_links: doc
+                    .external_links
+                    .iter()
+                    .map(|link| LinkW {
+                        source_range: link.source_range.into(),
+                        target_range: link.target_range.into(),
+                        target: &link.target,
+                        label: &link.label,
+                    })
+                    .collect(),
+                reference_edges: doc
+                    .reference_edges
+                    .iter()
+                    .map(|edge| EdgeW {
+                        source_id: edge.source_id.as_ref().map(SourceId::as_str),
+                        source_range: edge.source_range.into(),
+                        target: KeyW::from(&edge.target),
+                        resolution: edge.resolution.as_ref().map(ResolutionW::from),
+                    })
+                    .collect(),
+                source_blocks: doc
+                    .source_blocks
+                    .iter()
+                    .map(|source| SourceBlockW {
+                        source_range: source.source_range.into(),
+                        content_range: source.content_range.into(),
+                        title: source.title.as_ref().map(TextW::from),
+                        language_range: source.language_range.map(RangeW::from),
+                        language: source.language.as_deref(),
+                        line_numbers: source.line_numbers,
+                        start_line: source.start_line,
+                        source: &source.source,
+                    })
+                    .collect(),
+                formulas: doc
+                    .formulas
+                    .iter()
+                    .map(|formula| FormulaW {
+                        kind: formula.kind.as_str(),
+                        language: math_language(formula.language),
+                        source_range: formula.source_range.into(),
+                        content_range: formula.content_range.into(),
+                        source: &formula.source,
+                    })
+                    .collect(),
+                citations: doc
+                    .citations
+                    .iter()
+                    .map(|citation| CitationW {
+                        order: citation.order,
+                        source_range: citation.range.into(),
+                        keys: citation
+                            .keys
+                            .iter()
+                            .map(|key| CitationKeyW {
+                                source_range: key.range.into(),
+                                key: &key.value,
+                            })
+                            .collect(),
+                        attributes: citation
+                            .attributes
+                            .iter()
+                            .map(|attribute| CitationAttributeW {
+                                source_range: attribute.range.into(),
+                                name: attribute.name.as_deref(),
+                                value: &attribute.value,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                ordered_lists: doc
+                    .ordered_lists
+                    .iter()
+                    .map(|list| OrderedListW {
+                        source_range: list.source_range.into(),
+                        start: list.start,
+                        reversed: list.reversed,
+                        style: list.style_name(),
+                    })
+                    .collect(),
+                block_presentations: doc
+                    .block_presentations
+                    .iter()
+                    .map(|block| BlockPresentationW {
+                        kind: block.kind.as_str(),
+                        source_range: block.source_range.into(),
+                        content_range: block.content_range.into(),
+                        title: block.title.as_deref(),
+                        attribution: block.attribution.as_deref(),
+                        citation: block.citation.as_deref(),
+                    })
+                    .collect(),
+                structure: StructureW {
+                    headings: doc
+                        .structure
+                        .headings()
+                        .iter()
+                        .map(|heading| {
+                            let presentation = doc
+                                .presentation
+                                .heading_at(heading.range)
+                                .expect("every projected heading has presentation facts");
+                            HeadingW {
+                                kind: structure_kind(heading.kind),
+                                level: heading.level,
+                                id: &heading.id,
+                                id_range: heading.id_range.into(),
+                                title: &heading.title,
+                                range: heading.range.into(),
+                                title_range: heading.title_range.into(),
+                                number: &presentation.number,
+                                toc_included: presentation.toc_included,
+                            }
+                        })
+                        .collect(),
+                    toc: doc.presentation.toc().iter().map(TocW::from).collect(),
+                    manpage: doc.structure.manpage().map(|manpage| ManpageW {
+                        name: &manpage.name,
+                        section: &manpage.section,
+                        purpose: &manpage.purpose,
+                        title_range: manpage.title_range.into(),
+                        name_range: manpage.name_range.into(),
+                        purpose_range: manpage.purpose_range.into(),
+                    }),
+                },
+                catalogs: CatalogsW {
+                    footnotes: doc
+                        .catalogs
+                        .footnotes()
+                        .iter()
+                        .map(|footnote| FootnoteW {
+                            number: footnote.number,
+                            id: footnote.id.as_deref(),
+                            definition_range: footnote.definition_range.into(),
+                            content_range: footnote.content_range.into(),
+                            text: &footnote.text,
+                            occurrences: footnote
+                                .occurrences
+                                .iter()
+                                .map(|occurrence| occurrence.range.into())
+                                .collect(),
+                        })
+                        .collect(),
+                    bibliography: doc
+                        .catalogs
+                        .bibliography()
+                        .iter()
+                        .map(|entry| BibliographyW {
+                            id: &entry.id,
+                            label: entry.label.as_deref(),
+                            definition_range: entry.definition_range.into(),
+                            references: entry
+                                .references
+                                .iter()
+                                .map(|reference| reference.range.into())
+                                .collect(),
+                        })
+                        .collect(),
+                    index: doc
+                        .catalogs
+                        .index()
+                        .iter()
+                        .map(|entry| IndexW {
+                            terms: &entry.terms,
+                            display: &entry.display,
+                            occurrences: entry
+                                .occurrences
+                                .iter()
+                                .map(|range| RangeW::from(*range))
+                                .collect(),
+                        })
+                        .collect(),
+                },
+                searchable_text: SearchableTextW {
+                    text: &doc.searchable_text.text,
+                    segments: doc
+                        .searchable_text
+                        .segments
+                        .iter()
+                        .map(|segment| SegmentW {
+                            kind: segment.kind.as_str(),
+                            source_range: segment.source_range.into(),
+                            text: &segment.text,
+                        })
+                        .collect(),
+                },
+            }
+        }
+    }
 }
 
 #[cfg(test)]

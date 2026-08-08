@@ -23,19 +23,12 @@ pub(crate) fn write_string(output: &mut String, value: &str) {
     output.push('"');
 }
 
-pub(crate) fn string(value: &str) -> String {
-    let mut output = String::new();
-    write_string(&mut output, value);
-    output
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn escapes_every_json_control_character_class() {
-        assert_eq!(
-            super::string("\"\\\u{08}\u{0c}\n\r\t\u{01}"),
-            "\"\\\"\\\\\\b\\f\\n\\r\\t\\u0001\""
-        );
+        let mut output = String::new();
+        super::write_string(&mut output, "\"\\\u{08}\u{0c}\n\r\t\u{01}");
+        assert_eq!(output, "\"\\\"\\\\\\b\\f\\n\\r\\t\\u0001\"");
     }
 }
