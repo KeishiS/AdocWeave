@@ -3,10 +3,9 @@ use std::sync::Arc;
 use adocweave::SourceId;
 use adocweave::preprocess::{
     DirectiveKind, EffectivePreprocessStep, EffectiveProcessingOptions, PreparedAnalysisError,
-    PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions, PreprocessStep,
-    ProjectionFailure, ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult,
-    ResourceSnapshot, SourceMapping, preprocess, preprocess_and_analyze_with, preprocess_resumable,
-    preprocess_with,
+    PreprocessErrorKind, PreprocessFailure, PreprocessInputs, PreprocessOptions, ProjectionFailure,
+    ProjectionLimits, ResourceDocument, ResourceLookup, ResourceLookupResult, ResourceSnapshot,
+    SourceMapping, preprocess, preprocess_and_analyze_with, preprocess_with,
 };
 use adocweave::{AnalysisOptions, CancellationToken, Engine, NeverCancel};
 use serde_json::Value;
@@ -61,11 +60,13 @@ fn public_preprocess_fixture_fixes_source_map_directives_and_notices() {
             ResourceLookupResult::Deferred
         }
     }
-    let mut resumable = preprocess_resumable(source, &options, &Deferred, &NeverCancel);
+    let effective = EffectiveProcessingOptions::new(AnalysisOptions::default(), options.clone())
+        .expect("effective options");
+    let mut resumable = effective.preprocess_resumable(source, &Deferred, &NeverCancel);
     let resumed_document = loop {
         match resumable {
-            PreprocessStep::Complete(document) => break document,
-            PreprocessStep::NeedResource(suspended) => {
+            EffectivePreprocessStep::Complete(prepared) => break prepared,
+            EffectivePreprocessStep::NeedResource(suspended) => {
                 let response = snapshot
                     .get(suspended.request().target())
                     .cloned()
@@ -75,13 +76,13 @@ fn public_preprocess_fixture_fixes_source_map_directives_and_notices() {
                     );
                 resumable = suspended.resume(response, &Deferred, &NeverCancel);
             }
-            PreprocessStep::Failed(error) => panic!("resumable fixture failed: {error}"),
-            PreprocessStep::HostError(error) => panic!("resumable host failed: {error}"),
-            PreprocessStep::Cancelled => panic!("NeverCancel cannot cancel"),
+            EffectivePreprocessStep::Failed(error) => panic!("resumable fixture failed: {error}"),
+            EffectivePreprocessStep::HostError(error) => panic!("resumable host failed: {error}"),
+            EffectivePreprocessStep::Cancelled => panic!("NeverCancel cannot cancel"),
             _ => panic!("unknown resumable preprocessing state"),
         }
     };
-    assert_eq!(resumed_document, document);
+    assert_eq!(*resumed_document.document(), document);
 
     assert_eq!(
         document.source,
@@ -280,12 +281,12 @@ fn resumable_preprocess_contract_is_public_without_exposing_continuation_state()
         }
     }
 
-    let PreprocessStep::NeedResource(suspended) = preprocess_resumable(
-        "include::part.adoc[]\n",
-        &PreprocessOptions::default(),
-        &Deferred,
-        &NeverCancel,
-    ) else {
+    let effective =
+        EffectiveProcessingOptions::new(AnalysisOptions::default(), PreprocessOptions::default())
+            .expect("effective options");
+    let EffectivePreprocessStep::NeedResource(suspended) =
+        effective.preprocess_resumable("include::part.adoc[]\n", &Deferred, &NeverCancel)
+    else {
         panic!("deferred lookup must suspend preprocessing");
     };
     assert_eq!(suspended.request().target(), "part.adoc");
@@ -295,10 +296,10 @@ fn resumable_preprocess_contract_is_public_without_exposing_continuation_state()
         source: Arc::from("included\n"),
     });
     let step = suspended.resume(response, &Deferred, &NeverCancel);
-    let PreprocessStep::Complete(document) = step else {
+    let EffectivePreprocessStep::Complete(prepared) = step else {
         panic!("one supplied resource must complete preprocessing");
     };
-    assert_eq!(document.source, "included\n");
+    assert_eq!(prepared.document().source, "included\n");
 }
 
 #[test]

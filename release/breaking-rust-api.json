@@ -33,6 +33,30 @@
       "lint": "function_parameter_count_changed",
       "migration": "取消を使わない``lint_analysis``の呼出しへ``&adocweave::NeverCancel``を追加し、``LintError::Position``を従来のerrorとして処理してください。``LintError::Cancelled``は取消を渡さない限り発生しません。",
       "summary": "pub fn parameter count changed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "再開可能な前処理の公開APIを契約付きの1系統へ集約するため、素の``preprocess_resumable``を非公開にしました。",
+      "item": "function adocweave::preprocess::preprocess_resumable, previously",
+      "lint": "function_missing",
+      "migration": "``EffectiveProcessingOptions::new``で検証した設定の``preprocess_resumable``メソッドを使用してください。戻り値は``EffectivePreprocessStep``です。",
+      "summary": "pub fn removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``PreprocessStep``を非公開にしました。契約付きの``EffectivePreprocessStep``が唯一の公開状態です。",
+      "item": "enum adocweave::preprocess::PreprocessStep, previously",
+      "lint": "enum_missing",
+      "migration": "``PreprocessStep``のmatchを``EffectivePreprocessStep``へ置き換えてください。variantの構成は同じで、``Complete``が``PreparedPreprocessedDocument``を運びます。",
+      "summary": "pub enum removed or renamed"
+    },
+    {
+      "crate": "adocweave",
+      "description": "``SuspendedPreprocess``を非公開にしました。継続は契約付きの``EffectiveSuspendedPreprocess``だけを公開します。",
+      "item": "struct adocweave::preprocess::SuspendedPreprocess, previously",
+      "lint": "struct_missing",
+      "migration": "継続の型を``EffectiveSuspendedPreprocess``へ置き換えてください。``request``と``resume``の使い方は同じです。",
+      "summary": "pub struct removed or renamed"
     }
   ]
 }
