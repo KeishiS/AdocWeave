@@ -1,4 +1,5 @@
 pub(crate) mod check;
+pub(crate) mod completion;
 pub(crate) mod config;
 pub(crate) mod convert;
 pub(crate) mod format;
